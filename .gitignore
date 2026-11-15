@@ -1,0 +1,28 @@
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+secrets/
+vault/
+
+# Data
+data/
+*.db
+*.sqlite
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+bin/
+*.exe
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json

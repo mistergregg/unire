@@ -74,3 +74,61 @@ func (claude) FollowUp(prompt, mode, ref string) ([]string, bool) {
 	}
 	return []string{"claude", "-p", "--dangerously-skip-permissions", "--resume", ref, "--", prompt}, true
 }
+
+// StreamCommand asks Claude Code for its event stream (one JSON object per
+// line; --verbose is required for it).
+func (c claude) StreamCommand(prompt, mode, ref string) ([]string, error) {
+	argv, err := c.Command(prompt, mode, ref)
+	if err != nil || mode != HandsOff || prompt == "" {
+		return argv, err
+	}
+	// Command is: claude -p --dangerously-skip-permissions [--session-id id] -- prompt
+	out := []string{argv[0], argv[1], "--output-format", "stream-json", "--verbose"}
+	return append(out, argv[2:]...), nil
+}
+
+// ParseEvent reads Claude Code's stream-json: "assistant" events carry what it
+// says and the tools it calls, and a final "result" event carries the answer.
+func (claude) ParseEvent(line string) Event {
+	m, ok := parseObject(line)
+	if !ok {
+		return Event{}
+	}
+	switch m["type"] {
+	case "result":
+		ans, _ := m["result"].(string)
+		return Event{Known: true, Answer: ans}
+	case "assistant":
+		msg, _ := m["message"].(map[string]any)
+		blocks, _ := msg["content"].([]any)
+		var ev Event
+		ev.Known = true
+		var said []string
+		for _, b := range blocks {
+			blk, _ := b.(map[string]any)
+			switch blk["type"] {
+			case "text":
+				t, _ := blk["text"].(string)
+				said = append(said, t)
+			case "thinking":
+				if t, _ := blk["thinking"].(string); strings.TrimSpace(t) != "" {
+					ev.Progress = "thinking: " + clip(t, 200)
+				}
+			case "tool_use":
+				name, _ := blk["name"].(string)
+				input, _ := blk["input"].(map[string]any)
+				ev.Progress = clip(name+" "+firstString(input, "file_path", "path", "command", "pattern", "url", "description", "query"), 200)
+			}
+		}
+		if len(said) > 0 {
+			ev.Text = strings.Join(said, "\n")
+			if ev.Progress == "" {
+				ev.Progress = "says: " + clip(ev.Text, 200)
+			}
+		}
+		return ev
+	case "system", "user":
+		return Event{Known: true} // setup and tool results: nothing to show
+	}
+	return Event{}
+}

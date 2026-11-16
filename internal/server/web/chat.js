@@ -148,7 +148,9 @@ let agentChoices = [];
 function makeTurn(s) {
   const steps = el("div", { class: "steps" });
   const summary = el("summary", {}, "Activity");
+  // Open while the agent works, so what it is doing is in view; folded away when it is done.
   const activity = el("details", { class: "activity" }, summary, steps);
+  activity.open = !isFinished(s.status);
   const askBox = el("div", { class: "asks" });
   const answer = el("div", { class: "bubble agent" });
   const foot = el("div", { class: "turn-foot muted" });
@@ -163,7 +165,7 @@ function makeTurn(s) {
 function renderAnswer(t) {
   const running = !isFinished(t.s.status);
   if (!t.text) {
-    t.answer.replaceChildren(el("div", { class: "muted" }, running ? "Working…" : "The agent printed no reply."));
+    t.answer.replaceChildren(el("div", { class: "muted" }, running ? "Working…" + (t.lastStep ? " " + t.lastStep : "") : "The agent printed no reply."));
     return;
   }
   t.answer.replaceChildren(el("div", { class: "who muted" }, agentLabel(t.s.agent)), el("div", { class: "md" }, renderMarkdown(t.text)));
@@ -173,16 +175,19 @@ const agentLabel = (id) => (agentChoices.find((a) => a.id === id) || { label: id
 
 function addEvents(t, events) {
   let textChanged = false;
+  let stepChanged = false;
   for (const e of events) {
     if (e.kind === "out") { t.text += (t.text ? "\n" : "") + e.text; textChanged = true; continue; }
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
     t.steps.append(logLine(e));
     t.count++;
-    if (e.kind === "blocked") t.activity.open = true; // something needs the owner's attention
+    if (e.kind === "log") { t.lastStep = e.text; stepChanged = true; }
+    if (e.kind === "blocked") { t.activity.open = true; t.needsLook = true; } // something needs the owner's attention
   }
+  if (events.length) t.steps.scrollTop = t.steps.scrollHeight;
   t.summary.textContent = "Activity (" + t.count + " step" + (t.count === 1 ? "" : "s") + ")";
-  if (textChanged) renderAnswer(t);
+  if (textChanged || (stepChanged && !t.text)) renderAnswer(t);
 }
 
 // After a turn ends: what it pushed, why it failed, and what it saved to memory.
@@ -190,6 +195,7 @@ async function finishTurn(t) {
   if (t.shownDone) return;
   t.shownDone = true;
   closeOpenAsks(t);
+  if (!t.needsLook) t.activity.open = false;
   try { t.s = await api("GET", "/api/sessions/" + encodeURIComponent(t.s.id)); } catch (_) { /* keep what we have */ }
   renderAnswer(t);
   const bits = [];

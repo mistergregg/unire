@@ -694,31 +694,25 @@ func TestATurnFinishesBeforeItsMemoryIsSaved(t *testing.T) {
 	}
 }
 
-func TestAReplyWaitsForTheEarlierTurnsMemory(t *testing.T) {
+func TestAReplyDoesNotWaitForTheEarlierTurnsMemory(t *testing.T) {
 	gate := make(chan struct{})
 	sb := &fakeSandbox{memoryGate: gate, outFiles: map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nAdd login"}}
 	m, st := setup(t, sb)
 	first, _ := m.Start(memReq())
-	waitDone(t, st, first.ID)
+	waitDone(t, st, first.ID) // done, still saving its memory (held back)
 
 	r := memReq()
-	r.Task, r.Parent = first.Task, first.ID
+	r.Task, r.Parent, r.Memory = first.Task, first.ID, false
 	reply, err := m.Start(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(150 * time.Millisecond)
-	if sb.contextFile() != "" {
-		t.Fatal("the reply started before the earlier turn had saved its memory")
+	waitDone(t, st, reply.ID) // the reply finishes while the first turn is still saving
+	if !m.Saving(first.ID) {
+		t.Error("the earlier turn should still be saving")
 	}
 	close(gate)
 	m.Wait()
-	if ctxFile := sb.contextFile(); !strings.Contains(ctxFile, "Add login") {
-		t.Errorf("the reply should start with the earlier turn's summary:\n%s", ctxFile)
-	}
-	if got, _, _ := st.Session(reply.ID); got.Status != store.StatusDone {
-		t.Errorf("reply status = %s", got.Status)
-	}
 }
 
 func TestAConversationKeepsOneWorkspace(t *testing.T) {

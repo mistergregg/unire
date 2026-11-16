@@ -143,7 +143,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		mode = s.networkMode()
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(x),
+		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(x, s.lastAnswer(x.ID)),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID,
 	})
 	if err != nil {
@@ -153,16 +153,38 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toView(started))
 }
 
-// replyPreamble tells the agent that this continues earlier work. It goes before
-// what the owner wrote and is not shown as part of it.
-func replyPreamble(prev store.Session) string {
-	earlier := prev.Prompt
-	if r := []rune(earlier); len(r) > 2000 {
-		earlier = string(r[:2000]) + "…"
+// replyPreamble tells the agent that this continues earlier work: what it was
+// asked, what it answered, and where its work is. It goes before what the owner
+// wrote and is not shown as part of it. The answer is included because some
+// agents start every message as a new conversation.
+func replyPreamble(prev store.Session, answer string) string {
+	clip := func(s string, n int) string {
+		if r := []rune(s); len(r) > n {
+			return string(r[:n]) + "…"
+		}
+		return s
 	}
-	return "This continues earlier work in the same conversation. Earlier you were asked:\n<earlier>\n" + earlier +
-		"\n</earlier>\nThe work so far is on branch " + prev.Branch + " in the repos that changed " +
+	b := "This continues earlier work in the same conversation. Earlier you were asked:\n<earlier-request>\n" + clip(prev.Prompt, 2000) + "\n</earlier-request>\n"
+	if a := strings.TrimSpace(answer); a != "" {
+		b += "and you answered:\n<earlier-answer>\n" + clip(a, 6000) + "\n</earlier-answer>\n"
+	}
+	return b + "The work so far is on branch " + prev.Branch + " in the repos that changed " +
 		"(git log and git diff show it). The owner now writes:\n\n"
+}
+
+// lastAnswer is what the agent printed as its answer in a session.
+func (s *Server) lastAnswer(id string) string {
+	events, err := s.store.Events(id, 0, 5000)
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, e := range events {
+		if e.Kind == "out" {
+			lines = append(lines, e.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // answerQuestion gives the owner's answer to a question the agent is waiting on.

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -611,5 +612,80 @@ func TestAReplyReusesTheWorkspaceInsteadOfCloningAgain(t *testing.T) {
 	clones, checkouts, cleaned := commands(map[string]bool{"/workspace/api/.git": true})
 	if clones != 0 || checkouts != 1 || cleaned != 1 {
 		t.Errorf("a reply: %d clones, %d checkouts, %d cleanups; want 0, 1 and 1", clones, checkouts, cleaned)
+	}
+}
+
+func streamRun(t *testing.T, agentOut string) (answer, progress string, argv []string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	sb := &fakeSandbox{agentOut: agentOut}
+	o := Options{Out: &out, Err: &errb}
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "claude" && !contains(c.Argv, "--resume") {
+			argv = c.Argv
+		}
+	}
+	return out.String(), errb.String(), argv
+}
+
+func TestAgentProgressIsShownWhileItWorksAndOnlyTheAnswerIsTheAnswer(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/main.dart"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"..."}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Looks fine."}]}}`,
+		`{"type":"result","subtype":"success","result":"The app looks fine."}`,
+	}, "\n") + "\n"
+	answer, progress, argv := streamRun(t, stream)
+	if !contains(argv, "stream-json") {
+		t.Errorf("the agent should be asked for its event stream: %v", argv)
+	}
+	if strings.TrimSpace(answer) != "The app looks fine." {
+		t.Errorf("answer = %q, want only the final answer (not the JSON, not the intermediate text)", answer)
+	}
+	for _, want := range []string{"Read lib/main.dart", "says: Looks fine."} {
+		if !strings.Contains(progress, want) {
+			t.Errorf("progress is missing %q:\n%s", want, progress)
+		}
+	}
+}
+
+func TestWhenTheStreamHasNoFinalResultTheLastTextIsTheAnswer(t *testing.T) {
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"Half done."}]}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"All done."}]}}` + "\n"
+	answer, _, _ := streamRun(t, stream)
+	if strings.TrimSpace(answer) != "All done." {
+		t.Errorf("answer = %q", answer)
+	}
+}
+
+func TestOutputThatIsNotTheStreamIsNeverLost(t *testing.T) {
+	// For example a sign-in error printed before any event, or an agent whose
+	// format is not understood: it must come through as plain output.
+	out := "Error: not logged in\nPlease run /login\n"
+	answer, _, _ := streamRun(t, out)
+	if answer != out {
+		t.Errorf("answer = %q; want the text passed through unchanged", answer)
+	}
+}
+
+func TestStreamLinesSplitAcrossWritesAreJoined(t *testing.T) {
+	var out, log bytes.Buffer
+	a, _ := agent.Get("claude")
+	w := &streamWriter{s: a.(agent.Streamer), out: &out, log: &log}
+	line := `{"type":"result","result":"whole answer"}` + "\n"
+	for i := 0; i < len(line); i += 7 {
+		end := i + 7
+		if end > len(line) {
+			end = len(line)
+		}
+		w.Write([]byte(line[i:end]))
+	}
+	w.Close()
+	if strings.TrimSpace(out.String()) != "whole answer" {
+		t.Errorf("answer = %q", out.String())
 	}
 }

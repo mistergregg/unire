@@ -96,3 +96,49 @@ func (antigravity) Command(prompt, mode, ref string) ([]string, error) {
 // conversation because sessions share one home folder. So a follow-up starts a
 // fresh conversation that is told what happened.
 func (antigravity) FollowUp(prompt, mode, ref string) ([]string, bool) { return nil, false }
+
+// StreamCommand asks agy for its event stream (one JSON object per line).
+func (a antigravity) StreamCommand(prompt, mode, ref string) ([]string, error) {
+	argv, err := a.Command(prompt, mode, ref)
+	if err != nil || mode != HandsOff || prompt == "" {
+		return argv, err
+	}
+	// Command is: agy --dangerously-skip-permissions --print=<prompt>
+	return []string{argv[0], argv[1], "--output-format=stream-json", argv[2]}, nil
+}
+
+// ParseEvent reads agy's stream-json. Each line is {"event": "<kind>", ...}.
+// The last one, "result", is the only kind seen so far: it carries the answer
+// ({"event":"result","result":{"response":"...","status":"...","error":"..."}}).
+// Any other kind is shown as a progress line made from its name and its first
+// text field, so what the agent is doing is visible while its exact format is
+// still being learned.
+func (antigravity) ParseEvent(line string) Event {
+	m, ok := parseObject(line)
+	if !ok {
+		return Event{}
+	}
+	kind, _ := m["event"].(string)
+	if kind == "" {
+		return Event{}
+	}
+	if kind == "result" {
+		res, _ := m["result"].(map[string]any)
+		ev := Event{Known: true, Answer: firstString(res, "response")}
+		if e := firstString(res, "error"); e != "" {
+			ev.Progress = "agent error: " + clip(e, 300)
+		}
+		return ev
+	}
+	detail := firstString(m, "text", "message", "content", "thought", "thinking", "command", "path", "name", "tool", "tool_name", "title", "summary")
+	if detail == "" {
+		if inner, ok := m[kind].(map[string]any); ok {
+			detail = firstString(inner, "text", "message", "content", "thought", "command", "path", "name", "tool", "title", "summary")
+		}
+	}
+	p := kind
+	if detail != "" {
+		p += ": " + clip(detail, 200)
+	}
+	return Event{Known: true, Progress: p}
+}

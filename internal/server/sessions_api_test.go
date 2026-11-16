@@ -539,3 +539,43 @@ func TestAnsweringAQuestionNobodyAskedIsRefused(t *testing.T) {
 		t.Errorf("answer for an unknown session = %d, want 404", code)
 	}
 }
+
+func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	e.box.mu.Lock()
+	e.box.out = "The answer is 42."
+	e.box.mu.Unlock()
+	_, first := e.launch(base, map[string]any{"prompt": "What is the answer?"})
+	id1 := first["id"].(string)
+	e.waitStatus(id1, "done")
+	_, second := replyTo(e, id1, map[string]any{"prompt": "And the question?"})
+	e.waitStatus(second["id"].(string), "done")
+
+	var prompts []string
+	for _, c := range e.box.snapshot() {
+		if len(c.Argv) > 0 && c.Argv[0] == "claude" && !contains(c.Argv, "--resume") {
+			prompts = append(prompts, c.Argv[len(c.Argv)-1])
+		}
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("expected two agent runs, got %d", len(prompts))
+	}
+	for _, want := range []string{"<earlier-request>", "What is the answer?", "<earlier-answer>", "The answer is 42.", "And the question?"} {
+		if !strings.Contains(prompts[1], want) {
+			t.Errorf("the reply's prompt is missing %q:\n%s", want, prompts[1])
+		}
+	}
+	if strings.Contains(prompts[0], "<earlier-answer>") {
+		t.Error("a first message has no earlier answer")
+	}
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

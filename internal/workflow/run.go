@@ -212,6 +212,16 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		Argv: argv, Dir: workspace, TTY: opt.Interactive,
 		Stdout: io.MultiWriter(opt.Out, out), Stderr: opt.Err,
 	}
+	// An agent that can stream its events lets the owner see what it is doing
+	// while it works, instead of nothing until the answer arrives.
+	var stream *streamWriter
+	if s, ok := adapter.(agent.Streamer); ok && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != "" {
+		if sargv, err := s.StreamCommand(prompt, spec.Mode, ref); err == nil {
+			agentOpts.Argv = sargv
+			stream = &streamWriter{s: s, out: io.MultiWriter(opt.Out, out), log: opt.Err}
+			agentOpts.Stdout = stream
+		}
+	}
 	if opt.Interactive {
 		// Unattended runs get no stdin, or the agent waits on it.
 		agentOpts.Stdin = opt.In
@@ -225,6 +235,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		}
 	}()
 	agentErr := sb.Exec(ctx, agentOpts)
+	if stream != nil {
+		stream.Close()
+	}
 	stopAsks()
 	<-asksDone
 	requestedName := w.requestedName(ctx)

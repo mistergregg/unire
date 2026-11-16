@@ -59,3 +59,15 @@ The agent appears on the **Agents** page with its sign-in state and a **Sign in*
 
 - **Ollama** runs models; it is not an agent. It would be a model backend for an agent that can use one (Claude Code and Codex can), configured per agent. Not built yet.
 - **Antigravity** is an agent now (`internal/agent/antigravity.go`). Its sign-in works in the terminal (Google link, then paste the code). Not yet checked with a signed-in account: where it keeps its login, and whether that survives into unattended sessions.
+
+## Showing what the agent is doing (optional)
+
+In plain mode an agent prints only its final answer, at the end. If its CLI can
+print a stream of events instead (one JSON object per line), implement
+`agent.Streamer` (`internal/agent/stream.go`): `StreamCommand` returns the
+command that asks for the stream, and `ParseEvent` turns one line into a short
+progress line (shown live in the conversation's Activity) and, on the last
+event, the final answer. A line that is not part of the stream is passed
+through unchanged, and if the stream has no final answer the last thing the
+agent wrote is used, so a parser that misses something never hides the answer.
+Claude Code and Antigravity do this today.

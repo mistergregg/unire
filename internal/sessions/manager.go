@@ -209,8 +209,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 		m.mu.Unlock()
 	}()
 	if j.memory {
-		// The memory step runs after the turn is marked finished. Until it is
-		// done a reply waits for it, so the reply starts with this turn's memory.
+		// The memory step runs after the turn is marked finished; Saving reports it.
 		saved := make(chan struct{})
 		m.mu.Lock()
 		m.saving[spec.ID] = saved
@@ -253,9 +252,6 @@ func (m *Manager) run(ctx context.Context, j job) {
 	_ = m.st.AddEvent(spec.ID, "log", "network: "+networkLabel(network))
 	wo := workflow.Options{Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs, Workspace: workspaceName(j.root)}
 	if j.memory {
-		if j.parent != "" {
-			m.waitSaved(ctx, j.parent)
-		}
 		wo.Mem = m.memoryPlan(j)
 	}
 	wo.Ask = m.askFunc(spec.ID)
@@ -292,21 +288,6 @@ func (m *Manager) applyName(j job, name string) {
 	}
 	if m.st.SetTask(j.spec.ID, name) == nil {
 		_ = m.st.AddEvent(j.spec.ID, "log", "the agent named this conversation: "+name)
-	}
-}
-
-// waitSaved waits (for a few minutes at most) until an earlier turn has saved its memory.
-func (m *Manager) waitSaved(ctx context.Context, sessionID string) {
-	m.mu.Lock()
-	saved, ok := m.saving[sessionID]
-	m.mu.Unlock()
-	if !ok {
-		return
-	}
-	select {
-	case <-saved:
-	case <-ctx.Done():
-	case <-time.After(3 * time.Minute):
 	}
 }
 

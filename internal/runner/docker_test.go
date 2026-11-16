@@ -101,3 +101,21 @@ func TestExecArgsTTY(t *testing.T) {
 		t.Errorf("execArgs = %v, want %v", got, want)
 	}
 }
+
+func TestAWorkspaceVolumeIsMountedWhenNamed(t *testing.T) {
+	d := Docker{Image: "img", CredsVolume: "creds"}
+	has := func(args []string, a, b string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == a && args[i+1] == b {
+				return true
+			}
+		}
+		return false
+	}
+	if has(d.runArgs(StartSpec{SessionID: "s1"}), "-v", "unire-ws-x:/workspace") {
+		t.Error("no workspace named, so none is mounted")
+	}
+	if !has(d.runArgs(StartSpec{SessionID: "s1", Workspace: "unire-ws-x"}), "-v", "unire-ws-x:/workspace") {
+		t.Error("a named workspace is mounted at /workspace")
+	}
+}

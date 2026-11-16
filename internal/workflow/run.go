@@ -32,6 +32,8 @@ type Options struct {
 	GitTokens map[string]string
 	Memory    string
 	CPUs      string
+	// Workspace names the volume holding this conversation's repos (see runner.StartSpec).
+	Workspace string
 	// Mem turns project memory on: the agent starts with Context and, when it
 	// finishes, is asked to write a summary and updated briefs. nil means off.
 	Mem *MemoryPlan
@@ -43,6 +45,9 @@ type Options struct {
 	// often the sandbox is checked for new ones; zero means two seconds.
 	Ask     AskFunc
 	AskPoll time.Duration
+	// OnWorkDone is called once the agent has finished and its work is pushed,
+	// before the memory step. It is not called when the session fails earlier.
+	OnWorkDone func(res Result, err error)
 }
 
 // MemoryPlan is the project memory for this session.
@@ -118,7 +123,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	}
 
 	fmt.Fprintf(opt.Err, "starting session %s (agent %s, branch %s)\n", spec.ID, spec.Agent, spec.Branch())
-	sb, err := r.Start(ctx, runner.StartSpec{SessionID: spec.ID, Mounts: mounts, Memory: opt.Memory, CPUs: opt.CPUs})
+	sb, err := r.Start(ctx, runner.StartSpec{SessionID: spec.ID, Mounts: mounts, Memory: opt.Memory, CPUs: opt.CPUs, Workspace: opt.Workspace})
 	if err != nil {
 		return res, err
 	}
@@ -137,24 +142,38 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		return res, fmt.Errorf("git setup: %w", err)
 	}
 
+	// A conversation keeps its workspace between turns, so a reply finds the
+	// repos where the last turn left them. Requests the agent left in files
+	// last time must not be read again.
+	_ = w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"rm", "-rf", tools.Dir, memory.OutDir}})
+
 	startHeads := map[string]string{}
 	for _, repo := range spec.Repos {
 		repo := repo
 		dir := workspace + "/" + repo.Name
-		cloneArgs := []string{"clone"}
-		if repo.Base != "" {
-			cloneArgs = append(cloneArgs, "--branch", repo.Base)
-		}
-		cloneArgs = append(cloneArgs, repo.URL, dir)
-		fmt.Fprintf(opt.Err, "cloning %s\n", repo.Name)
-		if _, err := w.git(ctx, "", &repo, cloneArgs...); err != nil {
-			return res, fmt.Errorf("clone %s: %w", repo.Name, err)
-		}
-		// A reply continues the branch an earlier turn pushed: the clone is
-		// already on it, so there is nothing to create.
-		if repo.Base != spec.Branch() {
-			if _, err := w.git(ctx, dir, &repo, "checkout", "-b", spec.Branch()); err != nil {
+		if w.cloned(ctx, dir) {
+			// Already here: carry on from what is there. -B creates the branch, or
+			// moves to it when it exists, and keeps the work in the tree (a different
+			// agent gets its own branch name that starts from this work).
+			fmt.Fprintf(opt.Err, "using the existing copy of %s\n", repo.Name)
+			if _, err := w.git(ctx, dir, &repo, "checkout", "-B", spec.Branch()); err != nil {
 				return res, fmt.Errorf("branch %s: %w", repo.Name, err)
+			}
+		} else {
+			cloneArgs := []string{"clone"}
+			if repo.Base != "" {
+				cloneArgs = append(cloneArgs, "--branch", repo.Base)
+			}
+			cloneArgs = append(cloneArgs, repo.URL, dir)
+			fmt.Fprintf(opt.Err, "cloning %s\n", repo.Name)
+			if _, err := w.git(ctx, "", &repo, cloneArgs...); err != nil {
+				return res, fmt.Errorf("clone %s: %w", repo.Name, err)
+			}
+			// Cloning an earlier turn's branch already puts us on it.
+			if repo.Base != spec.Branch() {
+				if _, err := w.git(ctx, dir, &repo, "checkout", "-b", spec.Branch()); err != nil {
+					return res, fmt.Errorf("branch %s: %w", repo.Name, err)
+				}
 			}
 		}
 		head, err := w.git(ctx, dir, &repo, "rev-parse", "HEAD")
@@ -225,14 +244,20 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if agentErr != nil && ctx.Err() == nil {
 		fmt.Fprintf(opt.Err, "hint: if this looks like a sign-in problem, open the Agents page and sign %s in again\n", adapter.Info().Label)
 	}
+	var workErr error
+	if agentErr != nil {
+		workErr = fmt.Errorf("agent exited with an error: %w", agentErr)
+	}
+	// The work is done and pushed. Tell the caller now, so the owner can carry on
+	// while the memory step below (which can take a while) finishes in the background.
+	if opt.OnWorkDone != nil {
+		opt.OnWorkDone(Result{Name: requestedName}, workErr)
+	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}
 	res.Name = requestedName
-	if agentErr != nil {
-		return res, fmt.Errorf("agent exited with an error: %w", agentErr)
-	}
-	return res, nil
+	return res, workErr
 }
 
 type worker struct {
@@ -455,4 +480,11 @@ func (w *worker) requestedName(ctx context.Context) string {
 		return ""
 	}
 	return tools.CleanName(reqs[len(reqs)-1])
+}
+
+// cloned reports whether a repo was already cloned into dir by an earlier turn.
+func (w *worker) cloned(ctx context.Context, dir string) bool {
+	var out bytes.Buffer
+	err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"ls", "-d", dir + "/.git"}, Stdout: &out})
+	return err == nil && strings.TrimSpace(out.String()) != ""
 }

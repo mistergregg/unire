@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/memory"
@@ -68,7 +69,8 @@ type Manager struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
-	asks    map[string]chan string // questions waiting for the owner, by session id + "/" + question id
+	asks    map[string]chan string   // questions waiting for the owner, by session id + "/" + question id
+	saving  map[string]chan struct{} // sessions whose memory is still being saved; closed when done
 	closing bool
 }
 
@@ -78,7 +80,7 @@ func New(st *store.Store, config func() Config) (*Manager, error) {
 	if _, err := st.InterruptUnfinished(); err != nil {
 		return nil, err
 	}
-	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}}, nil
+	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}}, nil
 }
 
 func newID() string {
@@ -156,7 +158,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Unlock()
 
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
-	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent})
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent)})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -195,6 +197,7 @@ type job struct {
 	tokens  map[string]string
 	secrets []string
 	parent  string // the session this one continues, or empty
+	root    string // the first session of the conversation: its id names the workspace
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
@@ -205,6 +208,20 @@ func (m *Manager) run(ctx context.Context, j job) {
 		delete(m.cancels, spec.ID)
 		m.mu.Unlock()
 	}()
+	if j.memory {
+		// The memory step runs after the turn is marked finished. Until it is
+		// done a reply waits for it, so the reply starts with this turn's memory.
+		saved := make(chan struct{})
+		m.mu.Lock()
+		m.saving[spec.ID] = saved
+		m.mu.Unlock()
+		defer func() {
+			close(saved)
+			m.mu.Lock()
+			delete(m.saving, spec.ID)
+			m.mu.Unlock()
+		}()
+	}
 
 	out := newLogWriter(m.st, spec.ID, "out", secrets)
 	info := newLogWriter(m.st, spec.ID, "log", secrets)
@@ -234,8 +251,11 @@ func (m *Manager) run(ctx context.Context, j job) {
 		rn = &netRunner{inner: cfg.Runner, proxy: cfg.Egress.Proxy, info: cfg.Egress.Info, pol: pol, st: m.st, id: spec.ID}
 	}
 	_ = m.st.AddEvent(spec.ID, "log", "network: "+networkLabel(network))
-	wo := workflow.Options{Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs}
+	wo := workflow.Options{Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs, Workspace: workspaceName(j.root)}
 	if j.memory {
+		if j.parent != "" {
+			m.waitSaved(ctx, j.parent)
+		}
 		wo.Mem = m.memoryPlan(j)
 	}
 	wo.Ask = m.askFunc(spec.ID)
@@ -243,18 +263,87 @@ func (m *Manager) run(ctx context.Context, j job) {
 	if j.parent == "" {
 		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name
 	}
+	// The turn is finished as soon as the work is pushed. Saving to memory goes
+	// on in the background, so the owner can read the answer and reply at once.
+	finished := false
+	wo.OnWorkDone = func(res workflow.Result, werr error) {
+		finished = true
+		out.Flush()
+		info.Flush()
+		m.applyName(j, res.Name)
+		m.finish(ctx, spec.ID, werr, secrets)
+	}
 	res, err := workflow.Run(ctx, rn, spec, wo)
 	out.Flush()
 	info.Flush()
 	if j.memory && ctx.Err() == nil {
 		m.saveMemory(j, res, err)
 	}
-	if res.Name != "" && j.parent == "" && res.Name != spec.Task {
-		if m.st.SetTask(spec.ID, res.Name) == nil {
-			_ = m.st.AddEvent(spec.ID, "log", "the agent named this conversation: "+res.Name)
-		}
+	if !finished { // it failed before the work was done
+		m.applyName(j, res.Name)
+		m.finish(ctx, spec.ID, err, secrets)
 	}
-	m.finish(ctx, spec.ID, err, secrets)
+}
+
+// applyName gives the first message of a conversation the title its agent asked for.
+func (m *Manager) applyName(j job, name string) {
+	if name == "" || j.parent != "" || name == j.spec.Task {
+		return
+	}
+	if m.st.SetTask(j.spec.ID, name) == nil {
+		_ = m.st.AddEvent(j.spec.ID, "log", "the agent named this conversation: "+name)
+	}
+}
+
+// waitSaved waits (for a few minutes at most) until an earlier turn has saved its memory.
+func (m *Manager) waitSaved(ctx context.Context, sessionID string) {
+	m.mu.Lock()
+	saved, ok := m.saving[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case <-saved:
+	case <-ctx.Done():
+	case <-time.After(3 * time.Minute):
+	}
+}
+
+// Saving reports whether a session is still saving its memory.
+func (m *Manager) Saving(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.saving[sessionID]
+	return ok
+}
+
+// workspaceName is the volume that holds a conversation's repos between turns.
+func workspaceName(root string) string { return "unire-ws-" + root }
+
+// rootOf is the first session of the conversation a new session belongs to.
+func (m *Manager) rootOf(id, parent string) string {
+	if parent == "" {
+		return id
+	}
+	root := parent
+	for i := 0; i < 100; i++ {
+		s, ok, err := m.st.Session(root)
+		if err != nil || !ok || s.ParentID == "" {
+			break
+		}
+		root = s.ParentID
+	}
+	return root
+}
+
+// ForgetWorkspace removes a conversation's workspace when the conversation is deleted.
+func (m *Manager) ForgetWorkspace(root string) {
+	if k, ok := m.config().Runner.(runner.WorkspaceKeeper); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = k.RemoveWorkspace(ctx, workspaceName(root))
+	}
 }
 
 // memoryPlan loads what earlier sessions learned about this session's repos.
@@ -361,6 +450,7 @@ type logWriter struct {
 	kind    string
 	secrets []string
 	parent  string // the session this one continues, or empty
+	root    string // the first session of the conversation: its id names the workspace
 
 	mu  sync.Mutex
 	buf []byte

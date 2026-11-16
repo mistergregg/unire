@@ -17,6 +17,10 @@ type Mount struct {
 type StartSpec struct {
 	SessionID string
 	Mounts    []Mount
+	// Workspace names a volume to mount at /workspace, so the repos a session cloned
+	// are still there for the next turn of the same conversation. Empty means a
+	// fresh, throwaway workspace.
+	Workspace string
 	Memory    string // e.g. "4g"; empty means no limit
 	CPUs      string // e.g. "2"; empty means no limit
 	// Network is the Docker network to attach to; empty means the default.
@@ -60,4 +64,10 @@ type Sandbox interface {
 // Runner creates sandboxes.
 type Runner interface {
 	Start(ctx context.Context, s StartSpec) (Sandbox, error)
+}
+
+// WorkspaceKeeper is implemented by runners that keep conversation workspaces
+// (see StartSpec.Workspace) and can remove one when its conversation is deleted.
+type WorkspaceKeeper interface {
+	RemoveWorkspace(ctx context.Context, name string) error
 }

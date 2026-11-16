@@ -58,6 +58,9 @@ func (d Docker) runArgs(s StartSpec) []string {
 	if s.CPUs != "" {
 		args = append(args, "--cpus", s.CPUs)
 	}
+	if s.Workspace != "" {
+		args = append(args, "-v", s.Workspace+":/workspace")
+	}
 	for _, m := range s.Mounts {
 		args = append(args, "-v", m.HostPath+":"+m.ContainerPath)
 	}
@@ -189,4 +192,14 @@ func (b dockerSandbox) Address(ctx context.Context, network string) (string, err
 
 func (b dockerSandbox) Stop(ctx context.Context) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", b.name).Run()
+}
+
+// RemoveWorkspace deletes a conversation's workspace volume. A volume that is
+// already gone is not an error.
+func (d Docker) RemoveWorkspace(ctx context.Context, name string) error {
+	out, err := exec.CommandContext(ctx, "docker", "volume", "rm", "-f", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker volume rm: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

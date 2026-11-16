@@ -32,6 +32,7 @@ type fakeSandbox struct {
 	block     bool  // the follow-up waits for its context
 
 	agentHook func(ctx context.Context) // runs during the main agent run (it may take a while)
+	existing  map[string]bool           // paths `ls -d` finds: repos an earlier turn already cloned
 }
 
 func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
@@ -55,6 +56,14 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	}
 	switch o.Argv[0] {
 	case "ls":
+		if contains(o.Argv, "-d") {
+			p := o.Argv[len(o.Argv)-1]
+			if f.existing[p] {
+				io.WriteString(o.Stdout, p+"\n")
+				return nil
+			}
+			return errors.New("exit status 2")
+		}
 		found := false
 		for p := range f.outFiles {
 			if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == o.Argv[len(o.Argv)-1] {
@@ -572,5 +581,35 @@ func TestQuestionsAreIgnoredWithoutTheToolOrAnAsker(t *testing.T) {
 		if _, wrote := sb.files[askPath+".a"]; wrote {
 			t.Errorf("%s: an answer was written", name)
 		}
+	}
+}
+
+func TestAReplyReusesTheWorkspaceInsteadOfCloningAgain(t *testing.T) {
+	commands := func(existing map[string]bool) (clones, checkouts, cleaned int) {
+		sb := &fakeSandbox{existing: existing}
+		if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range sb.calls {
+			switch {
+			case contains(c.Argv, "clone"):
+				clones++
+			case contains(c.Argv, "checkout"):
+				checkouts++
+				if !contains(c.Argv, "-B") && existing != nil {
+					t.Errorf("an existing copy moves to the branch with checkout -B: %v", c.Argv)
+				}
+			case len(c.Argv) > 0 && c.Argv[0] == "rm" && contains(c.Argv, tools.Dir):
+				cleaned++
+			}
+		}
+		return
+	}
+	if clones, _, cleaned := commands(nil); clones != 1 || cleaned != 1 {
+		t.Errorf("first turn: %d clones, %d cleanups; want 1 and 1", clones, cleaned)
+	}
+	clones, checkouts, cleaned := commands(map[string]bool{"/workspace/api/.git": true})
+	if clones != 0 || checkouts != 1 || cleaned != 1 {
+		t.Errorf("a reply: %d clones, %d checkouts, %d cleanups; want 0, 1 and 1", clones, checkouts, cleaned)
 	}
 }

@@ -202,9 +202,19 @@ async function finishTurn(t) {
     bits.push(el("div", {}, "No changes were pushed."));
   }
   t.foot.replaceChildren(...bits);
+  t.memoryNote = el("div", {});
+  t.foot.append(t.memoryNote);
+}
+
+// Saving to memory goes on after the turn is done. Show that, then the summary.
+async function showMemory(t, saving) {
+  if (t.memoryShown) return;
+  if (saving) { t.memoryNote.textContent = "Saving to memory…"; return; }
+  t.memoryShown = true;
+  t.memoryNote.textContent = "";
   try {
     const m = await api("GET", "/api/memory/summaries/" + encodeURIComponent(t.s.id));
-    t.foot.append(el("details", {}, el("summary", {}, "Saved to memory"), el("pre", { class: "log" }, m.summary)));
+    t.memoryNote.append(el("details", {}, el("summary", {}, "Saved to memory"), el("pre", { class: "log" }, m.summary)));
   } catch (_) { /* memory was off for this turn, or nothing was saved */ }
 }
 
@@ -262,7 +272,13 @@ async function watch(t, token) {
       t.s.status = r.status; t.s.error = r.error;
       if (t === thread[thread.length - 1]) setComposer();
       if (stick && r.events.length) window.scrollTo(0, document.body.scrollHeight);
-      if (r.finished && !more) { await finishTurn(t); if (t === thread[thread.length - 1]) setComposer(); return; }
+      if (r.finished && !more) {
+        await finishTurn(t);
+        if (t === thread[thread.length - 1]) setComposer(); // the owner can reply now
+        await showMemory(t, r.saving);
+        if (!r.saving) return;
+        // else keep reading: the memory step is still writing to the log
+      }
     } catch (e) { banner(e.message, true); }
     await new Promise((res) => schedule(res, more ? 0 : 1000));
   }

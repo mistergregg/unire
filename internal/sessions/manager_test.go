@@ -23,6 +23,7 @@ type fakeSandbox struct {
 	agentOutput string
 	agentErr    error
 	block       chan struct{} // if set, the agent waits on it or on ctx
+	memoryGate  chan struct{} // if set, the memory step waits on it (or on ctx)
 
 	mu       sync.Mutex
 	files    map[string]string // files the workflow wrote into the sandbox, by path
@@ -39,7 +40,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 				}
 			}
 			return nil
-		case "mkdir":
+		case "ls": // nothing was cloned or asked yet
+			return errors.New("exit status 2")
+		case "mkdir", "rm":
 			return nil
 		case "sh":
 			if o.Stdin != nil {
@@ -63,7 +66,13 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			return nil
 		}
 		for _, a := range o.Argv {
-			if a == "--resume" { // the memory follow-up: no output, never blocks
+			if a == "--resume" { // the memory follow-up: no output
+				if f.memoryGate != nil {
+					select {
+					case <-f.memoryGate:
+					case <-ctx.Done():
+					}
+				}
 				return nil
 			}
 		}
@@ -644,4 +653,96 @@ func TestWaitingCountsOpenQuestionsOfOneSession(t *testing.T) {
 	if got := m.Waiting(x.ID); got != 1 {
 		t.Errorf("after one answer, waiting = %d, want 1", got)
 	}
+}
+
+func waitDone(t *testing.T, st *store.Store, id string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if x, _, _ := st.Session(id); x.Status == store.StatusDone {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never finished", id)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestATurnFinishesBeforeItsMemoryIsSaved(t *testing.T) {
+	gate := make(chan struct{})
+	sb := &fakeSandbox{memoryGate: gate, outFiles: map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nAdd login"}}
+	m, st := setup(t, sb)
+	x, err := m.Start(memReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, st, x.ID) // done while the memory step is still held back
+	if !m.Saving(x.ID) {
+		t.Error("the session should report that it is still saving memory")
+	}
+	if _, saved, _ := st.Summary(x.ID); saved {
+		t.Error("the summary must not exist before the memory step finishes")
+	}
+	close(gate)
+	m.Wait()
+	if m.Saving(x.ID) {
+		t.Error("saving should be over")
+	}
+	if s, saved, _ := st.Summary(x.ID); !saved || !strings.Contains(s.Summary, "Add login") {
+		t.Errorf("the summary should be saved in the background: %+v %v", s, saved)
+	}
+}
+
+func TestAReplyWaitsForTheEarlierTurnsMemory(t *testing.T) {
+	gate := make(chan struct{})
+	sb := &fakeSandbox{memoryGate: gate, outFiles: map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nAdd login"}}
+	m, st := setup(t, sb)
+	first, _ := m.Start(memReq())
+	waitDone(t, st, first.ID)
+
+	r := memReq()
+	r.Task, r.Parent = first.Task, first.ID
+	reply, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if sb.contextFile() != "" {
+		t.Fatal("the reply started before the earlier turn had saved its memory")
+	}
+	close(gate)
+	m.Wait()
+	if ctxFile := sb.contextFile(); !strings.Contains(ctxFile, "Add login") {
+		t.Errorf("the reply should start with the earlier turn's summary:\n%s", ctxFile)
+	}
+	if got, _, _ := st.Session(reply.ID); got.Status != store.StatusDone {
+		t.Errorf("reply status = %s", got.Status)
+	}
+}
+
+func TestAConversationKeepsOneWorkspace(t *testing.T) {
+	m, st := setup(t, &fakeSandbox{})
+	first, _ := m.Start(req(""))
+	m.Wait()
+	r := req("")
+	r.Parent = first.ID
+	second, _ := m.Start(r)
+	m.Wait()
+	r.Parent = second.ID
+	third, _ := m.Start(r)
+	m.Wait()
+	if got := m.rootOf("brand-new", ""); got != "brand-new" {
+		t.Errorf("a first message is its own root, got %s", got)
+	}
+	if got := m.rootOf("x", first.ID); got != first.ID {
+		t.Errorf("a reply to the first message has it as root, got %s", got)
+	}
+	if got := m.rootOf(third.ID, second.ID); got != first.ID {
+		t.Errorf("the third turn's root = %s, want the first session %s", got, first.ID)
+	}
+	if workspaceName(first.ID) != "unire-ws-"+first.ID {
+		t.Error("the workspace is named after the first session")
+	}
+	_ = st
 }

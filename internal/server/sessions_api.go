@@ -535,7 +535,7 @@ func (s *Server) sessionLogs(w http.ResponseWriter, r *http.Request) {
 	if latest, ok, _ := s.store.Session(x.ID); ok {
 		x = latest
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": out, "status": x.Status, "error": x.Error, "finished": store.Finished(x.Status)})
+	writeJSON(w, http.StatusOK, map[string]any{"events": out, "status": x.Status, "error": x.Error, "finished": store.Finished(x.Status), "saving": s.sessions.Saving(x.ID)})
 }
 
 func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
@@ -552,13 +552,19 @@ func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	ok, err := s.store.DeleteSession(r.PathValue("id"))
+	id := r.PathValue("id")
+	x, found, _ := s.store.Session(id)
+	ok, err := s.store.DeleteSession(id)
 	switch {
 	case err != nil:
 		serverError(w)
 	case !ok:
 		writeErr(w, http.StatusConflict, "only a finished session can be deleted")
 	default:
+		if found && x.ParentID == "" {
+			// The first message of a conversation owns its workspace (the cloned repos).
+			go s.sessions.ForgetWorkspace(id)
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }

@@ -49,7 +49,9 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 				}
 			}
 			return nil
-		case "mkdir", "sh":
+		case "ls":
+			return fmt.Errorf("exit status 2") // nothing was cloned or asked yet
+		case "mkdir", "rm", "sh":
 			if o.Stdin != nil {
 				io.Copy(io.Discard, o.Stdin)
 			}

@@ -54,3 +54,12 @@ On the Agents page, each agent has three tools:
 
 - Sessions are unattended only (no interactive terminal yet).
 - After a crash or kill, sandbox and sign-in containers can be left behind. Unire removes any it finds (labelled `unire.session` or `unire.login`) when it starts. This assumes one Unire per Docker host.
+
+## Conversation workspaces
+
+Each conversation keeps its cloned repos in a Docker volume named
+`unire-ws-<id>`, so a reply continues where the last message stopped instead of
+cloning everything again. The agent's work is still pushed to its branch after
+every message. The volume is removed when you delete the conversation. If you
+delete Unire's data by hand, you can remove leftover volumes with
+`docker volume ls --filter name=unire-ws-`.

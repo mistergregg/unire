@@ -253,6 +253,9 @@ async function openSession(id) {
   if (pollToken !== token) return;
   agentChoices = agents;
   thread = turns.map(makeTurn);
+  selectedRoot = thread[0].s.id;
+  setHash(selectedRoot);
+  refreshSidebar();
   thread.forEach((t) => $("chat").append(t.root));
   const tail = thread[thread.length - 1];
   $("reply-agent").replaceChildren(...agents.map((a) => el("option", { value: a.id },
@@ -273,6 +276,10 @@ async function watch(t, token) {
       if (pollToken !== token) return;
       const stick = nearBottom();
       addEvents(t, r.events);
+      if (!t.seen) { // the first look at a turn: open a chat at its newest message
+        t.seen = true;
+        if (t === thread[thread.length - 1]) window.scrollTo(0, document.body.scrollHeight);
+      }
       if (r.events.length) t.after = r.events[r.events.length - 1].id;
       more = r.events.length === 500;
       t.s.status = r.status; t.s.error = r.error;

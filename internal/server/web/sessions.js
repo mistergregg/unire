@@ -11,33 +11,54 @@ function schedule(fn, ms) { clearTimeout(pollTimer); pollTimer = setTimeout(fn, 
 function statusBadge(status) { return el("span", { class: "badge st-" + status }, status); }
 const isFinished = (status) => status !== "queued" && status !== "running";
 
-// ---- list ----
+// ---- the list of conversations (the sidebar) ----
+// The Chats page is one page: every conversation in a list on the left, and the
+// open one (or the new-chat form) on the right. The list is refreshed every few
+// seconds by attention.js, and right away when something changes.
+let sideList = [];       // the last list from the server
+let selectedRoot = null; // the conversation open on the right
+
 async function openSessions() {
   stopPolling();
+  selectedRoot = null;
+  setHash("");
   show("sessions");
-  const token = (pollToken = {});
-  const refresh = async () => {
-    if (pollToken !== token || currentView !== "sessions") return;
-    try {
-      const list = await api("GET", "/api/sessions");
-      if (pollToken !== token || currentView !== "sessions") return;
-      $("session-list").replaceChildren(...(list.length ? list.map(sessionRow)
-        : [el("p", { class: "muted" }, "No sessions yet. Add a git server, then press New session.")]));
-    } catch (e) { banner(e.message, true); }
-    schedule(refresh, 4000);
-  };
-  await refresh();
+  await refreshSidebar();
+}
+
+async function refreshSidebar() {
+  try { renderSidebar(await api("GET", "/api/sessions")); } catch (e) { banner(e.message, true); }
+}
+
+// Waiting on you first, then running, then the rest, newest first.
+function sidebarRank(s) {
+  const st = s.latestStatus || s.status;
+  return s.waiting ? 0 : (st === "running" || st === "queued") ? 1 : 2;
+}
+
+function renderSidebar(list) {
+  sideList = list;
+  const sorted = [...list].sort((a, b) => sidebarRank(a) - sidebarRank(b) || (b.createdAt - a.createdAt));
+  $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
+    : [el("p", { class: "muted" }, "No chats yet. Add a git server, then press New chat.")]));
 }
 
 function sessionRow(s) {
-  const open = () => openSession(s.id);
-  const row = el("div", { class: "item click", role: "button", tabindex: "0" },
-    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task), s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : statusBadge(s.latestStatus || s.status)),
-    el("div", { class: "muted" }, s.agent + " · " + s.repos.map((r) => r.fullName).join(", ")),
-    el("div", { class: "muted" }, "started " + ago(s.startedAt || s.createdAt)));
+  const open = () => guarded(null, () => openSession(s.id));
+  const status = s.latestStatus || s.status;
+  const row = el("div", { class: "side-item" + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
+    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task),
+      s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : statusBadge(status)),
+    el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
+    el("div", { class: "muted small-line" }, ago(s.startedAt || s.createdAt)));
   row.addEventListener("click", open);
   row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
   return row;
+}
+
+// The address shows which chat is open, so a refresh or a link comes back to it.
+function setHash(id) {
+  try { history.replaceState(null, "", id ? "#c=" + encodeURIComponent(id) : location.pathname + location.search); } catch (_) { /* not important */ }
 }
 
 $("new-session").addEventListener("click", () => guarded(null, openNew));
@@ -53,7 +74,10 @@ let lastResults = [];
 // prefill (optional): { task, repos, note } for continuing an earlier session.
 async function openNew(prefill) {
   stopPolling();
+  selectedRoot = null;
+  setHash("");
   show("new");
+  refreshSidebar();
   $("n-note").hidden = true;
   const [servers, agents, workspaces, net] = await Promise.all([
     api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);

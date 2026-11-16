@@ -66,9 +66,13 @@ function show(name) {
   currentView = name;
   if (name !== "auth" && typeof startAttention === "function") startAttention();
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
+  const chats = name === "sessions" || name === "new" || name === "session";
+  $("workspace").hidden = !chats;
+  $("workspace").classList.toggle("chat-open", name === "new" || name === "session"); // on a phone: the chat, not the list
+  document.querySelector("main").classList.toggle("wide", chats);
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
-  window.scrollTo(0, 0);
+  if (!chats || name === "sessions") window.scrollTo(0, 0);
 }
 
 let setupMode = false;
@@ -95,6 +99,10 @@ async function enter() {
   typeInfos = await api("GET", "/api/types");
   $("f-type").replaceChildren(...typeInfos.map((t) => el("option", { value: t.type }, t.label)));
   updateUrlHint();
+  const m = /^#c=(.+)$/.exec(location.hash);
+  if (m) {
+    try { return await openSession(decodeURIComponent(m[1])); } catch (_) { /* it was deleted: show the list */ }
+  }
   await openSessions();
 }
 

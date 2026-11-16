@@ -107,3 +107,25 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-bre
 .ask .said { white-space: pre-wrap; margin-bottom: 8px; }
 .ask-form textarea { margin-bottom: 6px; }
 .st-attention { color: #e0a100; border-color: #e0a100; font-weight: 600; }
+
+/* Chats: the list of conversations on the left, the open one on the right. */
+main.wide { max-width: 1280px; }
+.workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+.side { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.side .primary { width: 100%; }
+.side-list { display: flex; flex-direction: column; gap: 6px; }
+.side-item { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; background: var(--panel); }
+.side-item:hover, .side-item:focus-visible { border-color: var(--accent); outline: none; }
+.side-item.selected { border-color: var(--accent); background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.small-line { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane { min-width: 0; }
+.pane > section { max-width: 880px; }
+.empty { padding: 24px 0; }
+.back { display: none; }
+@media (max-width: 800px) {
+  .workspace { grid-template-columns: 1fr; }
+  .side { position: static; max-height: none; }
+  .workspace.chat-open .side { display: none; }
+  .workspace:not(.chat-open) .pane { display: none; }
+  .back { display: inline-block; }
+}

@@ -1,7 +1,7 @@
 "use strict";
 
 // Tells you when an agent is waiting for your answer, wherever you are in
-// Unire: a count on the Sessions tab and in the page title, and a browser
+// Unire: a count on the Chats tab and in the page title, and a browser
 // notification when the tab is in the background. It checks the session list
 // every few seconds while Unire is open. Browsers only allow notifications on
 // https (or localhost); the count and the title work everywhere.
@@ -19,12 +19,13 @@ async function checkAttention() {
   if (currentView === "auth") return;
   let list;
   try { list = await api("GET", "/api/sessions"); } catch (_) { return; }
+  if (typeof renderSidebar === "function" && !$("workspace").hidden) renderSidebar(list);
   const waiting = list.filter((s) => s.waiting > 0);
   const count = waiting.reduce((n, s) => n + s.waiting, 0);
 
   document.title = count ? "(" + count + ") Unire: needs you" : "Unire";
   const tab = document.querySelector('.tab[data-view="sessions"]');
-  if (tab) tab.textContent = count ? "Sessions (" + count + ")" : "Sessions";
+  if (tab) tab.textContent = count ? "Chats (" + count + ")" : "Chats";
 
   const now = new Set();
   for (const s of waiting) {

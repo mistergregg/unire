@@ -11,7 +11,7 @@
 <header class="top">
   <div class="brand">Unire</div>
   <nav id="nav" hidden>
-    <button class="tab" data-view="sessions">Sessions</button>
+    <button class="tab" data-view="sessions">Chats</button>
     <button class="tab" data-view="agents">Agents</button>
     <button class="tab" data-view="memory">Memory</button>
     <button class="tab" data-view="servers">Git servers</button>
@@ -36,18 +36,20 @@
     </div>
   </section>
 
-  <!-- Sessions -->
+  <!-- Chats: every conversation in a list on the left, the open one on the right -->
+  <div id="workspace" class="workspace" hidden>
+  <aside id="side" class="side" aria-label="Conversations">
+    <button id="new-session" class="primary">New chat</button>
+    <div id="session-list" class="side-list"></div>
+  </aside>
+  <div class="pane">
   <section id="view-sessions" hidden>
-    <div class="between">
-      <h1>Sessions</h1>
-      <button id="new-session" class="primary">New session</button>
-    </div>
-    <div id="session-list" class="stack"></div>
+    <p class="muted empty">Pick a conversation on the left, or start a new chat. Several agents can work at the same time.</p>
   </section>
 
   <section id="view-new" hidden>
-    <button class="ghost" id="new-back">&larr; Sessions</button>
-    <h1>New session</h1>
+    <button class="ghost back" id="new-back">&larr; Chats</button>
+    <h1>New chat</h1>
     <p id="n-note" class="banner" hidden></p>
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
@@ -87,7 +89,7 @@
   </section>
 
   <section id="view-session" hidden>
-    <button class="ghost" id="s-back">&larr; Sessions</button>
+    <button class="ghost back" id="s-back">&larr; Chats</button>
     <div class="between">
       <h1 id="s-title"></h1>
       <span id="s-status" class="badge"></span>
@@ -107,6 +109,8 @@
     </form>
     <div class="item-actions"><button id="s-delete" type="button" hidden>Delete conversation</button></div>
   </section>
+  </div>
+  </div>
 
   <!-- Agents -->
   <section id="view-agents" hidden>

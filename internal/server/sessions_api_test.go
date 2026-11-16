@@ -520,3 +520,20 @@ func replyTo(e *env, id string, body map[string]any) (int, map[string]any) {
 	json.Unmarshal([]byte(raw), &res)
 	return code, res
 }
+
+func TestAnsweringAQuestionNobodyAskedIsRefused(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	_, first := e.launch(base, nil)
+	id := first["id"].(string)
+	e.waitStatus(id, "done")
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/answer", map[string]any{"id": "1", "text": "yes"}); code != http.StatusConflict {
+		t.Errorf("answer with no question = %d, want 409", code)
+	}
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/answer", map[string]any{"id": "1", "text": "  "}); code != http.StatusBadRequest {
+		t.Errorf("empty answer = %d, want 400", code)
+	}
+	if code, _ := e.do("POST", "/api/sessions/nope/answer", map[string]any{"id": "1", "text": "x"}); code != http.StatusNotFound {
+		t.Errorf("answer for an unknown session = %d, want 404", code)
+	}
+}

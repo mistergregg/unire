@@ -164,3 +164,28 @@ func replyPreamble(prev store.Session) string {
 		"\n</earlier>\nThe work so far is on branch " + prev.Branch + " in the repos that changed " +
 		"(git log and git diff show it). The owner now writes:\n\n"
 }
+
+// answerQuestion gives the owner's answer to a question the agent is waiting on.
+func (s *Server) answerQuestion(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	req.Text = strings.TrimSpace(req.Text)
+	if req.ID == "" || req.Text == "" || len(req.Text) > 10000 {
+		writeErr(w, http.StatusBadRequest, "write an answer (10,000 characters max)")
+		return
+	}
+	if err := s.sessions.Answer(x.ID, req.ID, req.Text); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

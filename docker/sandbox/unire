@@ -1,7 +1,9 @@
 #!/bin/sh
 # unire: ask Unire (the program running this session) to do something.
-# It only records the request in a file; Unire reads it when the session ends and
-# decides what to do. Usage: unire <tool> <text...>
+# It only writes requests to files; Unire reads them and decides what to do.
+#   unire name "<title>"      give the conversation a title (read when the session ends)
+#   unire ask "<question>"    ask the owner and wait for the answer
+#   unire wait <number>       keep waiting for the answer to an earlier question
 dir=/workspace/.unire-tools
 tool=$1
 [ -n "$tool" ] || { echo "usage: unire <tool> <text>" >&2; exit 2; }
@@ -9,5 +11,34 @@ shift
 case "$tool" in
   *[!a-z-]*) echo "unire: bad tool name" >&2; exit 2 ;;
 esac
-mkdir -p "$dir" && printf '%s\n' "$*" | tr '\n' ' ' >> "$dir/$tool" && printf '\n' >> "$dir/$tool" \
-  && echo "ok: Unire has your '$tool' request and will use it when the session ends."
+
+# Agents stop a command that runs for too long, so wait in short rounds.
+wait_for() {
+  n=0
+  while [ "$n" -lt 90 ]; do
+    if [ -f "$dir/ask/$1.a" ]; then cat "$dir/ask/$1.a"; return 0; fi
+    sleep 2
+    n=$((n + 2))
+  done
+  echo "The owner has not answered yet (question $1). Run: unire wait $1   to keep waiting, or go on with your best judgment and say what you assumed."
+}
+
+case "$tool" in
+  ask)
+    [ -n "$*" ] || { echo "usage: unire ask \"<question>\"" >&2; exit 2; }
+    id=$(date +%s%N)
+    mkdir -p "$dir/ask" || exit 1
+    printf '%s\n' "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
+    wait_for "$id"
+    ;;
+  wait)
+    case "$1" in
+      ''|*[!0-9]*) echo "usage: unire wait <number>" >&2; exit 2 ;;
+    esac
+    wait_for "$1"
+    ;;
+  *)
+    mkdir -p "$dir" && printf '%s\n' "$*" | tr '\n' ' ' >> "$dir/$tool" && printf '\n' >> "$dir/$tool" \
+      && echo "ok: Unire has your '$tool' request and will use it when the session ends."
+    ;;
+esac

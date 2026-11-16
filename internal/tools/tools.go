@@ -30,9 +30,9 @@ var Name = Tool{
 }
 
 // ForNewConversation is the tool set for the first message of a conversation.
-// Other situations will get their own sets (a reply keeps its conversation's
+// Other situations get their own sets (a reply keeps its conversation's
 // name, so it gets none of these).
-func ForNewConversation() []Tool { return []Tool{Name} }
+func ForNewConversation() []Tool { return []Tool{Name, Ask} }
 
 // Prompt is the text added to the agent's prompt to describe a tool set. It is
 // empty for no tools.
@@ -75,3 +75,15 @@ func CleanName(s string) string {
 	}
 	return s
 }
+
+// Ask lets the agent put a question to the owner and wait for the answer.
+var Ask = Tool{
+	Name: "ask",
+	Usage: `unire ask "<question>" - ask the owner a question and wait for the answer, which it prints. ` +
+		`Use it only when you cannot sensibly go on without it: a decision only the owner can make, or something you cannot find out yourself. ` +
+		`If it says the owner has not answered yet, run the "unire wait <number>" command it gives to keep waiting, or go on with your best judgment and say what you assumed. ` +
+		`Ask rarely, and never ask for passwords or tokens.`,
+}
+
+// ForReply is the tool set for a reply: the conversation already has its name.
+func ForReply() []Tool { return []Tool{Ask} }

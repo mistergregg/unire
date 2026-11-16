@@ -18,8 +18,8 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 | Situation | Tools |
 |---|---|
-| First message of a conversation | `name` |
-| A reply in a conversation | none (the conversation keeps its name) |
+| First message of a conversation | `name`, `ask` |
+| A reply in a conversation | `ask` (the conversation keeps its name) |
 
 ## `name`
 
@@ -36,4 +36,21 @@ cleaned up (one line, at most 80 characters) before it is shown.
    the result.
 3. Apply it in `internal/sessions/manager.go`.
 
-Later tools can ask the owner a question, share a preview link, or add a repo.
+Later tools could share a preview link or add a repo.
+
+## `ask`
+
+Lets the agent put a question to you and wait for the answer, for a decision
+only you can make.
+
+```
+unire ask "Which database should I use?"
+```
+
+The question appears in the conversation as a card with an answer box, and the
+agent carries on once you answer. Agents stop a command that runs too long, so
+`unire ask` waits in rounds of 90 seconds; if you have not answered, it tells
+the agent to run `unire wait <number>` to keep waiting, or to go on with its
+best judgment. After 30 minutes without an answer Unire tells the agent to go on
+without one. The agent sees your answer, so do not paste passwords or tokens
+into it.

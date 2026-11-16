@@ -94,6 +94,54 @@ function logLine(e) {
 }
 
 // ---- the conversation ----
+
+// ---- the agent asks you something ----
+// A question is an "ask" event ("<id>\n<question>"); the answer comes back as
+// an "answer" event with the same id. The card shows an answer box until then.
+function splitEvent(text) {
+  const i = text.indexOf("\n");
+  return i < 0 ? [text, ""] : [text.slice(0, i), text.slice(i + 1)];
+}
+
+function askCard(t, e) {
+  const [id, question] = splitEvent(e.text);
+  if (t.asks[id]) return;
+  const box = el("textarea", { rows: "2", maxlength: "10000", "aria-label": "Your answer", placeholder: "Your answer" });
+  const send = el("button", { type: "submit", class: "primary" }, "Send");
+  const form = el("form", { class: "ask-form", autocomplete: "off" }, box,
+    el("div", { class: "between" },
+      el("span", { class: "muted" }, "The agent will see your answer. Do not paste passwords or tokens."), send));
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const text = box.value.trim();
+    if (!text) return;
+    guarded(send, () => api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/answer", { id, text }));
+  });
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); form.requestSubmit(); }
+  });
+  const card = el("div", { class: "bubble agent ask" },
+    el("div", { class: "who muted" }, agentLabel(t.s.agent) + " asks"),
+    el("div", { class: "said" }, question), form);
+  t.asks[id] = { card, form };
+  t.askBox.append(card);
+}
+
+function answerCard(t, e) {
+  const [id, text] = splitEvent(e.text);
+  const a = t.asks[id];
+  if (!a) return;
+  a.form.replaceWith(el("div", { class: "muted said" }, "You answered: " + text));
+  a.form = null;
+}
+
+// A question still open when the turn ends will never be answered.
+function closeOpenAsks(t) {
+  for (const a of Object.values(t.asks)) {
+    if (a.form) { a.form.replaceWith(el("div", { class: "muted" }, "No answer was given.")); a.form = null; }
+  }
+}
+
 let thread = [];      // one entry per turn: { s, node pieces, text, after }
 let agentChoices = [];
 
@@ -101,12 +149,13 @@ function makeTurn(s) {
   const steps = el("div", { class: "steps" });
   const summary = el("summary", {}, "Activity");
   const activity = el("details", { class: "activity" }, summary, steps);
+  const askBox = el("div", { class: "asks" });
   const answer = el("div", { class: "bubble agent" });
   const foot = el("div", { class: "turn-foot muted" });
   const root = el("div", { class: "turn" },
     el("div", { class: "bubble user" }, el("div", { class: "who muted" }, "You"), el("div", { class: "said" }, s.prompt)),
-    activity, answer, foot);
-  const t = { s, root, steps, summary, activity, answer, foot, text: "", count: 0, after: 0, shownDone: false };
+    activity, askBox, answer, foot);
+  const t = { s, root, steps, summary, activity, askBox, answer, foot, asks: {}, text: "", count: 0, after: 0, shownDone: false };
   renderAnswer(t);
   return t;
 }
@@ -126,6 +175,8 @@ function addEvents(t, events) {
   let textChanged = false;
   for (const e of events) {
     if (e.kind === "out") { t.text += (t.text ? "\n" : "") + e.text; textChanged = true; continue; }
+    if (e.kind === "ask") { askCard(t, e); continue; }
+    if (e.kind === "answer") { answerCard(t, e); continue; }
     t.steps.append(logLine(e));
     t.count++;
     if (e.kind === "blocked") t.activity.open = true; // something needs the owner's attention
@@ -138,6 +189,7 @@ function addEvents(t, events) {
 async function finishTurn(t) {
   if (t.shownDone) return;
   t.shownDone = true;
+  closeOpenAsks(t);
   try { t.s = await api("GET", "/api/sessions/" + encodeURIComponent(t.s.id)); } catch (_) { /* keep what we have */ }
   renderAnswer(t);
   const bits = [];

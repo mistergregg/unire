@@ -68,6 +68,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+	asks    map[string]chan string // questions waiting for the owner, by session id + "/" + question id
 	closing bool
 }
 
@@ -77,7 +78,7 @@ func New(st *store.Store, config func() Config) (*Manager, error) {
 	if _, err := st.InterruptUnfinished(); err != nil {
 		return nil, err
 	}
-	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}}, nil
+	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}}, nil
 }
 
 func newID() string {
@@ -237,6 +238,8 @@ func (m *Manager) run(ctx context.Context, j job) {
 	if j.memory {
 		wo.Mem = m.memoryPlan(j)
 	}
+	wo.Ask = m.askFunc(spec.ID)
+	wo.Tools = tools.ForReply()
 	if j.parent == "" {
 		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name
 	}

@@ -556,3 +556,67 @@ func TestTheAgentNamesANewConversationButNotAReply(t *testing.T) {
 		t.Errorf("a reply must keep the conversation's name, got %q", got.Task)
 	}
 }
+
+func TestAnAnswerUnblocksTheAgentsQuestionAndIsLogged(t *testing.T) {
+	m, st := setup(t, &fakeSandbox{})
+	x, err := m.Start(req(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+
+	type reply struct {
+		answer string
+		ok     bool
+	}
+	got := make(chan reply, 1)
+	go func() {
+		a, ok := m.askFunc(x.ID)(context.Background(), "9", "Which database?")
+		got <- reply{a, ok}
+	}()
+	// The question is logged for the owner to see.
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logText(st, x.ID), "ask: 9\nWhich database?") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the question never appeared in the log:\n%s", logText(st, x.ID))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := m.Answer(x.ID, "9", "use sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-got; !r.ok || r.answer != "use sqlite" {
+		t.Errorf("the agent got %+v", r)
+	}
+	if !strings.Contains(logText(st, x.ID), "answer: 9\nuse sqlite") {
+		t.Errorf("the answer should be logged:\n%s", logText(st, x.ID))
+	}
+	if err := m.Answer(x.ID, "9", "again"); err == nil {
+		t.Error("a question can be answered once")
+	}
+	if err := m.Answer(x.ID, "nope", "x"); err == nil {
+		t.Error("an unknown question cannot be answered")
+	}
+}
+
+func TestAQuestionNobodyAnswersEndsWithoutAnAnswer(t *testing.T) {
+	m, st := setup(t, &fakeSandbox{})
+	x, _ := m.Start(req(""))
+	m.Wait()
+	old := askTimeout
+	askTimeout = 30 * time.Millisecond
+	defer func() { askTimeout = old }()
+	if a, ok := m.askFunc(x.ID)(context.Background(), "1", "anyone?"); ok || a != "" {
+		t.Errorf("got %q, %v; want no answer", a, ok)
+	}
+	if !strings.Contains(logText(st, x.ID), "no answer") {
+		t.Errorf("the log should say nobody answered:\n%s", logText(st, x.ID))
+	}
+	// A cancelled session stops waiting at once.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	askTimeout = time.Hour
+	if _, ok := m.askFunc(x.ID)(ctx, "2", "still there?"); ok {
+		t.Error("a stopped session must not wait")
+	}
+}

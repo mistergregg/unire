@@ -39,6 +39,10 @@ type Options struct {
 	MemoryTimeout time.Duration
 	// Tools are what the agent may ask Unire to do (see package tools). Empty means none.
 	Tools []tools.Tool
+	// Ask shows the agent's questions to the owner (the ask tool). AskPoll is how
+	// often the sandbox is checked for new ones; zero means two seconds.
+	Ask     AskFunc
+	AskPoll time.Duration
 }
 
 // MemoryPlan is the project memory for this session.
@@ -193,7 +197,17 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		// Unattended runs get no stdin, or the agent waits on it.
 		agentOpts.Stdin = opt.In
 	}
+	askCtx, stopAsks := context.WithCancel(ctx)
+	asksDone := make(chan struct{})
+	go func() {
+		defer close(asksDone)
+		if w.asking() {
+			w.serveQuestions(askCtx)
+		}
+	}()
 	agentErr := sb.Exec(ctx, agentOpts)
+	stopAsks()
+	<-asksDone
 	requestedName := w.requestedName(ctx)
 
 	outcomes, err := w.finish(ctx, spec, startHeads)

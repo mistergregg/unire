@@ -100,3 +100,9 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-bre
 .composer { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 14px; border-top: 1px solid var(--line); }
 .composer textarea { margin-bottom: 8px; }
 .composer select { width: auto; margin: 0; }
+
+.asks { display: flex; flex-direction: column; gap: 10px; }
+.asks:empty { display: none; }
+.bubble.ask { border-color: var(--accent); }
+.ask .said { white-space: pre-wrap; margin-bottom: 8px; }
+.ask-form textarea { margin-bottom: 6px; }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
 // and "claude" behaves as the test configures.
 type fakeSandbox struct {
+	mu    sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
 	calls []runner.ExecOpts
 	heads int
 
@@ -27,17 +30,41 @@ type fakeSandbox struct {
 	mainErr   error // returned by the main agent run
 	followErr error // returned by the follow-up agent run
 	block     bool  // the follow-up waits for its context
+
+	agentHook func(ctx context.Context) // runs during the main agent run (it may take a while)
 }
 
 func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
+	f.mu.Lock()
 	f.calls = append(f.calls, o)
 	if f.files == nil {
 		f.files = map[string]string{}
 	}
+	if len(o.Argv) > 0 && o.Argv[0] == "claude" && !contains(o.Argv, "--resume") {
+		hook, out, err := f.agentHook, f.agentOut, f.mainErr
+		f.mu.Unlock()
+		if hook != nil {
+			hook(ctx)
+		}
+		io.WriteString(o.Stdout, out)
+		return err
+	}
+	defer f.mu.Unlock()
 	if len(o.Argv) == 0 {
 		return nil
 	}
 	switch o.Argv[0] {
+	case "ls":
+		found := false
+		for p := range f.outFiles {
+			if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == o.Argv[len(o.Argv)-1] {
+				io.WriteString(o.Stdout, name+"\n")
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("exit status 2")
+		}
 	case "git":
 		if contains(o.Argv, "rev-parse") {
 			f.heads++
@@ -476,5 +503,74 @@ func TestAgentCanNameTheConversationOnlyWhenGivenTheTool(t *testing.T) {
 	}
 	if name, _ := withTool(tools.ForNewConversation(), ""); name != "" {
 		t.Errorf("an empty request names nothing: %q", name)
+	}
+}
+
+// An agent that asks the owner a question while it runs, and goes on once the
+// answer file appears (as the sandbox's `unire ask` does).
+func TestAgentQuestionsReachTheOwnerAndTheAnswerComesBack(t *testing.T) {
+	askPath := tools.Dir + "/ask/42"
+	for _, c := range []struct {
+		name   string
+		answer string
+		ok     bool
+		want   string
+	}{
+		{"answered", "use sqlite", true, "use sqlite"},
+		{"no answer", "", false, noAnswer},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "Which database?\n"}}
+			sb.agentHook = func(ctx context.Context) {
+				// Like the real script: wait until Unire has written the answer.
+				for i := 0; i < 500; i++ {
+					sb.mu.Lock()
+					_, done := sb.files[askPath+".a"]
+					sb.mu.Unlock()
+					if done {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Error("the answer never reached the sandbox")
+			}
+			var asked []string
+			var mu sync.Mutex
+			o := opts(nil)
+			o.Tools = tools.ForReply()
+			o.AskPoll = 10 * time.Millisecond
+			o.Ask = func(_ context.Context, id, q string) (string, bool) {
+				mu.Lock()
+				asked = append(asked, id+"|"+q)
+				mu.Unlock()
+				return c.answer, c.ok
+			}
+			if _, err := run(t, sb, baseSpec(), o); err != nil {
+				t.Fatal(err)
+			}
+			if len(asked) != 1 || asked[0] != "42|Which database?" {
+				t.Errorf("asked = %v, want the one question once", asked)
+			}
+			if got := sb.files[askPath+".a"]; got != c.want {
+				t.Errorf("answer file = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestQuestionsAreIgnoredWithoutTheToolOrAnAsker(t *testing.T) {
+	askPath := tools.Dir + "/ask/7"
+	for name, o := range map[string]Options{
+		"no tool":  {Out: io.Discard, Err: io.Discard, Ask: func(context.Context, string, string) (string, bool) { t.Error("asked"); return "x", true }, AskPoll: time.Millisecond},
+		"no asker": {Out: io.Discard, Err: io.Discard, Tools: tools.ForReply(), AskPoll: time.Millisecond},
+	} {
+		sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "hello?"}}
+		sb.agentHook = func(context.Context) { time.Sleep(50 * time.Millisecond) }
+		if _, err := run(t, sb, baseSpec(), o); err != nil {
+			t.Fatal(err)
+		}
+		if _, wrote := sb.files[askPath+".a"]; wrote {
+			t.Errorf("%s: an answer was written", name)
+		}
 	}
 }

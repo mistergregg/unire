@@ -15,10 +15,16 @@ A self-hosted control panel for AI coding agents. Start a coding task from a bro
 - Easy to extend: new git servers, agents and preview types are single-file plugins.
 
 ## Non-goals (v1)
-- Multi-user accounts, billing, or serving other people (product 2).
+- Multiple users on one instance (never, see "Single owner by design"), billing, or hosting for other people (product 2).
 - Our own chat UI on top of subscription tokens. Subscriptions are used only through the official CLIs running in the sandbox.
 - Remote workers / VMs (designed for, built after v1).
 - Creating new projects from templates or prompts (existing repos only).
+
+## Single owner by design
+Each Unire instance has exactly one account, the owner's. There is no "add user" feature and first-run setup can happen only once. Agent logins, git tokens, repos, memory and sessions all belong to that one person. Reasons: subscription logins are personal and cannot be shared between people, and a shared server would mix everyone's credentials and code in one place. Someone else who wants Unire runs their own instance. If Unire is ever offered as a hosted service (product 2), the model is one isolated instance per user, each with its own database and vault, with users bringing their own agent logins or API keys.
+
+## Storage
+One SQLite file (`unire.db`) in the data directory holds settings, git servers, encrypted secrets, login sessions and, as they are built, workspaces, coding sessions, logs and memory. Schema changes are numbered migrations applied at start-up and never edited afterwards; a database from a newer version is refused, not downgraded. Backup is the data directory (or the dashboard's export).
 
 ## Core concepts
 - **Git server**: a configured source of repos (Gitea, Forgejo, GitHub, GitLab, Bitbucket, plain git).
@@ -91,7 +97,9 @@ Rules:
 - Sandboxes: Docker, resource limits, restricted network egress, no host mounts.
 - Secrets delivered per session at start (memory/tmpfs), wiped at end; git tokens scoped to selected repos where the provider allows.
 - Agent logins stored in the vault and mounted into sandboxes through one shared credentials volume per login. Milestone 0 showed this survives concurrent token refreshes; per-session copies do not. Remote workers still need a solution (long-lived token or a refresh broker).
-- Dashboard: single admin login; intended behind Tailscale/Cloudflare Access, not the open internet.
+- Dashboard: one owner account, password login. Logins are stored in the database (only a hash of each token), last 30 days sliding, survive restarts, and can be listed and revoked per device; changing the password logs out all other devices. Intended behind Tailscale/Cloudflare Access, not the open internet.
+- Secrets are write-only: the API and UI show "token saved" and allow replacing it, never viewing it.
+- Backup: the dashboard exports a zip of the database plus the master key (unless the key is supplied through `UNIRE_MASTER_KEY`).
 - Workers dial out to the controller (no inbound ports); a compromised worker exposes only its running sessions.
 
 ## Architecture

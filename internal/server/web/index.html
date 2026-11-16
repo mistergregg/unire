@@ -12,6 +12,7 @@
   <nav id="nav" hidden>
     <button class="tab" data-view="servers">Git servers</button>
     <button class="tab" data-view="repos">Find repos</button>
+    <button class="tab" data-view="settings">Settings</button>
   </nav>
   <button id="logout" class="ghost" hidden>Log out</button>
 </header>
@@ -60,6 +61,38 @@
         </label>
         <button class="primary" type="submit" id="add-submit">Test and save</button>
       </form>
+    </div>
+  </section>
+
+  <section id="view-settings" hidden>
+    <h1>Settings</h1>
+    <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
+
+    <div class="card">
+      <h2>Logged-in devices</h2>
+      <p class="muted">Logins last 30 days and renew while you use them. They survive restarts.</p>
+      <div id="login-list" class="stack"></div>
+      <div class="item-actions"><button id="revoke-all" class="danger">Log out everywhere</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Change password</h2>
+      <form id="pw-form" autocomplete="off">
+        <label>Current password
+          <input id="pw-current" type="password" required autocomplete="current-password">
+        </label>
+        <label>New password (at least 10 characters)
+          <input id="pw-new" type="password" required minlength="10" autocomplete="new-password">
+        </label>
+        <button class="primary" type="submit" id="pw-submit">Change password</button>
+        <p class="muted">Changing it logs out every other device.</p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Backup</h2>
+      <p class="muted">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
+      <a class="button" href="/api/backup" download>Download backup</a>
     </div>
   </section>
 

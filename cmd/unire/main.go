@@ -53,13 +53,14 @@ func usage() {
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address (keep it on localhost or a private network)")
-	data := fs.String("data", "./data", "directory for the vault and settings")
+	data := fs.String("data", "./data", "directory for the database (unire.db) and master key")
 	_ = fs.Parse(args)
 
 	s, err := server.New(*data)
 	if err != nil {
 		return err
 	}
+	defer s.Close()
 	srv := &http.Server{Addr: *addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

@@ -1,18 +1,26 @@
-// Package server is the Unire controller: admin login, the vault, git server
-// settings and the web UI. No API response ever contains a secret value.
+// Package server is the Unire controller: the owner's login, the vault, git
+// server settings and the web UI. No API response ever contains a secret.
+//
+// Unire has exactly one account, the owner's. There is no way to add users:
+// agent logins and tokens belong to one person, and a second person runs
+// their own instance.
 package server
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +28,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/vault"
 )
 
@@ -27,21 +36,20 @@ import (
 var webFS embed.FS
 
 const (
-	cookieName  = "unire_session"
-	sessionTTL  = 12 * time.Hour
-	minPassword = 10
-	maxFailures = 5
-	lockoutTime = time.Minute
+	cookieName   = "unire_session"
+	minPassword  = 10
+	maxFailures  = 5
+	lockoutTime  = time.Minute
+	adminHashKey = "admin_hash"
 )
 
 // Server holds the controller's state.
 type Server struct {
-	vault *vault.Vault
-	state *state
+	dataDir string
+	store   *store.Store
+	vault   *vault.Vault
 
-	setupMu  sync.Mutex // makes first-time setup happen once
 	mu       sync.Mutex
-	sessions map[string]time.Time
 	failures map[string]failure
 }
 
@@ -50,18 +58,22 @@ type failure struct {
 	until time.Time
 }
 
-// New opens the data directory and returns a Server.
+// New opens the data directory (creating the database and key on first run).
 func New(dataDir string) (*Server, error) {
-	v, err := vault.Open(dataDir)
+	st, err := store.Open(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	st, err := openState(dataDir)
+	v, err := vault.Open(st.DB(), dataDir)
 	if err != nil {
+		st.Close()
 		return nil, err
 	}
-	return &Server{vault: v, state: st, sessions: map[string]time.Time{}, failures: map[string]failure{}}, nil
+	return &Server{dataDir: dataDir, store: st, vault: v, failures: map[string]failure{}}, nil
 }
+
+// Close releases the database.
+func (s *Server) Close() error { return s.store.Close() }
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
@@ -70,6 +82,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.logout)
+
+	mux.HandleFunc("GET /api/logins", s.auth(s.listLogins))
+	mux.HandleFunc("DELETE /api/logins/{id}", s.auth(s.revokeLogin))
+	mux.HandleFunc("POST /api/logins/revoke-all", s.auth(s.revokeAll))
+	mux.HandleFunc("POST /api/password", s.auth(s.changePassword))
+	mux.HandleFunc("GET /api/backup", s.auth(s.backup))
+
 	mux.HandleFunc("GET /api/types", s.auth(s.types))
 	mux.HandleFunc("GET /api/servers", s.auth(s.listServers))
 	mux.HandleFunc("POST /api/servers", s.auth(s.addServer))
@@ -107,9 +126,23 @@ func (s *Server) csrf(next http.Handler) http.Handler {
 	})
 }
 
+// ---- logins ----
+
+func (s *Server) currentLogin(r *http.Request) (id string, token string, ok bool) {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return "", "", false
+	}
+	id, ok, err = s.store.CheckLogin(c.Value)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	return id, c.Value, true
+}
+
 func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.loggedIn(r) {
+		if _, _, ok := s.currentLogin(r); !ok {
 			writeErr(w, http.StatusUnauthorized, "not logged in")
 			return
 		}
@@ -117,33 +150,25 @@ func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) loggedIn(r *http.Request) bool {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.sessions[c.Value]
-	if !ok || time.Now().After(exp) {
-		delete(s.sessions, c.Value)
-		return false
-	}
-	return true
+func setCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		MaxAge: int(store.LoginTTL.Seconds()),
+	})
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	tok := hex.EncodeToString(b)
-	s.mu.Lock()
-	s.sessions[tok] = time.Now().Add(sessionTTL)
-	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
-		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		MaxAge: int(sessionTTL.Seconds()),
-	})
+func clearCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
+}
+
+func (s *Server) startLogin(w http.ResponseWriter, r *http.Request) error {
+	tok, err := s.store.CreateLogin(r.UserAgent(), clientIP(r))
+	if err != nil {
+		return err
+	}
+	setCookie(w, r, tok)
+	return nil
 }
 
 func clientIP(r *http.Request) string {
@@ -152,6 +177,34 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return h
+}
+
+// checkPassword verifies the owner's password with a per-IP lockout.
+func (s *Server) checkPassword(r *http.Request, pw string) (ok, lockedOut bool) {
+	ip := clientIP(r)
+	s.mu.Lock()
+	f := s.failures[ip]
+	if time.Now().Before(f.until) {
+		s.mu.Unlock()
+		return false, true
+	}
+	s.mu.Unlock()
+
+	hash, set, err := s.store.Setting(adminHashKey)
+	ok = err == nil && set && bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ok {
+		delete(s.failures, ip)
+		return true, false
+	}
+	f.count++
+	if f.count >= maxFailures {
+		f = failure{until: time.Now().Add(lockoutTime)}
+	}
+	s.failures[ip] = f
+	return false, false
 }
 
 // ---- JSON helpers ----
@@ -175,13 +228,30 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+func serverError(w http.ResponseWriter) {
+	writeErr(w, http.StatusInternalServerError, "something went wrong saving that")
+}
+
 // ---- auth endpoints ----
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{
-		"setupDone": s.state.adminHash() != "",
-		"loggedIn":  s.loggedIn(r),
-	})
+	_, set, _ := s.store.Setting(adminHashKey)
+	_, tok, in := s.currentLogin(r)
+	if in {
+		setCookie(w, r, tok) // keeps the cookie's lifetime sliding with the login
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"setupDone": set, "loggedIn": in})
+}
+
+func hashPassword(pw string) (string, error) {
+	if len(pw) < minPassword {
+		return "", errors.New("password must be at least 10 characters")
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if err != nil {
+		return "", errors.New("password is too long")
+	}
+	return string(h), nil
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
@@ -189,27 +259,25 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if len(req.Password) < minPassword {
-		writeErr(w, http.StatusBadRequest, "password must be at least 10 characters")
-		return
-	}
-	h, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	h, err := hashPassword(req.Password)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "password is too long")
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Setting the first password is allowed once; a second attempt is refused.
-	s.setupMu.Lock()
-	defer s.setupMu.Unlock()
-	if s.state.adminHash() != "" {
+	// Atomic: only the first caller can ever set the owner's password.
+	first, err := s.store.SetSettingIfUnset(adminHashKey, h)
+	if err != nil {
+		serverError(w)
+		return
+	}
+	if !first {
 		writeErr(w, http.StatusConflict, "already set up")
 		return
 	}
-	if err := s.state.setAdminHash(string(h)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not save")
+	if err := s.startLogin(w, r); err != nil {
+		serverError(w)
 		return
 	}
-	s.startSession(w, r)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -218,43 +286,140 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ip := clientIP(r)
-	s.mu.Lock()
-	f := s.failures[ip]
-	locked := time.Now().Before(f.until)
-	s.mu.Unlock()
+	ok, locked := s.checkPassword(r, req.Password)
+	switch {
+	case locked:
+		writeErr(w, http.StatusTooManyRequests, "too many attempts, wait a minute")
+	case !ok:
+		writeErr(w, http.StatusUnauthorized, "wrong password")
+	default:
+		if err := s.startLogin(w, r); err != nil {
+			serverError(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if id, _, ok := s.currentLogin(r); ok {
+		_, _ = s.store.RevokeLogin(id)
+	}
+	clearCookie(w)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type loginView struct {
+	ID        string `json:"id"`
+	UserAgent string `json:"userAgent"`
+	IP        string `json:"ip"`
+	CreatedAt int64  `json:"createdAt"`
+	LastSeen  int64  `json:"lastSeen"`
+	Current   bool   `json:"current"`
+}
+
+func (s *Server) listLogins(w http.ResponseWriter, r *http.Request) {
+	cur, _, _ := s.currentLogin(r)
+	logins, err := s.store.Logins()
+	if err != nil {
+		serverError(w)
+		return
+	}
+	out := []loginView{}
+	for _, l := range logins {
+		out = append(out, loginView{l.ID, l.UserAgent, l.IP, l.CreatedAt.Unix(), l.LastSeen.Unix(), l.ID == cur})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) revokeLogin(w http.ResponseWriter, r *http.Request) {
+	cur, _, _ := s.currentLogin(r)
+	id := r.PathValue("id")
+	ok, err := s.store.RevokeLogin(id)
+	switch {
+	case err != nil:
+		serverError(w)
+	case !ok:
+		writeErr(w, http.StatusNotFound, "no such login")
+	default:
+		if id == cur {
+			clearCookie(w)
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func (s *Server) revokeAll(w http.ResponseWriter, _ *http.Request) {
+	if err := s.store.RevokeAllLogins(""); err != nil {
+		serverError(w)
+		return
+	}
+	clearCookie(w)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Current, New string }
+	if !readJSON(w, r, &req) {
+		return
+	}
+	ok, locked := s.checkPassword(r, req.Current)
 	if locked {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, wait a minute")
 		return
 	}
-	hash := s.state.adminHash()
-	ok := hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) == nil
 	if !ok {
-		s.mu.Lock()
-		f.count++
-		if f.count >= maxFailures {
-			f = failure{until: time.Now().Add(lockoutTime)}
-		}
-		s.failures[ip] = f
-		s.mu.Unlock()
-		writeErr(w, http.StatusUnauthorized, "wrong password")
+		writeErr(w, http.StatusUnauthorized, "current password is wrong")
 		return
 	}
-	s.mu.Lock()
-	delete(s.failures, ip)
-	s.mu.Unlock()
-	s.startSession(w, r)
+	h, err := hashPassword(req.New)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.SetSetting(adminHashKey, h); err != nil {
+		serverError(w)
+		return
+	}
+	// A new password ends every other login, in case one of them was not yours.
+	cur, _, _ := s.currentLogin(r)
+	if err := s.store.RevokeAllLogins(cur); err != nil {
+		serverError(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(cookieName); err == nil {
-		s.mu.Lock()
-		delete(s.sessions, c.Value)
-		s.mu.Unlock()
+// backup streams a zip with a consistent copy of the database and, when the
+// master key is stored in a file, the key. The key is what decrypts the
+// vault, so the download is as sensitive as the vault itself.
+func (s *Server) backup(w http.ResponseWriter, _ *http.Request) {
+	rb := make([]byte, 6)
+	_, _ = rand.Read(rb)
+	tmp := filepath.Join(s.dataDir, "backup-"+hex.EncodeToString(rb)+".tmp")
+	defer os.Remove(tmp)
+	if err := s.store.Snapshot(tmp); err != nil {
+		serverError(w)
+		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="unire-backup-`+time.Now().Format("2006-01-02")+`.zip"`)
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	add := func(name, path string) {
+		f, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		if fw, err := zw.Create(name); err == nil {
+			_, _ = io.Copy(fw, f)
+		}
+	}
+	add(store.DBFileName, tmp)
+	if vault.KeyInFile() {
+		add(vault.KeyFileName, filepath.Join(s.dataDir, vault.KeyFileName))
+	}
 }
 
 // ---- git servers ----
@@ -268,7 +433,7 @@ type serverView struct {
 	TokenSet           bool   `json:"tokenSet"` // never the token itself
 }
 
-func (s *Server) view(g GitServer) serverView {
+func (s *Server) view(g store.GitServer) serverView {
 	return serverView{g.ID, g.Name, g.Type, g.BaseURL, g.InsecureSkipVerify, s.vault.Has(g.TokenSecret)}
 }
 
@@ -277,14 +442,19 @@ func (s *Server) types(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) listServers(w http.ResponseWriter, _ *http.Request) {
+	list, err := s.store.GitServers()
+	if err != nil {
+		serverError(w)
+		return
+	}
 	out := []serverView{}
-	for _, g := range s.state.servers() {
+	for _, g := range list {
 		out = append(out, s.view(g))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) provider(g GitServer) (gitprovider.Provider, error) {
+func (s *Server) provider(g store.GitServer) (gitprovider.Provider, error) {
 	tok, err := s.vault.Get(g.TokenSecret)
 	if err != nil {
 		return nil, errors.New("no token saved for this server")
@@ -337,21 +507,25 @@ func (s *Server) addServer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "connection test failed: "+err.Error())
 		return
 	}
-	g, err := s.state.addServer(GitServer{Name: req.Name, Type: req.Type, BaseURL: req.BaseURL, InsecureSkipVerify: req.InsecureSkipVerify})
+	g, err := s.store.AddGitServer(store.GitServer{Name: req.Name, Type: req.Type, BaseURL: req.BaseURL, InsecureSkipVerify: req.InsecureSkipVerify})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not save server")
+		serverError(w)
 		return
 	}
 	if err := s.vault.Set(g.TokenSecret, req.Token); err != nil {
-		_, _, _ = s.state.removeServer(g.ID)
-		writeErr(w, http.StatusInternalServerError, "could not save token")
+		_, _, _ = s.store.RemoveGitServer(g.ID)
+		serverError(w)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"server": s.view(g), "user": user})
 }
 
-func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (GitServer, bool) {
-	g, ok := s.state.server(r.PathValue("id"))
+func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (store.GitServer, bool) {
+	g, ok, err := s.store.GitServer(r.PathValue("id"))
+	if err != nil {
+		serverError(w)
+		return g, false
+	}
 	if !ok {
 		writeErr(w, http.StatusNotFound, "no such server")
 	}
@@ -400,16 +574,16 @@ func (s *Server) replaceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.vault.Set(g.TokenSecret, req.Token); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not save token")
+		serverError(w)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"user": user})
 }
 
 func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request) {
-	g, removed, err := s.state.removeServer(r.PathValue("id"))
+	g, removed, err := s.store.RemoveGitServer(r.PathValue("id"))
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not save")
+		serverError(w)
 		return
 	}
 	if !removed {

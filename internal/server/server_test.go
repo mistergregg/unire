@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -13,41 +14,54 @@ import (
 	"testing"
 )
 
+const goodPassword = "correct horse battery"
+
 type env struct {
 	t    *testing.T
-	base string
+	srv  *Server
+	ts   *httptest.Server
 	c    *http.Client
 	dir  string
-	log  *bytes.Buffer // every response body seen, to check for leaks
+	seen *bytes.Buffer // every response body, to check for leaks
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
-	return &env{t: t, base: ts.URL, c: &http.Client{Jar: jar}, dir: dir, log: &bytes.Buffer{}}
+	e := &env{t: t, dir: dir, c: &http.Client{Jar: jar}, seen: &bytes.Buffer{}}
+	e.start()
+	return e
 }
 
-func (e *env) do(method, path string, body any, headers map[string]string) (int, string) {
+// start (re)opens the server on the same data directory, like a restart.
+func (e *env) start() {
+	s, err := New(e.dir)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.srv = s
+	e.ts = httptest.NewServer(s.Handler())
+	e.t.Cleanup(func() { e.ts.Close(); s.Close() })
+}
+
+func (e *env) restart() {
+	e.ts.Close()
+	e.srv.Close()
+	e.start()
+}
+
+func (e *env) do(method, path string, body any, noCSRF ...bool) (int, string) {
 	e.t.Helper()
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, _ := http.NewRequest(method, e.base+path, rd)
+	req, _ := http.NewRequest(method, e.ts.URL+path, rd)
 	req.Header.Set("Content-Type", "application/json")
-	if headers == nil {
+	if len(noCSRF) == 0 {
 		req.Header.Set("X-Requested-With", "unire")
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
 	}
 	resp, err := e.c.Do(req)
 	if err != nil {
@@ -55,8 +69,15 @@ func (e *env) do(method, path string, body any, headers map[string]string) (int,
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	e.log.Write(b)
+	e.seen.Write(b)
 	return resp.StatusCode, string(b)
+}
+
+func (e *env) setup() {
+	e.t.Helper()
+	if code, body := e.do("POST", "/api/setup", map[string]string{"password": goodPassword}); code != 200 {
+		e.t.Fatalf("setup = %d %s", code, body)
+	}
 }
 
 func fakeGitea(t *testing.T, token string) *httptest.Server {
@@ -81,66 +102,209 @@ func TestFlow(t *testing.T) {
 	const secret = "super-secret-token-xyz"
 	gitea := fakeGitea(t, secret)
 
-	if code, _ := e.do("GET", "/api/servers", nil, nil); code != http.StatusUnauthorized {
+	if code, _ := e.do("GET", "/api/servers", nil); code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated list = %d, want 401", code)
 	}
-	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "short"}, nil); code != http.StatusBadRequest {
+	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "short"}); code != http.StatusBadRequest {
 		t.Errorf("short password = %d, want 400", code)
 	}
-	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "correct horse battery"}, nil); code != http.StatusOK {
-		t.Fatalf("setup = %d", code)
-	}
-	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "another password!"}, nil); code != http.StatusConflict {
-		t.Errorf("second setup = %d, want 409", code)
-	}
+	e.setup()
 
-	// Add a server with a wrong token: refused, nothing saved.
 	add := map[string]any{"name": "Home Gitea", "type": "gitea", "baseUrl": gitea.URL, "token": "wrong"}
-	if code, _ := e.do("POST", "/api/servers", add, nil); code != http.StatusBadRequest {
+	if code, _ := e.do("POST", "/api/servers", add); code != http.StatusBadRequest {
 		t.Errorf("wrong token add = %d, want 400", code)
 	}
 	add["token"] = secret
-	code, body := e.do("POST", "/api/servers", add, nil)
-	if code != http.StatusCreated {
+	if code, body := e.do("POST", "/api/servers", add); code != http.StatusCreated {
 		t.Fatalf("add = %d %s", code, body)
 	}
 
-	code, body = e.do("GET", "/api/servers", nil, nil)
+	code, body := e.do("GET", "/api/servers", nil)
 	if code != 200 || !strings.Contains(body, `"tokenSet":true`) || !strings.Contains(body, `"id":"home-gitea"`) {
 		t.Errorf("list = %d %s", code, body)
 	}
-	if code, body = e.do("GET", "/api/servers/home-gitea/repos?q=api", nil, nil); code != 200 || !strings.Contains(body, "greg/api") {
+	if code, body = e.do("GET", "/api/servers/home-gitea/repos?q=api", nil); code != 200 || !strings.Contains(body, "greg/api") {
 		t.Errorf("repos = %d %s", code, body)
 	}
-	if code, body = e.do("POST", "/api/servers/home-gitea/test", nil, nil); code != 200 || !strings.Contains(body, "greg") {
+	if code, body = e.do("POST", "/api/servers/home-gitea/test", nil); code != 200 || !strings.Contains(body, "greg") {
 		t.Errorf("test = %d %s", code, body)
 	}
-	if code, _ = e.do("PUT", "/api/servers/home-gitea/token", map[string]string{"token": "also-wrong"}, nil); code != http.StatusBadRequest {
+	if code, _ = e.do("PUT", "/api/servers/home-gitea/token", map[string]string{"token": "also-wrong"}); code != http.StatusBadRequest {
 		t.Errorf("replace with bad token = %d, want 400", code)
 	}
 
-	// The token must never appear in any response or in a file as plain text.
-	if strings.Contains(e.log.String(), secret) {
+	// The token must never appear in a response, or in clear text on disk.
+	if strings.Contains(e.seen.String(), secret) {
 		t.Error("a response contained the token")
 	}
-	for _, f := range []string{"vault.json", "state.json"} {
-		b, _ := os.ReadFile(filepath.Join(e.dir, f))
-		if strings.Contains(string(b), secret) {
-			t.Errorf("%s contains the token in clear text", f)
+	files, _ := filepath.Glob(filepath.Join(e.dir, "*"))
+	for _, f := range files {
+		if b, err := os.ReadFile(f); err == nil && strings.Contains(string(b), secret) {
+			t.Errorf("%s contains the token in clear text", filepath.Base(f))
 		}
 	}
 
-	if code, _ = e.do("DELETE", "/api/servers/home-gitea", nil, nil); code != 200 {
+	if code, _ = e.do("DELETE", "/api/servers/home-gitea", nil); code != 200 {
 		t.Errorf("delete = %d", code)
 	}
-	if v, _ := New(e.dir); v != nil && v.vault.Has("git-server-home-gitea") {
+	if e.srv.vault.Has("git-server-home-gitea") {
 		t.Error("token should be deleted with the server")
+	}
+}
+
+func TestEverythingSurvivesARestart(t *testing.T) {
+	e := newEnv(t)
+	gitea := fakeGitea(t, "tok")
+	e.setup()
+	e.do("POST", "/api/servers", map[string]any{"name": "G", "type": "gitea", "baseUrl": gitea.URL, "token": "tok"})
+
+	e.restart() // same cookie jar: the browser keeps its cookie
+
+	if code, body := e.do("GET", "/api/status", nil); code != 200 || !strings.Contains(body, `"loggedIn":true`) {
+		t.Errorf("login lost on restart: %d %s", code, body)
+	}
+	if code, body := e.do("POST", "/api/servers/g/test", nil); code != 200 {
+		t.Errorf("server or token lost on restart: %d %s", code, body)
+	}
+}
+
+func TestOnlyOneOwner(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "another password!"}); code != http.StatusConflict {
+		t.Errorf("second setup = %d, want 409", code)
+	}
+	// Even after a restart, and even when logged out.
+	e.restart()
+	e.do("POST", "/api/logout", nil)
+	if code, _ := e.do("POST", "/api/setup", map[string]string{"password": "another password!"}); code != http.StatusConflict {
+		t.Errorf("setup after restart = %d, want 409", code)
+	}
+}
+
+func TestDevicesAndRevoke(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+
+	// A second device logs in.
+	jar2, _ := cookiejar.New(nil)
+	phone := &http.Client{Jar: jar2}
+	req, _ := http.NewRequest("POST", e.ts.URL+"/api/login", strings.NewReader(`{"password":"`+goodPassword+`"}`))
+	req.Header.Set("X-Requested-With", "unire")
+	req.Header.Set("User-Agent", "Phone Browser")
+	if resp, err := phone.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("second login: %v %v", resp, err)
+	}
+
+	_, body := e.do("GET", "/api/logins", nil)
+	var list []loginView
+	json.Unmarshal([]byte(body), &list)
+	if len(list) != 2 {
+		t.Fatalf("want 2 logins, got %s", body)
+	}
+	var phoneID string
+	currents := 0
+	for _, l := range list {
+		if l.Current {
+			currents++
+		}
+		if l.UserAgent == "Phone Browser" {
+			phoneID = l.ID
+		}
+	}
+	if currents != 1 || phoneID == "" {
+		t.Fatalf("expected one current login and a phone login, got %s", body)
+	}
+
+	if code, _ := e.do("DELETE", "/api/logins/"+phoneID, nil); code != 200 {
+		t.Fatalf("revoke = %d", code)
+	}
+	areq, _ := http.NewRequest("GET", e.ts.URL+"/api/servers", nil)
+	if resp, _ := phone.Do(areq); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("revoked phone still logged in: %d", resp.StatusCode)
+	}
+
+	if code, _ := e.do("POST", "/api/logins/revoke-all", nil); code != 200 {
+		t.Fatalf("revoke-all = %d", code)
+	}
+	if code, _ := e.do("GET", "/api/servers", nil); code != http.StatusUnauthorized {
+		t.Errorf("after revoke-all = %d, want 401", code)
+	}
+}
+
+func TestChangePassword(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	jar2, _ := cookiejar.New(nil)
+	other := &http.Client{Jar: jar2}
+	req, _ := http.NewRequest("POST", e.ts.URL+"/api/login", strings.NewReader(`{"password":"`+goodPassword+`"}`))
+	req.Header.Set("X-Requested-With", "unire")
+	other.Do(req)
+
+	if code, _ := e.do("POST", "/api/password", map[string]string{"current": "wrong", "new": "brand new password"}); code != http.StatusUnauthorized {
+		t.Errorf("wrong current = %d, want 401", code)
+	}
+	if code, _ := e.do("POST", "/api/password", map[string]string{"current": goodPassword, "new": "short"}); code != http.StatusBadRequest {
+		t.Errorf("short new = %d, want 400", code)
+	}
+	if code, _ := e.do("POST", "/api/password", map[string]string{"current": goodPassword, "new": "brand new password"}); code != 200 {
+		t.Fatalf("change = %d", code)
+	}
+	if code, _ := e.do("GET", "/api/servers", nil); code != 200 {
+		t.Errorf("this device should stay logged in, got %d", code)
+	}
+	areq, _ := http.NewRequest("GET", e.ts.URL+"/api/servers", nil)
+	if resp, _ := other.Do(areq); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("other device should be logged out, got %d", resp.StatusCode)
+	}
+	e.do("POST", "/api/logout", nil)
+	if code, _ := e.do("POST", "/api/login", map[string]string{"password": goodPassword}); code != http.StatusUnauthorized {
+		t.Errorf("old password still works: %d", code)
+	}
+	if code, _ := e.do("POST", "/api/login", map[string]string{"password": "brand new password"}); code != 200 {
+		t.Errorf("new password rejected: %d", code)
+	}
+}
+
+func TestBackupContainsDatabaseAndKey(t *testing.T) {
+	e := newEnv(t)
+	t.Setenv("UNIRE_MASTER_KEY", "") // key is in a file in this test
+	e.setup()
+	if code, _ := func() (int, string) {
+		jar, _ := cookiejar.New(nil)
+		c := &http.Client{Jar: jar}
+		resp, _ := c.Get(e.ts.URL + "/api/backup")
+		return resp.StatusCode, ""
+	}(); code != http.StatusUnauthorized {
+		t.Errorf("backup without login = %d, want 401", code)
+	}
+
+	resp, err := e.c.Get(e.ts.URL + "/api/backup")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("backup: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range zr.File {
+		got[f.Name] = true
+	}
+	if !got["unire.db"] || !got["master.key"] || len(got) != 2 {
+		t.Errorf("zip contents = %v", got)
+	}
+	left, _ := filepath.Glob(filepath.Join(e.dir, "backup-*"))
+	if len(left) != 0 {
+		t.Errorf("temporary backup files left behind: %v", left)
 	}
 }
 
 func TestCSRFHeaderRequired(t *testing.T) {
 	e := newEnv(t)
-	code, _ := e.do("POST", "/api/setup", map[string]string{"password": "correct horse battery"}, map[string]string{})
+	code, _ := e.do("POST", "/api/setup", map[string]string{"password": goodPassword}, true)
 	if code != http.StatusForbidden {
 		t.Errorf("POST without X-Requested-With = %d, want 403", code)
 	}
@@ -148,22 +312,22 @@ func TestCSRFHeaderRequired(t *testing.T) {
 
 func TestLoginLockout(t *testing.T) {
 	e := newEnv(t)
-	e.do("POST", "/api/setup", map[string]string{"password": "correct horse battery"}, nil)
-	e.do("POST", "/api/logout", nil, nil)
+	e.setup()
+	e.do("POST", "/api/logout", nil)
 	for i := 0; i < maxFailures; i++ {
-		if code, _ := e.do("POST", "/api/login", map[string]string{"password": "nope"}, nil); code != http.StatusUnauthorized {
+		if code, _ := e.do("POST", "/api/login", map[string]string{"password": "nope"}); code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d = %d", i, code)
 		}
 	}
-	if code, _ := e.do("POST", "/api/login", map[string]string{"password": "correct horse battery"}, nil); code != http.StatusTooManyRequests {
+	if code, _ := e.do("POST", "/api/login", map[string]string{"password": goodPassword}); code != http.StatusTooManyRequests {
 		t.Errorf("after lockout = %d, want 429", code)
 	}
 }
 
 func TestTypesListedForUI(t *testing.T) {
 	e := newEnv(t)
-	e.do("POST", "/api/setup", map[string]string{"password": "correct horse battery"}, nil)
-	code, body := e.do("GET", "/api/types", nil, nil)
+	e.setup()
+	code, body := e.do("GET", "/api/types", nil)
 	if code != 200 || !strings.Contains(body, `"gitlab"`) || !strings.Contains(body, `"tokenHelp"`) {
 		t.Errorf("types = %d %s", code, body)
 	}

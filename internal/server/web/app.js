@@ -44,7 +44,7 @@ async function guarded(button, fn) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "servers", "repos"];
+const VIEWS = ["auth", "servers", "repos", "settings"];
 function show(name) {
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
   $("nav").hidden = $("logout").hidden = name === "auth";
@@ -93,7 +93,8 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  if (t.dataset.view === "servers") openServers(); else openRepos();
+  const open = { servers: openServers, repos: openRepos, settings: openSettings }[t.dataset.view];
+  guarded(null, open);
 }));
 
 // ---- git servers ----
@@ -193,5 +194,54 @@ function repoCard(r) {
     r.description ? el("div", { class: "muted" }, r.description) : "",
     el("div", {}, el("code", {}, r.cloneUrl)));
 }
+
+// ---- settings: devices, password ----
+function describeAgent(ua) {
+  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
+  return ua ? browser + (os ? " on " + os : "") : "Unknown device";
+}
+
+function ago(unix) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + " min ago";
+  if (s < 129600) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+
+async function openSettings() {
+  show("settings");
+  const logins = await api("GET", "/api/logins");
+  $("login-list").replaceChildren(...logins.map((l) => {
+    const btn = el("button", {}, l.current ? "Log out here" : "Log out");
+    btn.addEventListener("click", () => guarded(btn, async () => {
+      await api("DELETE", "/api/logins/" + encodeURIComponent(l.id));
+      if (l.current) { showAuth(true); return; }
+      await openSettings();
+    }));
+    return el("div", { class: "item" },
+      el("div", { class: "item-head" },
+        el("span", { class: "name" }, describeAgent(l.userAgent)),
+        l.current ? el("span", { class: "badge" }, "this device") : ""),
+      el("div", { class: "muted" }, (l.ip || "unknown address") + " · active " + ago(l.lastSeen) + " · signed in " + ago(l.createdAt)),
+      el("div", { class: "item-actions" }, btn));
+  }));
+}
+
+$("revoke-all").addEventListener("click", () => {
+  if (!confirm("Log out of every device, including this one?")) return;
+  guarded($("revoke-all"), async () => { await api("POST", "/api/logins/revoke-all"); showAuth(true); });
+});
+
+$("pw-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("pw-submit"), async () => {
+    await api("POST", "/api/password", { current: $("pw-current").value, new: $("pw-new").value });
+    $("pw-form").reset();
+    await openSettings();
+    banner("Password changed. Other devices were logged out.");
+  });
+});
 
 init().catch((e) => banner(e.message, true));

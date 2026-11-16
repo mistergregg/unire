@@ -52,42 +52,37 @@
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
       <div class="card">
-        <textarea id="n-prompt" required rows="6" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+        <textarea id="n-prompt" required rows="5" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+
+        <div id="n-selected" class="chips"></div>
+        <div class="row">
+          <select id="n-workspace" aria-label="Saved workspace"></select>
+          <select id="n-server" aria-label="Git server"></select>
+          <input id="n-query" type="search" placeholder="Add a repo: search your git servers" aria-label="Add a repo">
+        </div>
+        <div id="n-results" class="results" hidden></div>
+
         <div class="between spaced">
           <select id="n-agent" aria-label="Agent"></select>
           <button class="primary" type="submit" id="n-submit">Start</button>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>Repos</h2>
-        <div id="n-selected" class="stack"></div>
-        <select id="n-workspace" aria-label="Saved workspace"></select>
-        <div class="row spaced">
-          <select id="n-server" aria-label="Git server"></select>
-          <input id="n-query" type="search" placeholder="Search your repos to add">
-        </div>
-        <div id="n-results" class="stack"></div>
         <details class="spaced">
-          <summary>Save these repos as a workspace</summary>
-          <div class="row spaced">
-            <input id="n-ws-name" maxlength="60" placeholder="Workspace name">
+          <summary>Options</summary>
+          <label class="spaced">Network access
+            <select id="n-network"></select>
+          </label>
+          <p id="n-network-desc" class="muted"></p>
+          <label class="check">
+            <input id="n-memory" type="checkbox" checked> Use project memory
+          </label>
+          <p class="muted">The agent starts with what earlier sessions learned about these repos and writes down what it learned when it finishes.</p>
+          <div class="row">
+            <input id="n-ws-name" maxlength="60" placeholder="Save these repos as a workspace">
             <button type="button" id="n-ws-save">Save</button>
           </div>
         </details>
       </div>
-
-      <details class="card">
-        <summary>Options</summary>
-        <label class="spaced">Network access
-          <select id="n-network"></select>
-        </label>
-        <p id="n-network-desc" class="muted"></p>
-        <label class="check">
-          <input id="n-memory" type="checkbox" checked> Use project memory
-        </label>
-        <p class="muted">The agent starts with what earlier sessions learned about these repos and writes down what it learned when it finishes.</p>
-      </details>
     </form>
   </section>
 

@@ -69,7 +69,9 @@ async function openNew(prefill) {
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
   $("n-server").hidden = servers.length < 2; // nothing to choose with one server
   fillWorkspaceSelect();
-  $("n-results").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first (Git servers tab)."));
+  $("n-results").replaceChildren(); $("n-results").hidden = true;
+  $("n-query").disabled = !servers.length;
+  $("n-query").placeholder = servers.length ? "Add a repo: search your git servers" : "Add a git server first (Git servers tab)";
   if (prefill) {
     $("n-task").value = prefill.task;
     selected = prefill.repos;
@@ -103,36 +105,38 @@ $("n-workspace").addEventListener("change", () => {
 
 const key = (r) => r.serverId + "/" + r.fullName;
 
+// The chosen repos, as small chips inside the prompt box. The branch field is
+// optional: empty means the repo's default branch.
 function renderSelected() {
-  $("n-selected").replaceChildren(...(selected.length ? selected.map((r, i) => {
-    const base = el("input", { placeholder: (r.defaultBranch || "default") + " (base branch)", value: r.base || "", maxlength: "100", "aria-label": "Base branch for " + r.fullName });
+  $("n-selected").hidden = !selected.length;
+  $("n-selected").replaceChildren(...selected.map((r, i) => {
+    const base = el("input", { placeholder: r.defaultBranch || "branch", value: r.base || "", maxlength: "100", title: "Base branch (empty: the default)", "aria-label": "Base branch for " + r.fullName });
     base.addEventListener("input", () => { selected[i].base = base.value.trim(); });
-    const remove = el("button", { type: "button", class: "danger" }, "Remove");
+    const remove = el("button", { type: "button", class: "ghost", title: "Remove", "aria-label": "Remove " + r.fullName }, "×");
     remove.addEventListener("click", () => { selected.splice(i, 1); renderSelected(); renderResults(); });
-    const srv = serverList.find((s) => s.id === r.serverId);
-    return el("div", { class: "item" },
-      el("div", { class: "item-head" }, el("span", { class: "name" }, r.fullName), el("span", { class: "badge" }, srv ? srv.name : r.serverId)),
-      el("div", { class: "item-actions" }, base, remove));
-  }) : [el("p", { class: "muted" }, "Add the repos this task needs.")]));
+    return el("span", { class: "chip" }, el("span", { class: "name" }, r.fullName), base, remove);
+  }));
 }
 
+// Search results open under the search field and close when it loses focus.
+let resultsOpen = false;
 function renderResults() {
-  $("n-results").replaceChildren(...(lastResults.length ? lastResults.map((r) => {
+  const box = $("n-results");
+  box.replaceChildren(...lastResults.map((r) => {
     const already = selected.some((s) => key(s) === key(r));
-    const add = el("button", { type: "button" }, already ? "Added" : "Add");
-    add.disabled = already;
-    add.addEventListener("click", () => {
+    const row = el("button", { type: "button", class: "result" },
+      el("span", { class: "name" }, r.fullName),
+      el("span", { class: "muted" }, (already ? "added" : (r.private ? "private" : "public")) + (r.description ? " · " + r.description : "")));
+    row.disabled = already;
+    row.addEventListener("click", () => {
       selected.push({ serverId: r.serverId, fullName: r.fullName, cloneUrl: r.cloneUrl, base: "", defaultBranch: r.defaultBranch });
       renderSelected(); renderResults();
     });
-    return el("div", { class: "item" },
-      el("div", { class: "item-head" },
-        el("span", { class: "name" }, r.fullName),
-        el("span", { class: "badge" }, (r.private ? "private" : "public") + " · " + (r.defaultBranch || "?"))),
-      r.description ? el("div", { class: "muted" }, r.description) : "",
-      el("div", { class: "item-actions" }, add));
-  }) : []));
+    return row;
+  }));
+  box.hidden = !lastResults.length || !resultsOpen;
 }
+$("n-results").addEventListener("mousedown", (e) => e.preventDefault()); // keep the search field focused while clicking
 
 async function searchRepos() {
   const id = $("n-server").value;
@@ -140,7 +144,10 @@ async function searchRepos() {
   const repos = await api("GET", "/api/servers/" + encodeURIComponent(id) + "/repos?q=" + encodeURIComponent($("n-query").value));
   lastResults = repos.map((r) => ({ ...r, serverId: id }));
   renderResults();
-  if (!repos.length) $("n-results").replaceChildren(el("p", { class: "muted" }, "No matching repos."));
+  if (!repos.length && resultsOpen) {
+    $("n-results").replaceChildren(el("p", { class: "muted" }, "No matching repos."));
+    $("n-results").hidden = false;
+  }
 }
 // Search as you type (and once on opening the box), so there is no Search button.
 let searchTimer = null;
@@ -149,7 +156,8 @@ const searchSoon = (ms) => {
   searchTimer = setTimeout(() => searchRepos().catch((e) => banner(e.message, true)), ms);
 };
 $("n-query").addEventListener("input", () => searchSoon(300));
-$("n-query").addEventListener("focus", () => { if (!lastResults.length) searchSoon(0); });
+$("n-query").addEventListener("focus", () => { resultsOpen = true; renderResults(); if (!lastResults.length) searchSoon(0); });
+$("n-query").addEventListener("blur", () => { resultsOpen = false; $("n-results").hidden = true; });
 $("n-query").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
 $("n-server").addEventListener("change", () => searchSoon(0));
 

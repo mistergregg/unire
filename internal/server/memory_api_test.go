@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -31,8 +32,25 @@ func (e *env) memoryAfterSession(base string, extra map[string]any) string {
 	}
 	id := sess["id"].(string)
 	e.waitStatus(id, "done")
-	// Memory is saved just before the session is marked done.
+	e.waitMemorySaved(id)
 	return id
+}
+
+// waitMemorySaved waits for the background memory step: a session is marked done
+// as soon as its work is pushed, and saves its memory after that.
+func (e *env) waitMemorySaved(id string) {
+	e.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, res := e.get("/api/sessions/" + id + "/logs")
+		if res["saving"] == false {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("session %s never finished saving its memory", id)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestSessionsUseMemoryByDefaultAndTheMemoryTabShowsIt(t *testing.T) {

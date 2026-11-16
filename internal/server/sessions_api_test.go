@@ -119,6 +119,12 @@ func (e *env) waitStatus(id string, want ...string) map[string]any {
 		json.Unmarshal([]byte(body), &res)
 		for _, w := range want {
 			if res["status"] == w {
+				if res["finished"] == true {
+					// A finished session may still be saving its memory in the background.
+					e.waitMemorySaved(id)
+					_, body = e.do("GET", "/api/sessions/"+id+"/logs", nil)
+					json.Unmarshal([]byte(body), &res)
+				}
 				return res
 			}
 		}

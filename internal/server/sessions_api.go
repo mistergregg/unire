@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -230,12 +229,6 @@ func (s *Server) putSandbox(w http.ResponseWriter, r *http.Request) {
 	s.getSandbox(w, r)
 }
 
-func (s *Server) agentNames(w http.ResponseWriter, _ *http.Request) {
-	names := agent.Names()
-	sort.Strings(names)
-	writeJSON(w, http.StatusOK, names)
-}
-
 // ---- repo references ----
 
 var defaultHosts = map[string]string{"github": "github.com", "gitlab": "gitlab.com"}
@@ -413,9 +406,19 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "tell the agent what to do (20,000 characters max)")
 		return
 	}
-	if _, err := agent.Get(req.Agent); err != nil {
+	ad, err := agent.Get(req.Agent)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// Fail fast, with a way forward, when the agent is known not to be signed in.
+	// Only for agents whose sign-in check has been verified: a guess must never
+	// block someone who is in fact signed in.
+	if ad.Info().Verified.Status {
+		if st := s.agentStatus(r.Context(), ad); st.known && !st.loggedIn {
+			writeErr(w, http.StatusBadRequest, ad.Info().Label+" is not signed in. Open the Agents page and sign in first.")
+			return
+		}
 	}
 	repos, err := s.resolveRepos(req.Repos)
 	if err != nil {

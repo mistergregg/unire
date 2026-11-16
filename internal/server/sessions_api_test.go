@@ -24,6 +24,9 @@ type fakeBox struct {
 	out      string
 	block    chan struct{}
 	outFiles map[string]string // files the agent "writes" in the memory step
+
+	status      map[string]statusResult // answers to sign-in questions, by command name
+	statusAsked []string
 }
 
 type fakeRunner struct{ box *fakeBox }

@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,6 +99,65 @@ func (b dockerSandbox) Exec(ctx context.Context, o ExecOpts) error {
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
 	return cmd.Run()
+}
+
+// CleanupOrphans removes sandbox and sign-in containers left behind by an
+// earlier run of Unire (after a crash, a kill or an update). It is called at
+// start-up, when no session of this run can exist yet, and returns how many it
+// removed. It assumes one Unire per Docker host.
+func CleanupOrphans(ctx context.Context) (int, error) {
+	removed := 0
+	for _, label := range []string{"unire.session", "unire.login"} {
+		out, err := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label="+label).Output()
+		if err != nil {
+			return removed, err
+		}
+		ids := strings.Fields(string(out))
+		if len(ids) == 0 {
+			continue
+		}
+		if err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f"}, ids...)...).Run(); err != nil {
+			return removed, err
+		}
+		removed += len(ids)
+	}
+	return removed, nil
+}
+
+// RunOnce runs argv in a throwaway container with the agent login volume and
+// no network, and returns its combined output.
+func (d Docker) RunOnce(ctx context.Context, argv []string) (string, bool, error) {
+	args := append(d.oneShotArgs(), argv...)
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out.String(), false, nil // the command ran and failed: that is an answer, not an error
+		}
+		return out.String(), false, err // docker itself could not run
+	}
+	return out.String(), true, nil
+}
+
+func (d Docker) oneShotArgs() []string {
+	return []string{
+		"run", "--rm", "--network", "none", "--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
+		"-v", d.CredsVolume + ":/home/node", "-w", "/home/node", d.Image,
+	}
+}
+
+// LoginTerminalArgs builds the `docker run` arguments for an interactive login
+// terminal. Only the agent logins are mounted: no repos and no git tokens.
+func (d Docker) LoginTerminalArgs(name string, argv []string) []string {
+	args := []string{
+		"run", "-it", "--rm", "--name", name, "--label", "unire.login=1",
+		"--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
+		"-e", "TERM=xterm-256color", "-v", d.CredsVolume + ":/home/node", "-w", "/home/node", d.Image,
+	}
+	return append(args, argv...)
 }
 
 // Address returns the sandbox's IP address on the named Docker network.

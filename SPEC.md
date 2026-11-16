@@ -60,7 +60,7 @@ Each is one file implementing a small interface, plus a shared conformance test 
 - UI warns when a server cannot scope tokens to selected repos.
 
 ### Agent adapters
-Launch command, login capture/restore (credential files), mode flags (auto-approve), done/waiting detection, native memory file name (CLAUDE.md, GEMINI.md, AGENTS.md…).
+One file per agent (see [docs/adding-an-agent.md](docs/adding-an-agent.md)): launch command and mode flags, the agent's own sign-in command and a way to check it, how memory is delivered (a native file such as CLAUDE.md, or the prompt), the hosts it needs, and a `Verified` record of what has been checked against the real CLI. Sign-in happens through a terminal in the browser on the Agents page, using each agent's own subscription login; the logins live in one shared volume. Implemented: Claude Code (verified), Codex and Gemini CLI (written from the CLIs' own help, not yet run with a signed-in account). Not yet: Antigravity (its sign-in uses the OS keyring, which a container lacks) and Ollama (a model backend for an agent, not an agent).
 
 ### Runners (sandbox types)
 `prepare(session)`, `start(session)`, `attach(session)` (terminal stream), `exposePort(session, port)`, `stop(session)`, `capabilities()` (isolation level, resource limits).

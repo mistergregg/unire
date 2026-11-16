@@ -38,6 +38,34 @@ func TestRunArgsNetworkAndEnv(t *testing.T) {
 	}
 }
 
+func TestOneShotHasNoNetworkAndOnlyTheLoginVolume(t *testing.T) {
+	d := Docker{Image: "img", CredsVolume: "creds"}
+	got := strings.Join(append(d.oneShotArgs(), "claude", "auth", "status"), " ")
+	for _, want := range []string{"--rm", "--network none", "-v creds:/home/node", "img claude auth status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("one-shot args missing %q: %s", want, got)
+		}
+	}
+	if strings.Count(got, " -v ") != 1 {
+		t.Errorf("only the login volume may be mounted: %s", got)
+	}
+}
+
+func TestLoginTerminalMountsOnlyTheLoginVolumeAndIsLabelled(t *testing.T) {
+	d := Docker{Image: "img", CredsVolume: "creds"}
+	got := d.LoginTerminalArgs("unire-login-ab", []string{"codex", "login", "--device-auth"})
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"run -it --rm", "--name unire-login-ab", "--label unire.login=1", "--cap-drop NET_RAW",
+		"-v creds:/home/node", "img codex login --device-auth"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q: %s", want, joined)
+		}
+	}
+	if strings.Count(joined, " -v ") != 1 || strings.Contains(joined, "docker.sock") {
+		t.Errorf("a login terminal must not get repos, tokens or the Docker socket: %s", joined)
+	}
+}
+
 func TestExecArgsHidesEnvValues(t *testing.T) {
 	got := execArgs("c", ExecOpts{
 		Argv: []string{"git", "push"}, Dir: "/workspace/api",

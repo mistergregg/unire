@@ -25,6 +25,14 @@ type StartSpec struct {
 	Env map[string]string
 }
 
+// OneShot is implemented by runners that can run one short command in a
+// throwaway sandbox that has the agent logins mounted but no network. The
+// Agents page uses it to ask each agent whether it is signed in.
+type OneShot interface {
+	// RunOnce returns the command's output and whether it exited successfully.
+	RunOnce(ctx context.Context, argv []string) (output string, ok bool, err error)
+}
+
 // Addressable is implemented by sandboxes that can report their address on a
 // network, which the egress proxy uses to recognise them.
 type Addressable interface {

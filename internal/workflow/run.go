@@ -98,9 +98,8 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		return res, err
 	}
 	ref := newRef()
-	argv, err := adapter.Command(spec.Prompt, spec.Mode, ref)
-	if err != nil {
-		return res, err
+	if _, err := adapter.Command(spec.Prompt, spec.Mode, ref); err != nil {
+		return res, err // fail before starting anything if the mode is unsupported
 	}
 
 	var mounts []runner.Mount
@@ -153,15 +152,24 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		startHeads[repo.Name] = strings.TrimSpace(head)
 	}
 
-	// Give the agent its memory. The file sits in /workspace, above every
-	// repo, so it is never committed, and the agent finds it because it
-	// starts in /workspace.
+	// Give the agent its memory. Either as a file in /workspace, above every
+	// repo, so it is never committed and the agent finds it because it starts
+	// there; or, for an agent whose file loading is unverified, at the start of
+	// the prompt, which works for any agent.
+	prompt := spec.Prompt
 	if opt.Mem != nil && opt.Mem.Context != "" {
-		if err := w.writeFile(ctx, workspace+"/"+adapter.MemoryFile(), opt.Mem.Context); err != nil {
+		if adapter.MemoryMode() == agent.MemoryPrompt && prompt != "" {
+			prompt = opt.Mem.Context + "\n\n---\n\n# Your task\n\n" + spec.Prompt
+			fmt.Fprintf(opt.Err, "memory: gave the agent project memory (%d characters, at the start of its prompt)\n", len(opt.Mem.Context))
+		} else if err := w.writeFile(ctx, workspace+"/"+adapter.MemoryFile(), opt.Mem.Context); err != nil {
 			fmt.Fprintf(opt.Err, "memory: could not give the agent its memory: %v\n", err)
 		} else {
 			fmt.Fprintf(opt.Err, "memory: gave the agent project memory (%d characters in %s)\n", len(opt.Mem.Context), adapter.MemoryFile())
 		}
+	}
+	argv, err := adapter.Command(prompt, spec.Mode, ref)
+	if err != nil {
+		return res, err
 	}
 
 	fmt.Fprintf(opt.Err, "running %s\n", adapter.Name())
@@ -188,6 +196,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		fmt.Fprintln(opt.Err, "no changes to push")
 	}
 
+	if agentErr != nil && ctx.Err() == nil {
+		fmt.Fprintf(opt.Err, "hint: if this looks like a sign-in problem, open the Agents page and sign %s in again\n", adapter.Info().Label)
+	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}

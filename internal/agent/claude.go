@@ -1,13 +1,32 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type claude struct{}
 
 func init() { Register(claude{}) }
 
-func (claude) Name() string       { return "claude" }
-func (claude) MemoryFile() string { return "CLAUDE.md" }
+func (claude) Name() string           { return "claude" }
+func (claude) MemoryFile() string     { return "CLAUDE.md" }
+func (claude) MemoryMode() MemoryMode { return MemoryFile }
+
+func (claude) Info() Info {
+	return Info{
+		ID: "claude", Label: "Claude Code",
+		Description: "Anthropic's coding agent. Uses your Claude subscription.",
+		LoginHelp:   "It prints a link. Open it on any device, sign in to your Claude account, then paste the code it shows back into the terminal.",
+		LoginArgv:   []string{"claude", "auth", "login", "--claudeai"},
+		StatusArgv:  []string{"claude", "auth", "status"},
+		LoggedIn: func(out string, ok bool) bool {
+			compact := strings.Join(strings.Fields(out), "")
+			return ok && strings.Contains(compact, `"loggedIn":true`)
+		},
+		Verified: Verified{Unattended: true, Status: true, Hosts: true},
+	}
+}
 
 // Hosts are the services Claude Code needs. api.anthropic.com and
 // mcp-proxy.anthropic.com were seen in a real session through the egress

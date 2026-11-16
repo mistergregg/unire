@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Unire</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -11,6 +12,7 @@
   <div class="brand">Unire</div>
   <nav id="nav" hidden>
     <button class="tab" data-view="sessions">Sessions</button>
+    <button class="tab" data-view="agents">Agents</button>
     <button class="tab" data-view="memory">Memory</button>
     <button class="tab" data-view="servers">Git servers</button>
     <button class="tab" data-view="settings">Settings</button>
@@ -119,6 +121,22 @@
     <pre id="s-log" class="log" aria-live="polite"></pre>
   </section>
 
+  <!-- Agents -->
+  <section id="view-agents" hidden>
+    <h1>Agents</h1>
+    <p class="muted">The coding agents Unire can run. Sign in to each one with its own login, using your subscription, right here in the browser. The login is saved and shared by every session. Adding another agent is one file: see docs/adding-an-agent.md.</p>
+    <div id="agent-list" class="stack"></div>
+    <div id="term-card" class="card" hidden>
+      <div class="between">
+        <h2 id="term-title"></h2>
+        <button id="term-close" type="button">Close</button>
+      </div>
+      <p id="term-help" class="muted"></p>
+      <div id="term" aria-label="Sign-in terminal"></div>
+      <p class="muted">Click in the terminal and type. To paste a code, use Ctrl+Shift+V (or Cmd+V).</p>
+    </div>
+  </section>
+
   <!-- Memory -->
   <section id="view-memory" hidden>
     <h1>Memory</h1>
@@ -206,8 +224,7 @@
         </div>
         <button class="primary" type="submit" id="sb-submit">Save</button>
       </form>
-      <p class="muted spaced">Log the agent in once. Run this in a terminal on the machine that runs Docker, then use <code>/login</code> inside and exit:</p>
-      <pre id="sb-login" class="log"></pre>
+      <p class="muted spaced">Sign in to Claude Code, Codex and Gemini on the <strong>Agents</strong> tab. The logins are saved in the login volume above and shared by every session.</p>
     </div>
 
     <div class="card">
@@ -259,8 +276,11 @@
     </div>
   </section>
 </main>
+<script src="/vendor/xterm.js" defer></script>
+<script src="/vendor/addon-fit.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/sessions.js" defer></script>
 <script src="/memory.js" defer></script>
+<script src="/agents.js" defer></script>
 </body>
 </html>

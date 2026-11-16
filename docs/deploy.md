@@ -15,7 +15,7 @@ The controller needs `/var/run/docker.sock` to start sandboxes. Access to that s
 The GitHub Action in `.github/workflows/docker.yml` publishes two images when `main` changes:
 
 - `ghcr.io/mistergregg/unire` is the controller (the dashboard).
-- `ghcr.io/mistergregg/unire-sandbox` is the sandbox each session runs in (git plus Claude Code).
+- `ghcr.io/mistergregg/unire-sandbox` is the sandbox each session runs in (git plus the Claude Code, Codex and Gemini CLIs). It is large, about 2.4 GB, because it carries all three agents; it is pulled once and then reused.
 
 If pulling fails with "unauthorized", open the package on GitHub (Packages, then Package settings) and set its visibility to public.
 
@@ -24,11 +24,7 @@ If pulling fails with "unauthorized", open the package on GitHub (Packages, then
 1. Copy `deploy/unraid/unire.xml` to `/boot/config/plugins/dockerMan/templates-user/unire.xml` on the server.
 2. In the Docker tab press Add Container, pick the `unire` template, and press Apply. The defaults are fine: port 8080, data in `/mnt/user/appdata/unire`.
 3. Open the WebUI and set the owner password.
-4. Log the agent in once. In the Unraid terminal run:
-   ```bash
-   docker run -it --rm -v unire-creds-claude:/home/node ghcr.io/mistergregg/unire-sandbox:latest claude
-   ```
-   Use `/login` inside, choose your subscription, finish in the browser, then `/exit`. The login is saved in the `unire-creds-claude` volume and shared by every session. (The same command is shown in Settings.)
+4. Sign the agents in, from the dashboard. Open the **Agents** tab and press **Sign in** on Claude Code, Codex or Gemini CLI. A terminal opens in the browser running that agent's own login. It shows a link (and for Codex a one-time code): open the link on any device, sign in with your subscription, and paste any code back with Ctrl+Shift+V. The login is saved in the `unire-creds-claude` volume and shared by every session, and the badge on the page turns to "signed in". Close the terminal when you are done. There is no need to use the Unraid terminal.
 5. Add a git server under Git servers. Use the server's IP address and port, for example `http://192.168.0.10:3000`, because sandboxes cannot look up Unraid container names. A git server on your LAN works in every network mode: the git server of each repo in a session is always allowed. For Gitea, create the token under Settings, Applications and give it repository Read and Write, user Read and organization Read. (A repository-only token also works, but Unire cannot show whose token it is.) If the test fails, the message includes the server's own reason, for example a missing permission, or a note that a proxy or firewall in front of the server is blocking Unire.
 6. Press New session.
 
@@ -49,4 +45,4 @@ Pull the new image and recreate the container. The database upgrades itself at s
 ## Known limits
 
 - Sessions are unattended only (no interactive terminal yet).
-- A hard kill of the controller can leave a sandbox container running. Remove leftovers with `docker ps -a --filter label=unire.session` and `docker rm -f`.
+- After a crash or kill, sandbox and sign-in containers can be left behind. Unire removes any it finds (labelled `unire.session` or `unire.login`) when it starts. This assumes one Unire per Docker host.

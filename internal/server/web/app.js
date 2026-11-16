@@ -59,8 +59,8 @@ function ago(unix) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "sessions", "new", "session", "memory", "repomem", "servers", "settings"];
-const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", memory: "memory", repomem: "memory", servers: "servers", settings: "settings" };
+const VIEWS = ["auth", "sessions", "new", "session", "agents", "memory", "repomem", "servers", "settings"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings" };
 let currentView = "";
 function show(name) {
   currentView = name;
@@ -112,7 +112,7 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { sessions: openSessions, memory: openMemory, servers: openServers, settings: openSettings }[t.dataset.view];
+  const open = { sessions: openSessions, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings }[t.dataset.view];
   guarded(null, open);
 }));
 
@@ -195,7 +195,6 @@ function fillSandbox(r) {
   $("sb-volume").value = r.sandbox.credsVolume;
   $("sb-memory").value = r.sandbox.memory;
   $("sb-cpus").value = r.sandbox.cpus;
-  $("sb-login").textContent = r.loginCommand;
 }
 
 // Network settings. The mode list and descriptions come from the server.

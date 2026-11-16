@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -23,12 +24,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/vault"
@@ -55,6 +58,9 @@ type Server struct {
 	runnerFactory RunnerFactory
 	egressProxy   *egress.Proxy
 	egressInfo    egress.Info
+	terminalFor   TerminalFactory
+	termBusy      atomic.Bool // one sign-in terminal at a time
+	signins       statusCache
 
 	mu       sync.Mutex
 	failures map[string]failure
@@ -68,6 +74,15 @@ type failure struct {
 // New opens the data directory (creating the database and key on first run)
 // and runs sessions in Docker.
 func New(dataDir string) (*Server, error) {
+	// Containers from a previous run (a crash, a kill, an update) belong to
+	// sessions that no longer exist.
+	cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if n, err := runner.CleanupOrphans(cctx); n > 0 {
+		fmt.Fprintf(os.Stderr, "removed %d container(s) left behind by an earlier run\n", n)
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "could not check for leftover containers (is Docker reachable?): %v\n", err)
+	}
+	cancel()
 	proxy := egress.NewProxy()
 	return NewWithEgress(dataDir, dockerRunner, proxy, egress.Setup(context.Background(), proxy))
 }
@@ -89,7 +104,8 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		st.Close()
 		return nil, err
 	}
-	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info, failures: map[string]failure{}}
+	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
+		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()
@@ -118,7 +134,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/password", s.auth(s.changePassword))
 	mux.HandleFunc("GET /api/backup", s.auth(s.backup))
 
-	mux.HandleFunc("GET /api/agents", s.auth(s.agentNames))
+	mux.HandleFunc("GET /api/agents", s.auth(s.listAgents))
+	mux.HandleFunc("POST /api/agents/recheck", s.auth(s.recheckAgents))
+	mux.HandleFunc("GET /api/agents/{id}/login", s.auth(s.loginTerminal))
 	mux.HandleFunc("GET /api/sandbox", s.auth(s.getSandbox))
 	mux.HandleFunc("PUT /api/sandbox", s.auth(s.putSandbox))
 	mux.HandleFunc("GET /api/memory", s.auth(s.listMemory))

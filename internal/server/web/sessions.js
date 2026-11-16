@@ -64,7 +64,8 @@ async function openNew(prefill) {
     el("option", { value: "" }, "Default: " + (def ? def.label : net.mode)),
     ...net.modes.map((m) => el("option", { value: m.id }, m.label)));
   updateNetworkDesc();
-  $("n-agent").replaceChildren(...agents.map((a) => el("option", { value: a }, a)));
+  $("n-agent").replaceChildren(...agents.map((a) => el("option", { value: a.id },
+    a.label + (a.loggedIn === false ? " (not signed in)" : ""))));
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
   fillWorkspaceSelect();
   $("n-results").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first (Git servers tab)."));

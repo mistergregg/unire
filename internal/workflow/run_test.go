@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
@@ -354,6 +355,23 @@ func TestFallbackWhenTheMainAgentFails(t *testing.T) {
 	}
 }
 
+func TestFailedAgentRunPointsAtTheAgentsPage(t *testing.T) {
+	var log strings.Builder
+	o := opts(nil)
+	o.Err = &log
+	sb := &fakeSandbox{mainErr: errors.New("exit status 41")}
+	if _, err := run(t, sb, baseSpec(), o); err == nil {
+		t.Fatal("the failure should be returned")
+	}
+	if !strings.Contains(log.String(), "hint: if this looks like a sign-in problem, open the Agents page and sign Claude Code in again") {
+		t.Errorf("a failed run should say where to sign in:\n%s", log.String())
+	}
+	log.Reset()
+	if _, err := run(t, &fakeSandbox{}, baseSpec(), o); err != nil || strings.Contains(log.String(), "hint:") {
+		t.Errorf("a successful run must not show the hint: %v\n%s", err, log.String())
+	}
+}
+
 func TestFallbackWhenTheFollowUpFailsOrTimesOut(t *testing.T) {
 	sb := &fakeSandbox{followErr: errors.New("exit status 1"), outFiles: agentWrites("## Asked\nleftover", "")}
 	if res, _ := run(t, sb, baseSpec(), memOpts(nil)); res.SummarySource != "fallback" {
@@ -393,9 +411,11 @@ func TestAgentWithoutResumeGetsAFreshConversationWithTheTask(t *testing.T) {
 
 type noResume struct{}
 
-func (noResume) Name() string       { return "fresh" }
-func (noResume) MemoryFile() string { return "FRESH.md" }
-func (noResume) Hosts() []string    { return []string{"x"} }
+func (noResume) Name() string                 { return "fresh" }
+func (noResume) Info() agent.Info             { return agent.Info{ID: "fresh", Label: "Fresh"} }
+func (noResume) MemoryFile() string           { return "FRESH.md" }
+func (noResume) MemoryMode() agent.MemoryMode { return agent.MemoryFile }
+func (noResume) Hosts() []string              { return []string{"x"} }
 func (noResume) Command(prompt, mode, ref string) ([]string, error) {
 	return []string{"fresh-agent", prompt}, nil
 }

@@ -128,8 +128,9 @@ func run(args []string) error {
 			tokens[r.Name] = tok
 		}
 	}
-	return workflow.Run(ctx, runner.Docker{Image: *image, CredsVolume: *creds}, spec, workflow.Options{
+	_, err := workflow.Run(ctx, runner.Docker{Image: *image, CredsVolume: *creds}, spec, workflow.Options{
 		Out: os.Stdout, Err: os.Stderr, In: os.Stdin, Interactive: interactive,
 		GitTokens: tokens, Memory: *memory, CPUs: *cpus,
 	})
+	return err
 }

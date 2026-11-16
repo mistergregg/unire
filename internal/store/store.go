@@ -75,6 +75,32 @@ var migrations = []string{
 	CREATE INDEX session_events_by_session ON session_events (session_id, id);`,
 	// 3: network mode per session
 	`ALTER TABLE sessions ADD COLUMN network TEXT NOT NULL DEFAULT 'internet';`,
+	// 4: memory. A brief per repo, and a summary per finished session. Summaries
+	// keep their own copy of the session's details so they outlive the session.
+	`ALTER TABLE sessions ADD COLUMN memory INTEGER NOT NULL DEFAULT 1;
+	CREATE TABLE repo_memory (
+		repo_key   TEXT PRIMARY KEY,           -- server id + "/" + full name
+		brief      TEXT NOT NULL,
+		previous   TEXT NOT NULL DEFAULT '',   -- one step of undo
+		session_id TEXT NOT NULL DEFAULT '',   -- the session that last changed it, or '' for an edit by the owner
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE session_summaries (
+		session_id TEXT PRIMARY KEY,
+		task       TEXT NOT NULL,
+		agent      TEXT NOT NULL,
+		branch     TEXT NOT NULL,
+		status     TEXT NOT NULL,
+		summary    TEXT NOT NULL,
+		source     TEXT NOT NULL,              -- agent (written by the agent) or fallback (built by Unire)
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE summary_repos (
+		session_id TEXT NOT NULL REFERENCES session_summaries(session_id) ON DELETE CASCADE,
+		repo_key   TEXT NOT NULL,
+		PRIMARY KEY (session_id, repo_key)
+	);
+	CREATE INDEX summary_repos_by_repo ON summary_repos (repo_key);`,
 }
 
 // DBFileName is the database file inside the data directory.

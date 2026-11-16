@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/mistergregg/unire/internal/egress"
+	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
@@ -49,6 +51,7 @@ type Repo struct {
 type Request struct {
 	Task, Agent, Prompt, Mode string
 	Network                   egress.Mode // empty means internet only
+	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
 }
 
@@ -91,6 +94,17 @@ func repoDirName(fullName string, used map[string]bool) string {
 	return name
 }
 
+// RepoDirNames returns the directory name each repo gets in the sandbox, in
+// order. Sessions and the UI use the same names.
+func RepoDirNames(fullNames []string) []string {
+	used := map[string]bool{}
+	out := make([]string, len(fullNames))
+	for i, n := range fullNames {
+		out[i] = repoDirName(n, used)
+	}
+	return out
+}
+
 // Start queues a session and returns it. The session runs in the background.
 func (m *Manager) Start(req Request) (store.Session, error) {
 	if len(req.Repos) == 0 {
@@ -120,7 +134,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 			secrets = append(secrets, r.Token)
 		}
 	}
-	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, Branch: spec.Branch(), Network: string(req.Network), Repos: refs}
+	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, Branch: spec.Branch(), Network: string(req.Network), Memory: req.Memory, Repos: refs}
 
 	m.mu.Lock()
 	if m.closing {
@@ -137,7 +151,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Unlock()
 
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
-	go m.run(ctx, spec, req.Network, tokens, secrets)
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -167,7 +181,18 @@ func (m *Manager) Shutdown() {
 // Wait blocks until all sessions have finished (for tests).
 func (m *Manager) Wait() { m.wg.Wait() }
 
-func (m *Manager) run(ctx context.Context, spec session.Spec, network egress.Mode, tokens map[string]string, secrets []string) {
+// job is everything a running session needs.
+type job struct {
+	spec    session.Spec
+	network egress.Mode
+	memory  bool
+	refs    []store.RepoRef // same order as spec.Repos
+	tokens  map[string]string
+	secrets []string
+}
+
+func (m *Manager) run(ctx context.Context, j job) {
+	spec, network, tokens, secrets := j.spec, j.network, j.tokens, j.secrets
 	defer m.wg.Done()
 	defer func() {
 		m.mu.Lock()
@@ -203,12 +228,78 @@ func (m *Manager) run(ctx context.Context, spec session.Spec, network egress.Mod
 		rn = &netRunner{inner: cfg.Runner, proxy: cfg.Egress.Proxy, info: cfg.Egress.Info, pol: pol, st: m.st, id: spec.ID}
 	}
 	_ = m.st.AddEvent(spec.ID, "log", "network: "+networkLabel(network))
-	err := workflow.Run(ctx, rn, spec, workflow.Options{
-		Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs,
-	})
+	wo := workflow.Options{Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs}
+	if j.memory {
+		wo.Mem = m.memoryPlan(j)
+	}
+	res, err := workflow.Run(ctx, rn, spec, wo)
 	out.Flush()
 	info.Flush()
+	if j.memory && ctx.Err() == nil {
+		m.saveMemory(j, res, err)
+	}
 	m.finish(ctx, spec.ID, err, secrets)
+}
+
+// memoryPlan loads what earlier sessions learned about this session's repos.
+func (m *Manager) memoryPlan(j job) *workflow.MemoryPlan {
+	var briefs []memory.RepoBrief
+	var past []store.Summary
+	seen := map[string]bool{}
+	for i, repo := range j.spec.Repos {
+		key := store.RepoKey(j.refs[i])
+		b := memory.RepoBrief{Dir: repo.Name, FullName: j.refs[i].FullName}
+		if rm, ok, _ := m.st.RepoMemory(key); ok {
+			b.Brief = rm.Brief
+		}
+		briefs = append(briefs, b)
+		if list, err := m.st.RepoSummaries(key, memory.RecentSessions); err == nil {
+			for _, s := range list {
+				if !seen[s.SessionID] {
+					seen[s.SessionID] = true
+					past = append(past, s)
+				}
+			}
+		}
+	}
+	sort.Slice(past, func(a, b int) bool { return past[a].CreatedAt.After(past[b].CreatedAt) })
+	var ps []memory.PastSession
+	for _, s := range past {
+		ps = append(ps, memory.PastSession{Task: s.Task, Agent: s.Agent, Branch: s.Branch, Status: s.Status, Summary: s.Summary, When: s.CreatedAt})
+	}
+	return &workflow.MemoryPlan{Context: memory.BuildContext(briefs, ps), Repos: briefs}
+}
+
+// saveMemory stores the session's summary and any updated briefs.
+func (m *Manager) saveMemory(j job, res workflow.Result, runErr error) {
+	if res.Summary == "" {
+		return
+	}
+	status := store.StatusDone
+	if runErr != nil {
+		status = store.StatusFailed
+	}
+	var keys []string
+	for _, ref := range j.refs {
+		keys = append(keys, store.RepoKey(ref))
+	}
+	err := m.st.SaveSummary(store.Summary{
+		SessionID: j.spec.ID, Task: j.spec.Task, Agent: j.spec.Agent, Branch: j.spec.Branch(),
+		Status: status, Summary: res.Summary, Source: res.SummarySource, Repos: keys,
+	})
+	if err != nil {
+		_ = m.st.AddEvent(j.spec.ID, "log", "memory: could not save the summary")
+		return
+	}
+	for i, repo := range j.spec.Repos {
+		brief, ok := res.Briefs[repo.Name]
+		if !ok {
+			continue
+		}
+		if err := m.st.SetRepoMemory(store.RepoKey(j.refs[i]), brief, j.spec.ID); err == nil {
+			_ = m.st.AddEvent(j.spec.ID, "log", "memory: updated the brief for "+j.refs[i].FullName)
+		}
+	}
 }
 
 func (m *Manager) finish(ctx context.Context, id string, err error, secrets []string) {

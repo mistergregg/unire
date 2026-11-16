@@ -75,22 +75,25 @@ Launch command, login capture/restore (credential files), mode flags (auto-appro
 - Each preview gets its own URL behind the dashboard login; subdomain-per-session (`s123.preview.<domain>`) for apps that break under path prefixes (needs wildcard DNS or local DNS entry).
 
 ## Memory (cross-agent, compressed)
-Goal: any agent, on any later session, knows what has been done, why, and what is open, without replaying old transcripts.
+Goal: any agent, on any later session, knows what has been done, why, and what is open, without replaying old transcripts. Implemented as described in [docs/memory.md](docs/memory.md); this section keeps the design intent and what is still to build.
 
-Layers:
-1. **Raw log**: terminal output and events per session, stored in the controller DB, kept for audit/search, never injected wholesale.
-2. **Session summary**: written when a session ends (the session's own agent is prompted to write it as its last step, so no extra API cost or subscription misuse): what was asked, what changed (repos, files), decisions and why, gotchas, open TODOs, how to run/test.
-3. **Project memory**: per-project rolling brief (architecture, conventions, commands, decisions log, open items). After each session the summary is merged in; older entries are rolled up so the brief stays under a token budget (e.g. ~2–4k tokens), with full history searchable.
-4. **Workspace memory**: for multi-repo workspaces, how the repos relate and cross-repo decisions.
+Implemented:
+1. **Raw log**: session events in the database, never injected wholesale.
+2. **Session summary**: when a session finishes, Unire resumes the same agent conversation (by conversation id, never "the latest") and asks it to write a summary. Falls back to a plain summary built by Unire if the agent cannot.
+3. **Repo brief**: a rolling brief per repo (at most 6000 characters), rewritten by the agent after each session, with one step of undo.
+4. **Delivery**: the briefs and the latest summaries are written, as plain markdown, to the agent's native memory file in `/workspace` (above the repos, so never committed) at the start of a session. Size budget about 4000 tokens.
+5. **Safety**: marked as background data, not instructions; secrets removed before saving; editable, clearable and deletable in the Memory tab; per-session on/off.
+6. **Handoff**: Continue with a new session starts any agent from a finished session's pushed branch with the memory.
 
-Delivery to agents:
-- Agent-neutral markdown is the canonical format. The adapter writes it into the agent's native file (CLAUDE.md / GEMINI.md / AGENTS.md) inside a clearly marked managed block, leaving user-written content alone.
-- Optional MCP server exposed in the sandbox: `get_brief`, `search_memory(query)`, `log_decision`, `add_todo`, so agents can pull detail on demand instead of carrying it all.
-- Source of truth is the controller DB. Optional export of the managed block into the repo (committed) so memory survives outside the tool.
+Still to build:
+- **MCP server in the sandbox** (`get_brief`, `search_memory(query)`, `log_decision`, `add_todo`) so an agent can pull older detail on demand instead of carrying it all.
+- **Workspace memory**: how the repos of a workspace relate, and cross-repo decisions.
+- **Optional export** of the brief into the repo (committed), so memory survives outside Unire.
+- **Memory for interactive sessions** and for agents other than Claude Code.
 
 Rules:
-- Memory is data, not instructions: injected under a "context from previous sessions" header; stale or wrong entries can be edited or deleted in the UI.
-- Secrets are never written to memory (scan before saving).
+- Memory is data, not instructions: injected under a header that says so; stale or wrong entries can be edited or deleted in the UI.
+- Secrets are never saved to memory (scan before saving; a safety net, not a guarantee).
 - Compression is lossy by design; the raw log and git history remain the ground truth.
 
 ## Security

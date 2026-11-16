@@ -22,16 +22,50 @@ type fakeSandbox struct {
 	agentOutput string
 	agentErr    error
 	block       chan struct{} // if set, the agent waits on it or on ctx
+
+	mu       sync.Mutex
+	files    map[string]string // files the workflow wrote into the sandbox, by path
+	outFiles map[string]string // files the agent "writes" for the memory step
 }
 
 func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
-	if len(o.Argv) > 0 && o.Argv[0] == "git" {
+	if len(o.Argv) > 0 {
+		switch o.Argv[0] {
+		case "git":
+			for _, a := range o.Argv {
+				if a == "rev-parse" {
+					io.WriteString(o.Stdout, "abc\n")
+				}
+			}
+			return nil
+		case "mkdir":
+			return nil
+		case "sh":
+			if o.Stdin != nil {
+				b, _ := io.ReadAll(o.Stdin)
+				f.mu.Lock()
+				if f.files == nil {
+					f.files = map[string]string{}
+				}
+				f.files[o.Argv[len(o.Argv)-1]] = string(b)
+				f.mu.Unlock()
+			}
+			return nil
+		case "head":
+			f.mu.Lock()
+			c, ok := f.outFiles[o.Argv[len(o.Argv)-1]]
+			f.mu.Unlock()
+			if !ok {
+				return errors.New("exit status 1")
+			}
+			io.WriteString(o.Stdout, c)
+			return nil
+		}
 		for _, a := range o.Argv {
-			if a == "rev-parse" {
-				io.WriteString(o.Stdout, "abc\n")
+			if a == "--resume" { // the memory follow-up: no output, never blocks
+				return nil
 			}
 		}
-		return nil
 	}
 	io.WriteString(o.Stdout, f.agentOutput)
 	if f.block != nil {
@@ -305,6 +339,133 @@ func waitRunning(t *testing.T, st *store.Store, id string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("session never started running")
+}
+
+// ---- memory ----
+
+func memReq() Request {
+	r := req("tok-secret-9")
+	r.Memory = true
+	// One repo keeps the assertions simple.
+	r.Repos = r.Repos[:1]
+	return r
+}
+
+func (f *fakeSandbox) contextFile() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.files["/workspace/CLAUDE.md"]
+}
+
+func TestMemoryIsSavedThenGivenToTheNextSession(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{
+		"/workspace/.unire-out/summary.md":   "## Asked\nAdd login\n## Done\nAdded OAuth login using token tok-secret-9",
+		"/workspace/.unire-out/api.brief.md": "## What it is\nA REST API with OAuth login.",
+	}}
+	m, st := setup(t, sb)
+
+	// Session 1: nothing is remembered yet, so the agent gets no context file.
+	first, err := m.Start(memReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	if sb.contextFile() != "" {
+		t.Errorf("the first session has nothing to remember, got %q", sb.contextFile())
+	}
+	sum, ok, _ := st.Summary(first.ID)
+	if !ok || sum.Source != "agent" || !strings.Contains(sum.Summary, "Added OAuth login") || sum.Status != "done" {
+		t.Fatalf("summary = %+v", sum)
+	}
+	if strings.Contains(sum.Summary, "tok-secret-9") {
+		t.Error("the token leaked into a saved summary")
+	}
+	rm, ok, _ := st.RepoMemory("g/me/api")
+	if !ok || !strings.Contains(rm.Brief, "REST API with OAuth") || rm.SessionID != first.ID {
+		t.Fatalf("repo memory = %+v", rm)
+	}
+	log := logText(st, first.ID)
+	for _, want := range []string{"memory: session summary saved (agent)", "memory: updated the brief for me/api"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log missing %q:\n%s", want, log)
+		}
+	}
+
+	// Session 2 on the same repo starts with that brief and the earlier summary.
+	r2 := memReq()
+	r2.Task = "second"
+	sb.outFiles = map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nSecond task"}
+	second, _ := m.Start(r2)
+	m.Wait()
+	ctxFile := sb.contextFile()
+	for _, want := range []string{"REST API with OAuth", "not instructions", "Add login", "## Repo api (me/api)"} {
+		if !strings.Contains(ctxFile, want) {
+			t.Errorf("session 2 context missing %q:\n%s", want, ctxFile)
+		}
+	}
+	// A summary without a brief leaves the repo's brief alone.
+	if rm2, _, _ := st.RepoMemory("g/me/api"); rm2.Brief != rm.Brief {
+		t.Error("a session that wrote no brief must not change the brief")
+	}
+	if s2, ok, _ := st.Summary(second.ID); !ok || !strings.Contains(s2.Summary, "Second task") {
+		t.Errorf("second summary = %+v", s2)
+	}
+}
+
+func TestMemoryOffSavesAndInjectsNothing(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nx"}}
+	m, st := setup(t, sb)
+	_ = st.SetRepoMemory("g/me/api", "an existing brief", "")
+	r := memReq()
+	r.Memory = false
+	x, _ := m.Start(r)
+	m.Wait()
+	if sb.contextFile() != "" {
+		t.Error("memory is off, so nothing may be injected")
+	}
+	if _, ok, _ := st.Summary(x.ID); ok {
+		t.Error("memory is off, so nothing may be saved")
+	}
+	if got, _, _ := st.Session(x.ID); got.Memory {
+		t.Error("the session should record that memory was off")
+	}
+}
+
+func TestFallbackSummaryIsSavedWhenTheAgentWritesNone(t *testing.T) {
+	sb := &fakeSandbox{agentOutput: "finished"}
+	m, st := setup(t, sb)
+	x, _ := m.Start(memReq())
+	m.Wait()
+	sum, ok, _ := st.Summary(x.ID)
+	if !ok || sum.Source != "fallback" || !strings.Contains(sum.Summary, "Written by Unire") {
+		t.Errorf("summary = %+v", sum)
+	}
+	if _, ok, _ := st.RepoMemory("g/me/api"); ok {
+		t.Error("a fallback summary must not create a brief")
+	}
+}
+
+func TestFailedSessionStillGetsASummary(t *testing.T) {
+	sb := &fakeSandbox{agentErr: errors.New("exit status 1")}
+	m, st := setup(t, sb)
+	x, _ := m.Start(memReq())
+	m.Wait()
+	sum, ok, _ := st.Summary(x.ID)
+	if !ok || sum.Status != "failed" || !strings.Contains(sum.Summary, "Session status: failed") {
+		t.Errorf("summary = %+v", sum)
+	}
+}
+
+func TestStoppedSessionLeavesNoMemory(t *testing.T) {
+	sb := &fakeSandbox{block: make(chan struct{})}
+	m, st := setup(t, sb)
+	x, _ := m.Start(memReq())
+	waitRunning(t, st, x.ID)
+	m.Stop(x.ID)
+	m.Wait()
+	if _, ok, _ := st.Summary(x.ID); ok {
+		t.Error("a stopped session should not write memory")
+	}
 }
 
 func TestAgentOnlyModeStillHonoursAllowedAddresses(t *testing.T) {

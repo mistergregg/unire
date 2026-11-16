@@ -11,6 +11,7 @@
   <div class="brand">Unire</div>
   <nav id="nav" hidden>
     <button class="tab" data-view="sessions">Sessions</button>
+    <button class="tab" data-view="memory">Memory</button>
     <button class="tab" data-view="servers">Git servers</button>
     <button class="tab" data-view="settings">Settings</button>
   </nav>
@@ -45,6 +46,7 @@
   <section id="view-new" hidden>
     <button class="ghost" id="new-back">&larr; Sessions</button>
     <h1>New session</h1>
+    <p id="n-note" class="banner" hidden></p>
     <form id="new-form" autocomplete="off">
       <div class="card">
         <div class="grid">
@@ -62,6 +64,10 @@
         <label>What should the agent do?
           <textarea id="n-prompt" required rows="5" maxlength="20000" placeholder="Describe the change. The agent works alone until it finishes."></textarea>
         </label>
+        <label class="check">
+          <input id="n-memory" type="checkbox" checked> Use project memory
+        </label>
+        <p class="muted">The agent starts with what earlier sessions learned about these repos, and writes down what it learned when it finishes. This costs one short extra request to the agent at the end.</p>
       </div>
 
       <div class="card">
@@ -101,10 +107,47 @@
     <p id="s-error" class="err" hidden></p>
     <div class="item-actions">
       <button id="s-stop" class="danger" hidden>Stop</button>
+      <button id="s-continue" hidden>Continue with a new session&hellip;</button>
       <button id="s-delete" hidden>Delete</button>
+    </div>
+    <div id="s-summary-wrap" hidden>
+      <h2 class="spaced">Summary</h2>
+      <p id="s-summary-note" class="muted"></p>
+      <pre id="s-summary" class="log"></pre>
     </div>
     <h2 class="spaced">Log</h2>
     <pre id="s-log" class="log" aria-live="polite"></pre>
+  </section>
+
+  <!-- Memory -->
+  <section id="view-memory" hidden>
+    <h1>Memory</h1>
+    <p class="muted">What Unire remembers about your repos. Agents start with a repo's brief and the latest session summaries, and update them when they finish. It is background information for the agent, not instructions, and you can edit or clear any of it.</p>
+    <form id="mem-search-form" class="row">
+      <input id="mem-query" type="search" placeholder="Search session summaries">
+      <button class="primary" type="submit">Search</button>
+    </form>
+    <div id="mem-results" class="stack spaced"></div>
+    <h2 class="spaced">Repos</h2>
+    <div id="mem-list" class="stack"></div>
+  </section>
+
+  <section id="view-repomem" hidden>
+    <button class="ghost" id="rm-back">&larr; Memory</button>
+    <h1 id="rm-title"></h1>
+    <div class="card">
+      <h2>Brief</h2>
+      <p id="rm-meta" class="muted"></p>
+      <textarea id="rm-brief" rows="14" aria-label="Brief"></textarea>
+      <p id="rm-count" class="muted"></p>
+      <div class="item-actions">
+        <button id="rm-save" class="primary">Save brief</button>
+        <button id="rm-restore" hidden>Restore previous version</button>
+        <button id="rm-clear" class="danger">Clear brief</button>
+      </div>
+    </div>
+    <h2 class="spaced">Session summaries</h2>
+    <div id="rm-summaries" class="stack"></div>
   </section>
 
   <!-- Git servers -->
@@ -218,5 +261,6 @@
 </main>
 <script src="/app.js" defer></script>
 <script src="/sessions.js" defer></script>
+<script src="/memory.js" defer></script>
 </body>
 </html>

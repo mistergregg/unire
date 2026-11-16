@@ -50,9 +50,11 @@ let serverList = [];
 let workspaceList = [];
 let lastResults = [];
 
-async function openNew() {
+// prefill (optional): { task, repos, note } for continuing an earlier session.
+async function openNew(prefill) {
   stopPolling();
   show("new");
+  $("n-note").hidden = true;
   const [servers, agents, workspaces, net] = await Promise.all([
     api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);
   serverList = servers; workspaceList = workspaces; selected = []; lastResults = []; networkInfo = net;
@@ -66,6 +68,11 @@ async function openNew() {
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
   fillWorkspaceSelect();
   $("n-results").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first (Git servers tab)."));
+  if (prefill) {
+    $("n-task").value = prefill.task;
+    selected = prefill.repos;
+    if (prefill.note) { $("n-note").textContent = prefill.note; $("n-note").hidden = false; }
+  }
   renderSelected();
 }
 
@@ -154,7 +161,7 @@ $("new-form").addEventListener("submit", (e) => {
     if (!selected.length) throw new Error("Choose at least one repo.");
     const s = await api("POST", "/api/sessions", {
       task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
-      network: $("n-network").value, repos: refsOf(),
+      network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
     });
     await openSession(s.id);
   });
@@ -182,7 +189,37 @@ function setSessionStatus(status, error, s) {
   $("s-error").textContent = error || "";
   $("s-stop").hidden = isFinished(status);
   $("s-delete").hidden = !isFinished(status);
+  $("s-continue").hidden = !isFinished(status);
+  if (isFinished(status) && currentSession && summaryShownFor !== currentSession.id) loadSummary(currentSession.id);
 }
+
+// The summary is saved just before a session is marked finished, so it can be
+// fetched as soon as the status says so.
+let summaryShownFor = null;
+async function loadSummary(id) {
+  summaryShownFor = id;
+  const wrap = $("s-summary-wrap");
+  wrap.hidden = true;
+  try {
+    const x = await api("GET", "/api/memory/summaries/" + encodeURIComponent(id));
+    if (currentSession && currentSession.id !== id) return;
+    $("s-summary").textContent = x.summary;
+    $("s-summary-note").textContent = x.source === "agent"
+      ? "Written by the agent when it finished. It is saved as memory for these repos."
+      : "Unire wrote this because the agent did not. It is saved as memory for these repos.";
+    wrap.hidden = false;
+  } catch (_) { /* memory was off for this session, or none was saved */ }
+}
+
+$("s-continue").addEventListener("click", () => guarded($("s-continue"), async () => {
+  const s = await api("GET", "/api/sessions/" + encodeURIComponent(currentSession.id));
+  const pushed = new Set(s.pushed || []);
+  const repos = s.repos.map((r) => (pushed.has(r.fullName) ? { ...r, base: s.branch, defaultBranch: s.branch } : { ...r, defaultBranch: "" }));
+  const note = pushed.size
+    ? "The base branch is set to this session's branch (" + s.branch + ") for the repos where it pushed one. Choose any agent; it starts with the project memory."
+    : "That session pushed nothing, so the new one starts from the original base branches.";
+  await openNew({ task: "Continue: " + s.task, repos, note });
+}));
 
 // One log line. A blocked connection gets an Allow button that adds the
 // address to the owner's allowed list for future sessions.
@@ -215,6 +252,8 @@ function appendLog(events) {
 async function openSession(id) {
   stopPolling();
   show("session");
+  summaryShownFor = null;
+  $("s-summary-wrap").hidden = true;
   $("s-log").replaceChildren();
   const token = (pollToken = {});
   let after = 0;

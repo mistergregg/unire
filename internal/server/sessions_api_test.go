@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,10 +19,11 @@ import (
 // fakeBox stands in for Docker. It records every command and lets a test
 // choose what the agent prints and whether it blocks.
 type fakeBox struct {
-	mu    sync.Mutex
-	calls []runner.ExecOpts
-	out   string
-	block chan struct{}
+	mu       sync.Mutex
+	calls    []runner.ExecOpts
+	out      string
+	block    chan struct{}
+	outFiles map[string]string // files the agent "writes" in the memory step
 }
 
 type fakeRunner struct{ box *fakeBox }
@@ -35,13 +37,35 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	b.calls = append(b.calls, o)
 	out, block := b.out, b.block
 	b.mu.Unlock()
-	if len(o.Argv) > 0 && o.Argv[0] == "git" {
+	if len(o.Argv) > 0 {
+		switch o.Argv[0] {
+		case "git":
+			for _, a := range o.Argv {
+				if a == "rev-parse" {
+					io.WriteString(o.Stdout, "abc\n")
+				}
+			}
+			return nil
+		case "mkdir", "sh":
+			if o.Stdin != nil {
+				io.Copy(io.Discard, o.Stdin)
+			}
+			return nil
+		case "head":
+			b.mu.Lock()
+			c, ok := b.outFiles[o.Argv[len(o.Argv)-1]]
+			b.mu.Unlock()
+			if !ok {
+				return fmt.Errorf("exit status 1")
+			}
+			io.WriteString(o.Stdout, c)
+			return nil
+		}
 		for _, a := range o.Argv {
-			if a == "rev-parse" {
-				io.WriteString(o.Stdout, "abc\n")
+			if a == "--resume" {
+				return nil
 			}
 		}
-		return nil
 	}
 	io.WriteString(o.Stdout, out)
 	if block != nil {

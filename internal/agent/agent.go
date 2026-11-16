@@ -12,8 +12,13 @@ const (
 type Adapter interface {
 	Name() string
 	// Command returns the argv to run in the workspace. An empty prompt means
-	// an interactive session.
-	Command(prompt, mode string) ([]string, error)
+	// an interactive session. ref is a unique id (a UUID) the agent can store
+	// the conversation under, so FollowUp can continue exactly that one.
+	Command(prompt, mode, ref string) ([]string, error)
+	// FollowUp returns the argv that continues the conversation started with
+	// ref and sends it one more prompt. ok is false when the agent cannot
+	// resume a conversation; the caller then starts a fresh one.
+	FollowUp(prompt, mode, ref string) (argv []string, ok bool)
 	// MemoryFile is the agent's native context file name.
 	MemoryFile() string
 	// Hosts lists the host names the agent must reach to work at all (its AI

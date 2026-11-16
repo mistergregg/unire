@@ -18,20 +18,36 @@ func (claude) Hosts() []string {
 	return []string{"api.anthropic.com", "mcp-proxy.anthropic.com", "console.anthropic.com", "claude.ai"}
 }
 
-func (claude) Command(prompt, mode string) ([]string, error) {
+func (claude) Command(prompt, mode, ref string) ([]string, error) {
+	// --session-id stores the conversation under ref so FollowUp can resume
+	// it. Conversations share one home folder across sessions, so resuming by
+	// id, never "the latest", keeps sessions from mixing.
+	id := []string{}
+	if ref != "" {
+		id = []string{"--session-id", ref}
+	}
 	switch mode {
 	case HandsOff:
 		if prompt == "" {
-			return []string{"claude", "--dangerously-skip-permissions"}, nil
+			return append([]string{"claude", "--dangerously-skip-permissions"}, id...), nil
 		}
 		// -p runs once and exits, which is what an unattended session needs.
 		// "--" keeps a prompt that starts with a dash from being read as a flag.
-		return []string{"claude", "-p", "--dangerously-skip-permissions", "--", prompt}, nil
+		argv := append([]string{"claude", "-p", "--dangerously-skip-permissions"}, id...)
+		return append(argv, "--", prompt), nil
 	case AskFirst:
+		argv := append([]string{"claude"}, id...)
 		if prompt == "" {
-			return []string{"claude"}, nil
+			return argv, nil
 		}
-		return []string{"claude", "--", prompt}, nil
+		return append(argv, "--", prompt), nil
 	}
 	return nil, fmt.Errorf("unknown mode %q", mode)
+}
+
+func (claude) FollowUp(prompt, mode, ref string) ([]string, bool) {
+	if ref == "" || prompt == "" || mode != HandsOff {
+		return nil, false
+	}
+	return []string{"claude", "-p", "--dangerously-skip-permissions", "--resume", ref, "--", prompt}, true
 }

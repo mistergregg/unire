@@ -2,30 +2,76 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
 )
 
+// fakeSandbox plays a sandbox: git answers, files can be written and read,
+// and "claude" behaves as the test configures.
 type fakeSandbox struct {
 	calls []runner.ExecOpts
 	heads int
+
+	files     map[string]string // files the workflow wrote
+	outFiles  map[string]string // files the follow-up agent "writes"
+	agentOut  string
+	mainErr   error // returned by the main agent run
+	followErr error // returned by the follow-up agent run
+	block     bool  // the follow-up waits for its context
 }
 
-func (f *fakeSandbox) Exec(_ context.Context, o runner.ExecOpts) error {
+func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	f.calls = append(f.calls, o)
-	if len(o.Argv) > 0 && o.Argv[0] == "git" && contains(o.Argv, "rev-parse") {
-		f.heads++
-		// First call per repo is the start HEAD; later calls differ, so the
-		// workflow sees the agent's commit.
-		if f.heads%2 == 1 {
-			io.WriteString(o.Stdout, "aaa\n")
-		} else {
-			io.WriteString(o.Stdout, "bbb\n")
+	if f.files == nil {
+		f.files = map[string]string{}
+	}
+	if len(o.Argv) == 0 {
+		return nil
+	}
+	switch o.Argv[0] {
+	case "git":
+		if contains(o.Argv, "rev-parse") {
+			f.heads++
+			// First call per repo is the start HEAD; later calls differ, so the
+			// workflow sees the agent's commit.
+			if f.heads%2 == 1 {
+				io.WriteString(o.Stdout, "aaa\n")
+			} else {
+				io.WriteString(o.Stdout, "bbb\n")
+			}
 		}
+		if contains(o.Argv, "--stat") {
+			io.WriteString(o.Stdout, " file.go | 3 +++\n")
+		}
+	case "sh":
+		if o.Stdin != nil {
+			b, _ := io.ReadAll(o.Stdin)
+			f.files[o.Argv[len(o.Argv)-1]] = string(b)
+		}
+	case "head":
+		path := o.Argv[len(o.Argv)-1]
+		if c, ok := f.outFiles[path]; ok {
+			io.WriteString(o.Stdout, c)
+			return nil
+		}
+		return errors.New("exit status 1")
+	case "claude":
+		if contains(o.Argv, "--resume") {
+			if f.block {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return f.followErr
+		}
+		io.WriteString(o.Stdout, f.agentOut)
+		return f.mainErr
 	}
 	return nil
 }
@@ -50,13 +96,21 @@ func opts(tokens map[string]string) Options {
 	return Options{Out: io.Discard, Err: io.Discard, GitTokens: tokens}
 }
 
-func TestTokenNeverReachesAgentAndPushHappens(t *testing.T) {
-	sb := &fakeSandbox{}
-	spec := session.Spec{
+func baseSpec() session.Spec {
+	return session.Spec{
 		ID: "t1", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
 		Repos: []session.Repo{{Name: "api", URL: "https://git.example.com/me/api.git"}},
 	}
-	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(map[string]string{"api": "tok123"})); err != nil {
+}
+
+func run(t *testing.T, sb *fakeSandbox, spec session.Spec, o Options) (Result, error) {
+	t.Helper()
+	return Run(context.Background(), fakeRunner{sb}, spec, o)
+}
+
+func TestTokenNeverReachesAgentAndPushHappens(t *testing.T) {
+	sb := &fakeSandbox{}
+	if _, err := run(t, sb, baseSpec(), opts(map[string]string{"api": "tok123"})); err != nil {
 		t.Fatal(err)
 	}
 	pushed := false
@@ -84,15 +138,12 @@ func TestTokenNeverReachesAgentAndPushHappens(t *testing.T) {
 
 func TestTokenIsScopedToItsOwnHost(t *testing.T) {
 	sb := &fakeSandbox{}
-	spec := session.Spec{
-		ID: "t3", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
-		Repos: []session.Repo{
-			{Name: "api", URL: "https://git.example.com/me/api.git"},
-			{Name: "lib", URL: "https://github.com/me/lib.git"},
-		},
+	spec := baseSpec()
+	spec.Repos = []session.Repo{
+		{Name: "api", URL: "https://git.example.com/me/api.git"},
+		{Name: "lib", URL: "https://github.com/me/lib.git"},
 	}
-	tokens := map[string]string{"api": "tok-a", "lib": "tok-b"}
-	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(tokens)); err != nil {
+	if _, err := run(t, sb, spec, opts(map[string]string{"api": "tok-a", "lib": "tok-b"})); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range sb.calls {
@@ -115,11 +166,9 @@ func TestTokenIsScopedToItsOwnHost(t *testing.T) {
 
 func TestNoTokenForLocalOrSSHUrls(t *testing.T) {
 	sb := &fakeSandbox{}
-	spec := session.Spec{
-		ID: "t4", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
-		Repos: []session.Repo{{Name: "api", URL: "/remotes/api"}},
-	}
-	_ = Run(context.Background(), fakeRunner{sb}, spec, opts(map[string]string{"api": "tok"}))
+	spec := baseSpec()
+	spec.Repos = []session.Repo{{Name: "api", URL: "/remotes/api"}}
+	_, _ = run(t, sb, spec, opts(map[string]string{"api": "tok"}))
 	for _, c := range sb.calls {
 		if _, ok := c.Env["UNIRE_GIT_TOKEN"]; ok {
 			t.Errorf("a token was sent for a non-http URL: %v", c.Argv)
@@ -129,11 +178,9 @@ func TestNoTokenForLocalOrSSHUrls(t *testing.T) {
 
 func TestNoPushSkipsPush(t *testing.T) {
 	sb := &fakeSandbox{}
-	spec := session.Spec{
-		ID: "t2", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off", NoPush: true,
-		Repos: []session.Repo{{Name: "api", URL: "u"}},
-	}
-	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(nil)); err != nil {
+	spec := baseSpec()
+	spec.NoPush = true
+	if _, err := run(t, sb, spec, opts(nil)); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range sb.calls {
@@ -142,3 +189,214 @@ func TestNoPushSkipsPush(t *testing.T) {
 		}
 	}
 }
+
+// ---- memory ----
+
+func memOpts(tokens map[string]string) Options {
+	o := opts(tokens)
+	o.Mem = &MemoryPlan{
+		Context: "# Unire project memory\n\n## Repo api (me/api)\n\nOld brief.\n",
+		Repos:   []memory.RepoBrief{{Dir: "api", FullName: "me/api", Brief: "Old brief."}},
+	}
+	return o
+}
+
+func agentWrites(summary, brief string) map[string]string {
+	m := map[string]string{}
+	if summary != "" {
+		m[memory.OutDir+"/"+memory.SummaryFile] = summary
+	}
+	if brief != "" {
+		m[memory.OutDir+"/api.brief.md"] = brief
+	}
+	return m
+}
+
+func indexOf(calls []runner.ExecOpts, pred func(runner.ExecOpts) bool) int {
+	for i, c := range calls {
+		if pred(c) {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestMemoryIsGivenBeforeTheAgentRunsAndNeverCommitted(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites("## Asked\nx\n## Done\ny", "## What it is\nAPI v2")}
+	res, err := run(t, sb, baseSpec(), memOpts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The context file is in /workspace (above the repos), under the agent's native name.
+	if got := sb.files["/workspace/CLAUDE.md"]; !strings.Contains(got, "Old brief.") {
+		t.Errorf("context file = %q", got)
+	}
+	write := indexOf(sb.calls, func(c runner.ExecOpts) bool { return len(c.Argv) > 0 && c.Argv[0] == "sh" })
+	main := indexOf(sb.calls, func(c runner.ExecOpts) bool {
+		return len(c.Argv) > 0 && c.Argv[0] == "claude" && contains(c.Argv, "--session-id")
+	})
+	if write < 0 || main < 0 || write > main {
+		t.Errorf("memory must be written before the agent starts (write=%d main=%d)", write, main)
+	}
+	// The path and content never go through a shell string.
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "sh" && strings.Contains(strings.Join(c.Argv, " "), "Old brief") {
+			t.Errorf("content must be passed on stdin, not in argv: %v", c.Argv)
+		}
+	}
+	if res.SummarySource != "agent" || !strings.Contains(res.Summary, "## Done") || res.Briefs["api"] != "## What it is\nAPI v2" {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestFollowUpResumesTheSameConversation(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites("## Asked\nx", "")}
+	if _, err := run(t, sb, baseSpec(), memOpts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	var mainRef, resumeRef string
+	for _, c := range sb.calls {
+		for i, a := range c.Argv {
+			if a == "--session-id" {
+				mainRef = c.Argv[i+1]
+			}
+			if a == "--resume" {
+				resumeRef = c.Argv[i+1]
+			}
+		}
+	}
+	if mainRef == "" || mainRef != resumeRef {
+		t.Errorf("follow-up must resume the main run: session-id=%q resume=%q", mainRef, resumeRef)
+	}
+	// The prompt carries the previous brief as data.
+	var prompt string
+	for _, c := range sb.calls {
+		if contains(c.Argv, "--resume") {
+			prompt = c.Argv[len(c.Argv)-1]
+		}
+	}
+	if !strings.Contains(prompt, "<previous-brief") || !strings.Contains(prompt, "Old brief.") {
+		t.Errorf("update prompt = %q", prompt)
+	}
+}
+
+func TestMemoryOffMeansNoMemoryWork(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites("## Asked\nx", "b")}
+	res, err := run(t, sb, baseSpec(), opts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != "" || len(res.Briefs) != 0 {
+		t.Errorf("memory is off but got %+v", res)
+	}
+	if len(sb.files) != 0 {
+		t.Errorf("nothing should be written when memory is off: %v", sb.files)
+	}
+	for _, c := range sb.calls {
+		if contains(c.Argv, "--resume") {
+			t.Error("no follow-up when memory is off")
+		}
+	}
+}
+
+func TestSecretsAreRemovedFromSavedMemory(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites(
+		"## Done\nused token tok-secret-123 and ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+		"## Commands\npassword: hunter2hunter2")}
+	res, err := run(t, sb, baseSpec(), memOpts(map[string]string{"api": "tok-secret-123"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := res.Summary + res.Briefs["api"]
+	for _, leaked := range []string{"tok-secret-123", "ghp_abc", "hunter2"} {
+		if strings.Contains(all, leaked) {
+			t.Errorf("%q leaked into memory: %s", leaked, all)
+		}
+	}
+}
+
+func TestOversizeMemoryIsCapped(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites(strings.Repeat("summary line\n", 2000), strings.Repeat("brief line\n", 2000))}
+	res, _ := run(t, sb, baseSpec(), memOpts(nil))
+	if len(res.Summary) > memory.SummaryCap || len(res.Briefs["api"]) > memory.BriefCap {
+		t.Errorf("summary %d (cap %d), brief %d (cap %d)", len(res.Summary), memory.SummaryCap, len(res.Briefs["api"]), memory.BriefCap)
+	}
+}
+
+func TestFallbackWhenTheAgentWritesNothing(t *testing.T) {
+	sb := &fakeSandbox{agentOut: "all done here"}
+	res, err := run(t, sb, baseSpec(), memOpts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SummarySource != "fallback" || !strings.Contains(res.Summary, "Written by Unire") || !strings.Contains(res.Summary, "api: pushed") ||
+		!strings.Contains(res.Summary, "file.go") || !strings.Contains(res.Summary, "all done here") {
+		t.Errorf("fallback = %+v", res)
+	}
+	if len(res.Briefs) != 0 {
+		t.Error("a fallback must not replace any brief")
+	}
+}
+
+func TestFallbackWhenTheMainAgentFails(t *testing.T) {
+	sb := &fakeSandbox{mainErr: errors.New("exit status 1"), outFiles: agentWrites("## Asked\nshould not be used", "x")}
+	res, err := run(t, sb, baseSpec(), memOpts(nil))
+	if err == nil {
+		t.Fatal("the agent's failure should still be returned")
+	}
+	if res.SummarySource != "fallback" || !strings.Contains(res.Summary, "Session status: failed") {
+		t.Errorf("result = %+v", res)
+	}
+	for _, c := range sb.calls {
+		if contains(c.Argv, "--resume") {
+			t.Error("do not ask a failed agent to write memory")
+		}
+	}
+}
+
+func TestFallbackWhenTheFollowUpFailsOrTimesOut(t *testing.T) {
+	sb := &fakeSandbox{followErr: errors.New("exit status 1"), outFiles: agentWrites("## Asked\nleftover", "")}
+	if res, _ := run(t, sb, baseSpec(), memOpts(nil)); res.SummarySource != "fallback" {
+		t.Errorf("failed follow-up: %+v", res)
+	}
+
+	sb = &fakeSandbox{block: true}
+	o := memOpts(nil)
+	o.MemoryTimeout = 50 * time.Millisecond
+	start := time.Now()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil || res.SummarySource != "fallback" || time.Since(start) > 3*time.Second {
+		t.Errorf("timed-out follow-up: %+v err=%v after %v", res, err, time.Since(start))
+	}
+}
+
+func TestAgentWithoutResumeGetsAFreshConversationWithTheTask(t *testing.T) {
+	// An agent that cannot resume is simulated by checking the fallback path of
+	// askAgentToRemember directly through a spec whose agent lacks FollowUp.
+	ad := noResume{}
+	w := &worker{sb: &fakeSandbox{outFiles: agentWrites("## Asked\nx", "")}, opt: memOpts(nil)}
+	spec := baseSpec()
+	spec.Prompt = "Build the thing"
+	if _, _, err := w.askAgentToRemember(context.Background(), ad, spec, "ref"); err != nil {
+		t.Fatal(err)
+	}
+	var prompt string
+	for _, c := range w.sb.(*fakeSandbox).calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "fresh-agent" {
+			prompt = c.Argv[len(c.Argv)-1]
+		}
+	}
+	if !strings.Contains(prompt, "Build the thing") || !strings.Contains(prompt, "new conversation") {
+		t.Errorf("a fresh conversation must be told the task; prompt = %q", prompt)
+	}
+}
+
+type noResume struct{}
+
+func (noResume) Name() string       { return "fresh" }
+func (noResume) MemoryFile() string { return "FRESH.md" }
+func (noResume) Hosts() []string    { return []string{"x"} }
+func (noResume) Command(prompt, mode, ref string) ([]string, error) {
+	return []string{"fresh-agent", prompt}, nil
+}
+func (noResume) FollowUp(prompt, mode, ref string) ([]string, bool) { return nil, false }

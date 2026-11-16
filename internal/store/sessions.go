@@ -98,21 +98,24 @@ type Session struct {
 	Status     string
 	Error      string
 	Network    string // network mode: internet, agent-only or full
+	Memory     bool   // use and update project memory
 	Repos      []RepoRef
 	CreatedAt  time.Time
 	StartedAt  time.Time // zero until it starts
 	FinishedAt time.Time // zero until it ends
 }
 
-const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network`
+const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var repos string
 	var created, started, finished int64
-	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network); err != nil {
+	var mem int
+	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem); err != nil {
 		return x, err
 	}
+	x.Memory = mem != 0
 	if err := json.Unmarshal([]byte(repos), &x.Repos); err != nil {
 		return x, err
 	}
@@ -135,8 +138,12 @@ func (s *Store) CreateSession(x Session) error {
 	if x.Network == "" {
 		x.Network = "internet"
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
-		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network)
+	mem := 0
+	if x.Memory {
+		mem = 1
+	}
+	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem)
 	return err
 }
 

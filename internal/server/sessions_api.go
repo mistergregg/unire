@@ -360,6 +360,8 @@ type sessionView struct {
 	Status     string          `json:"status"`
 	Error      string          `json:"error"`
 	Network    string          `json:"network"`
+	Memory     bool            `json:"memory"`
+	Pushed     []string        `json:"pushed,omitempty"` // repos this session pushed a branch to (session detail only)
 	Repos      []store.RepoRef `json:"repos"`
 	CreatedAt  int64           `json:"createdAt"`
 	StartedAt  int64           `json:"startedAt"`
@@ -367,7 +369,7 @@ type sessionView struct {
 }
 
 func toView(x store.Session) sessionView {
-	v := sessionView{x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, x.Status, x.Error, x.Network, x.Repos, x.CreatedAt.Unix(), 0, 0}
+	v := sessionView{x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, x.Status, x.Error, x.Network, x.Memory, nil, x.Repos, x.CreatedAt.Unix(), 0, 0}
 	if !x.StartedAt.IsZero() {
 		v.StartedAt = x.StartedAt.Unix()
 	}
@@ -396,6 +398,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		Agent   string          `json:"agent"`
 		Prompt  string          `json:"prompt"`
 		Network string          `json:"network"` // empty means the saved default
+		Memory  *bool           `json:"memory"`  // omitted means on
 		Repos   []store.RepoRef `json:"repos"`
 	}
 	if !readJSON(w, r, &req) {
@@ -428,7 +431,8 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Repos: repos})
+	useMemory := req.Memory == nil || *req.Memory
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -448,10 +452,45 @@ func (s *Server) lookupSession(w http.ResponseWriter, r *http.Request) (store.Se
 	return x, ok
 }
 
-func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
-	if x, ok := s.lookupSession(w, r); ok {
-		writeJSON(w, http.StatusOK, toView(x))
+// pushedFrom finds which repos a session pushed, from its log lines
+// ("<dir>: pushed <branch>"), as full names.
+func pushedFrom(events []store.Event, refs []store.RepoRef) []string {
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.FullName
 	}
+	dirs := sessions.RepoDirNames(names)
+	pushed := map[string]bool{}
+	for _, e := range events {
+		if e.Kind != "log" {
+			continue
+		}
+		for i, d := range dirs {
+			if strings.HasPrefix(e.Text, d+": pushed ") {
+				pushed[refs[i].FullName] = true
+			}
+		}
+	}
+	out := []string{}
+	for _, r := range refs {
+		if pushed[r.FullName] {
+			out = append(out, r.FullName)
+		}
+	}
+	return out
+}
+
+func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	v := toView(x)
+	// Which repos got a pushed branch, so "Continue" knows what it can build on.
+	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
+		v.Pushed = pushedFrom(events, x.Repos)
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (s *Server) sessionLogs(w http.ResponseWriter, r *http.Request) {

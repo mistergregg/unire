@@ -41,9 +41,12 @@ function banner(msg, isError) {
   if (msg && !isError) bannerTimer = setTimeout(() => { b.hidden = true; }, 5000);
 }
 
+// Runs an action with its button disabled. The banner is cleared first, not
+// afterwards, so a success message the action sets stays visible.
 async function guarded(button, fn) {
   if (button) button.disabled = true;
-  try { await fn(); banner(""); } catch (e) { banner(e.message, true); } finally { if (button) button.disabled = false; }
+  banner("");
+  try { await fn(); } catch (e) { banner(e.message, true); } finally { if (button) button.disabled = false; }
 }
 
 function ago(unix) {
@@ -56,8 +59,8 @@ function ago(unix) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "sessions", "new", "session", "servers", "settings"];
-const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", servers: "servers", settings: "settings" };
+const VIEWS = ["auth", "sessions", "new", "session", "memory", "repomem", "servers", "settings"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", memory: "memory", repomem: "memory", servers: "servers", settings: "settings" };
 let currentView = "";
 function show(name) {
   currentView = name;
@@ -109,7 +112,7 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { sessions: openSessions, servers: openServers, settings: openSettings }[t.dataset.view];
+  const open = { sessions: openSessions, memory: openMemory, servers: openServers, settings: openSettings }[t.dataset.view];
   guarded(null, open);
 }));
 

@@ -57,16 +57,18 @@ func (antigravity) Info() Info {
 		InspectArgv: []string{"sh", "-c", antigravityInspectScript},
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
 		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
-		Verified:    Verified{},
+		Verified:    Verified{Unattended: true}, // one real unattended run was seen (internet mode)
 	}
 }
 
-// Hosts are Antigravity's likely services. They have not been measured with a
-// real session, so agent-only mode may need an address allowed from the log.
+// Hosts are Antigravity's services. A real session in internet mode connected to
+// www.googleapis.com, daily-cloudcode-pa, aicode, play.googleapis.com and
+// lh3.googleusercontent.com; the last two (telemetry and pictures) are not listed.
+// Agent-only mode has not been run, so an address may still need allowing from the log.
 func (antigravity) Hosts() []string {
 	return []string{
 		"antigravity.google", "accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com",
-		"cloudcode-pa.googleapis.com", "daily-cloudcode-pa.googleapis.com",
+		"cloudcode-pa.googleapis.com", "daily-cloudcode-pa.googleapis.com", "aicode.googleapis.com",
 		"antigravity-cli-auto-updater-974169037036.us-central1.run.app",
 	}
 }

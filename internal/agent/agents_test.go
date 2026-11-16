@@ -231,11 +231,11 @@ func TestLoginStatusReaders(t *testing.T) {
 }
 
 func TestUnverifiedAgentsSaySo(t *testing.T) {
-	for _, id := range []string{"codex", "antigravity"} {
-		a, _ := Get(id)
-		if v := a.Info().Verified; v.Unattended || v.Hosts {
-			t.Errorf("%s: do not claim a real run was checked until one was", id)
-		}
+	if a, _ := Get("codex"); a.Info().Verified.Unattended || a.Info().Verified.Hosts {
+		t.Errorf("codex: do not claim a real run was checked until one was")
+	}
+	if a, _ := Get("antigravity"); !a.Info().Verified.Unattended || a.Info().Verified.Hosts || a.Info().Verified.Status {
+		t.Errorf("antigravity: one unattended run was seen; hosts and the sign-in check are not verified: %+v", a.Info().Verified)
 	}
 	c, _ := Get("claude")
 	if v := c.Info().Verified; !v.Unattended || !v.Status || !v.Hosts {

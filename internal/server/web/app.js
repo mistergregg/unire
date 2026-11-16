@@ -64,6 +64,7 @@ const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", age
 let currentView = "";
 function show(name) {
   currentView = name;
+  if (name !== "auth" && typeof startAttention === "function") startAttention();
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));

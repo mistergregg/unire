@@ -620,3 +620,28 @@ func TestAQuestionNobodyAnswersEndsWithoutAnAnswer(t *testing.T) {
 		t.Error("a stopped session must not wait")
 	}
 }
+
+func TestWaitingCountsOpenQuestionsOfOneSession(t *testing.T) {
+	m, _ := setup(t, &fakeSandbox{})
+	x, _ := m.Start(req(""))
+	y, _ := m.Start(req(""))
+	m.Wait()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.askFunc(x.ID)(ctx, "1", "first?")
+	go m.askFunc(x.ID)(ctx, "2", "second?")
+	go m.askFunc(y.ID)(ctx, "1", "other session?")
+	deadline := time.Now().Add(2 * time.Second)
+	for m.Waiting(x.ID) != 2 || m.Waiting(y.ID) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("waiting = %d and %d, want 2 and 1", m.Waiting(x.ID), m.Waiting(y.ID))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := m.Answer(x.ID, "1", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Waiting(x.ID); got != 1 {
+		t.Errorf("after one answer, waiting = %d, want 1", got)
+	}
+}

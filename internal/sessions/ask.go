@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mistergregg/unire/internal/workflow"
@@ -53,4 +54,18 @@ func (m *Manager) Answer(sessionID, questionID, text string) error {
 	ch <- text // buffered: never blocks
 	_ = m.st.AddEvent(sessionID, "answer", questionID+"\n"+text)
 	return nil
+}
+
+// Waiting is how many questions the session's agent is waiting for an answer to.
+func (m *Manager) Waiting(sessionID string) int {
+	prefix := sessionID + "/"
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for key := range m.asks {
+		if strings.HasPrefix(key, prefix) {
+			n++
+		}
+	}
+	return n
 }

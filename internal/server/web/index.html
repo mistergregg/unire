@@ -265,6 +265,11 @@
     </div>
 
     <div class="card">
+      <h2>Notifications</h2>
+      <p id="notif-status" class="muted"></p>
+      <button id="notif-enable" type="button">Turn on notifications</button>
+    </div>
+    <div class="card">
       <h2>Backup</h2>
       <p class="muted">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
       <a class="button" href="/api/backup" download>Download backup</a>
@@ -277,6 +282,7 @@
 <script src="/app.js" defer></script>
 <script src="/sessions.js" defer></script>
 <script src="/chat.js" defer></script>
+<script src="/attention.js" defer></script>
 <script src="/memory.js" defer></script>
 <script src="/agents.js" defer></script>
 </body>

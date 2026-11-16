@@ -106,3 +106,4 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-bre
 .bubble.ask { border-color: var(--accent); }
 .ask .said { white-space: pre-wrap; margin-bottom: 8px; }
 .ask-form textarea { margin-bottom: 6px; }
+.st-attention { color: #e0a100; border-color: #e0a100; font-weight: 600; }

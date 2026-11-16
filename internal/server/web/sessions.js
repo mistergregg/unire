@@ -32,7 +32,7 @@ async function openSessions() {
 function sessionRow(s) {
   const open = () => openSession(s.id);
   const row = el("div", { class: "item click", role: "button", tabindex: "0" },
-    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task), statusBadge(s.latestStatus || s.status)),
+    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task), s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : statusBadge(s.latestStatus || s.status)),
     el("div", { class: "muted" }, s.agent + " · " + s.repos.map((r) => r.fullName).join(", ")),
     el("div", { class: "muted" }, "started " + ago(s.startedAt || s.createdAt)));
   row.addEventListener("click", open);

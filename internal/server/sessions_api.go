@@ -357,6 +357,7 @@ type sessionView struct {
 	Parent       string          `json:"parent,omitempty"`
 	Latest       string          `json:"latest,omitempty"`       // list only: the newest turn of this conversation
 	LatestStatus string          `json:"latestStatus,omitempty"` // list only
+	Waiting      int             `json:"waiting,omitempty"`      // list only: questions the agent is waiting on you for
 	Pushed       []string        `json:"pushed,omitempty"`       // repos this session pushed a branch to (session detail only)
 	Repos        []store.RepoRef `json:"repos"`
 	CreatedAt    int64           `json:"createdAt"`
@@ -391,10 +392,12 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 		v := toView(x)
+		newest := x
 		if thread, err := s.threadOf(x.ID); err == nil && len(thread) > 1 {
-			last := thread[len(thread)-1]
-			v.Latest, v.LatestStatus = last.ID, last.Status
+			newest = thread[len(thread)-1]
+			v.Latest, v.LatestStatus = newest.ID, newest.Status
 		}
+		v.Waiting = s.sessions.Waiting(newest.ID)
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -89,7 +89,7 @@ func New(dataDir string) (*Server, error) {
 	if err == nil {
 		// Fetch a newer sandbox image now, so the first session or sign-in after
 		// an update does not wait for the download.
-		go runner.Refresh(context.Background(), s.sandbox().Image)
+		go runner.Refresh(context.Background(), s.sandbox().Image) // its own goroutine, so it may wait for the download
 	}
 	return s, err
 }

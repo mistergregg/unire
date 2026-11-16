@@ -67,8 +67,8 @@ func (d Docker) runArgs(s StartSpec) []string {
 	return append(args, d.Image, "sleep", "infinity")
 }
 
-// Refresh updates the sandbox image when it comes from a registry.
-func (d Docker) Refresh(ctx context.Context) { Refresh(ctx, d.Image) }
+// Refresh makes sure the sandbox image is current without making anyone wait for a download (see EnsureFresh).
+func (d Docker) Refresh(ctx context.Context) { EnsureFresh(ctx, d.Image) }
 
 func (d Docker) Start(ctx context.Context, s StartSpec) (Sandbox, error) {
 	d.Refresh(ctx)

@@ -15,7 +15,13 @@ func fakePull(t *testing.T) *[]string {
 	pullImage = func(_ context.Context, image string) error { pulled = append(pulled, image); return nil }
 	now = func() time.Time { return clock }
 	refreshedAt = map[string]time.Time{}
-	t.Cleanup(func() { pullImage, now = oldPull, oldNow; refreshedAt = map[string]time.Time{} })
+	oldHave := haveImage
+	inflight = map[string]bool{}
+	t.Cleanup(func() {
+		pullImage, now, haveImage = oldPull, oldNow, oldHave
+		refreshedAt = map[string]time.Time{}
+		inflight = map[string]bool{}
+	})
 	return &pulled
 }
 
@@ -63,5 +69,37 @@ func TestFailedPullIsRetriedNextTime(t *testing.T) {
 	Refresh(context.Background(), "ghcr.io/x/s")
 	if len(*pulled) != 2 {
 		t.Fatalf("pulled %v, want a retry after the failure", *pulled)
+	}
+}
+
+func TestAnImageOnTheHostIsNeverWaitedFor(t *testing.T) {
+	fakePull(t)
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	pullImage = func(context.Context, string) error {
+		started <- struct{}{}
+		<-release // a slow download
+		return nil
+	}
+	haveImage = func(context.Context, string) bool { return true }
+	done := make(chan struct{})
+	go func() { EnsureFresh(context.Background(), "ghcr.io/x/s"); close(done) }()
+	select {
+	case <-done: // returned without waiting for the pull
+	case <-time.After(2 * time.Second):
+		t.Fatal("EnsureFresh waited for the download although the image is on the host")
+	}
+	<-started // the update is going on in the background
+	// A second call while it runs does not start another pull or wait.
+	EnsureFresh(context.Background(), "ghcr.io/x/s")
+	close(release)
+}
+
+func TestWithNoImageAtAllItWaitsForTheDownload(t *testing.T) {
+	pulled := fakePull(t)
+	haveImage = func(context.Context, string) bool { return false }
+	EnsureFresh(context.Background(), "ghcr.io/x/s")
+	if len(*pulled) != 1 {
+		t.Errorf("pulled %v: with no copy of the image the pull must finish before EnsureFresh returns", *pulled)
 	}
 }

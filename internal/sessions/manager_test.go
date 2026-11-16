@@ -14,6 +14,7 @@ import (
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
+	"github.com/mistergregg/unire/internal/tools"
 )
 
 // fakeSandbox behaves like a sandbox where the agent prints a line that
@@ -520,5 +521,38 @@ func TestStartNeedsRepos(t *testing.T) {
 	m, _ := setup(t, &fakeSandbox{})
 	if _, err := m.Start(Request{Task: "t", Agent: "claude", Prompt: "p", Mode: "hands-off"}); err == nil {
 		t.Error("no repos should fail")
+	}
+}
+
+func TestTheAgentNamesANewConversationButNotAReply(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{tools.Dir + "/name": "A better name\n"}}
+	m, st := setup(t, sb)
+
+	r := req("")
+	r.Task = "raw first line of the prompt"
+	first, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	if got, _, _ := st.Session(first.ID); got.Task != "A better name" {
+		t.Errorf("first message: task = %q, want the agent's title", got.Task)
+	}
+	if log := logText(st, first.ID); !strings.Contains(log, "the agent named this conversation: A better name") {
+		t.Errorf("the rename should be in the log:\n%s", log)
+	}
+
+	r2 := req("")
+	r2.Task, r2.Parent = "A better name", first.ID
+	sb.mu.Lock()
+	sb.outFiles[tools.Dir+"/name"] = "Renamed by a reply" // the agent asks again, but a reply is not given the tool
+	sb.mu.Unlock()
+	reply, err := m.Start(r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	if got, _, _ := st.Session(reply.ID); got.Task != "A better name" {
+		t.Errorf("a reply must keep the conversation's name, got %q", got.Task)
 	}
 }

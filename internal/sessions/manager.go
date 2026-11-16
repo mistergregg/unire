@@ -19,6 +19,7 @@ import (
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
+	"github.com/mistergregg/unire/internal/tools"
 	"github.com/mistergregg/unire/internal/workflow"
 )
 
@@ -154,7 +155,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Unlock()
 
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
-	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets})
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -192,6 +193,7 @@ type job struct {
 	refs    []store.RepoRef // same order as spec.Repos
 	tokens  map[string]string
 	secrets []string
+	parent  string // the session this one continues, or empty
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
@@ -235,11 +237,19 @@ func (m *Manager) run(ctx context.Context, j job) {
 	if j.memory {
 		wo.Mem = m.memoryPlan(j)
 	}
+	if j.parent == "" {
+		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name
+	}
 	res, err := workflow.Run(ctx, rn, spec, wo)
 	out.Flush()
 	info.Flush()
 	if j.memory && ctx.Err() == nil {
 		m.saveMemory(j, res, err)
+	}
+	if res.Name != "" && j.parent == "" && res.Name != spec.Task {
+		if m.st.SetTask(spec.ID, res.Name) == nil {
+			_ = m.st.AddEvent(spec.ID, "log", "the agent named this conversation: "+res.Name)
+		}
 	}
 	m.finish(ctx, spec.ID, err, secrets)
 }
@@ -347,6 +357,7 @@ type logWriter struct {
 	id      string
 	kind    string
 	secrets []string
+	parent  string // the session this one continues, or empty
 
 	mu  sync.Mutex
 	buf []byte

@@ -1,0 +1,13 @@
+#!/bin/sh
+# unire: ask Unire (the program running this session) to do something.
+# It only records the request in a file; Unire reads it when the session ends and
+# decides what to do. Usage: unire <tool> <text...>
+dir=/workspace/.unire-tools
+tool=$1
+[ -n "$tool" ] || { echo "usage: unire <tool> <text>" >&2; exit 2; }
+shift
+case "$tool" in
+  *[!a-z-]*) echo "unire: bad tool name" >&2; exit 2 ;;
+esac
+mkdir -p "$dir" && printf '%s\n' "$*" | tr '\n' ' ' >> "$dir/$tool" && printf '\n' >> "$dir/$tool" \
+  && echo "ok: Unire has your '$tool' request and will use it when the session ends."

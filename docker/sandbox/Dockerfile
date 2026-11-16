@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # folder; here it cannot, so the version in the image is the version that runs.
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
     && agy --version
+# The command an agent runs to ask Unire for something (see internal/tools).
+COPY --chmod=755 unire /usr/local/bin/unire
 USER node
 ENV HOME=/home/node
 WORKDIR /workspace

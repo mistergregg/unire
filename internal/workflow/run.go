@@ -18,6 +18,7 @@ import (
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
+	"github.com/mistergregg/unire/internal/tools"
 )
 
 // Options are settings that are not part of the session itself.
@@ -36,6 +37,8 @@ type Options struct {
 	Mem *MemoryPlan
 	// MemoryTimeout limits the memory step; zero means five minutes.
 	MemoryTimeout time.Duration
+	// Tools are what the agent may ask Unire to do (see package tools). Empty means none.
+	Tools []tools.Tool
 }
 
 // MemoryPlan is the project memory for this session.
@@ -49,6 +52,7 @@ type Result struct {
 	Summary       string            // cleaned, scrubbed session summary; empty when memory is off
 	SummarySource string            // "agent" or "fallback"
 	Briefs        map[string]string // repo directory -> updated brief written by the agent
+	Name          string            // a title the agent asked for with the name tool; empty if none
 }
 
 const workspace = "/workspace"
@@ -171,6 +175,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 			fmt.Fprintf(opt.Err, "memory: gave the agent project memory (%d characters in %s)\n", len(opt.Mem.Context), adapter.MemoryFile())
 		}
 	}
+	if tp := tools.Prompt(opt.Tools); tp != "" && prompt != "" {
+		prompt += "\n\n---\n\n" + tp
+	}
 	argv, err := adapter.Command(prompt, spec.Mode, ref)
 	if err != nil {
 		return res, err
@@ -187,6 +194,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		agentOpts.Stdin = opt.In
 	}
 	agentErr := sb.Exec(ctx, agentOpts)
+	requestedName := w.requestedName(ctx)
 
 	outcomes, err := w.finish(ctx, spec, startHeads)
 	if err != nil {
@@ -206,6 +214,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}
+	res.Name = requestedName
 	if agentErr != nil {
 		return res, fmt.Errorf("agent exited with an error: %w", agentErr)
 	}
@@ -411,4 +420,25 @@ func (w *worker) askAgentToRemember(ctx context.Context, ad agent.Adapter, spec 
 		return "", briefs, fmt.Errorf("it wrote no %s", memory.SummaryFile)
 	}
 	return summary, briefs, nil
+}
+
+// requestedName is the title the agent asked for with the name tool (the last
+// request wins), or "" when the session was not given the tool or it was not used.
+func (w *worker) requestedName(ctx context.Context) string {
+	given := false
+	for _, t := range w.opt.Tools {
+		given = given || t.Name == tools.Name.Name
+	}
+	if !given || ctx.Err() != nil {
+		return ""
+	}
+	content, err := w.readFile(ctx, tools.Dir+"/"+tools.Name.Name, 4096)
+	if err != nil {
+		return "" // the agent did not use the tool
+	}
+	reqs := tools.Requests(content)
+	if len(reqs) == 0 {
+		return ""
+	}
+	return tools.CleanName(reqs[len(reqs)-1])
 }

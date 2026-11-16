@@ -12,6 +12,7 @@ import (
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
+	"github.com/mistergregg/unire/internal/tools"
 )
 
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
@@ -442,5 +443,38 @@ func TestAReplyContinuesTheBranchWithoutCreatingIt(t *testing.T) {
 	}
 	if got := branches("agent/claude/demo"); got != 0 {
 		t.Errorf("a reply is already on its branch after cloning it: %d checkouts", got)
+	}
+}
+
+func TestAgentCanNameTheConversationOnlyWhenGivenTheTool(t *testing.T) {
+	nameFile := tools.Dir + "/name"
+	withTool := func(given []tools.Tool, content string) (string, string) {
+		sb := &fakeSandbox{outFiles: map[string]string{nameFile: content}}
+		o := opts(nil)
+		o.Tools = given
+		res, err := run(t, sb, baseSpec(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prompt := ""
+		for _, c := range sb.calls {
+			if len(c.Argv) > 0 && c.Argv[0] == "claude" {
+				prompt = c.Argv[len(c.Argv)-1]
+			}
+		}
+		return res.Name, prompt
+	}
+	name, prompt := withTool(tools.ForNewConversation(), "first idea\n \"Fix the login redirect\" \n")
+	if name != "Fix the login redirect" {
+		t.Errorf("name = %q, want the last request, cleaned", name)
+	}
+	if !strings.Contains(prompt, `unire name "<title>"`) {
+		t.Errorf("the agent was not told about the tool: %q", prompt)
+	}
+	if name, prompt := withTool(nil, "sneaky"); name != "" || strings.Contains(prompt, "unire name") {
+		t.Errorf("a session without the tool must ignore the request and not mention it: %q %q", name, prompt)
+	}
+	if name, _ := withTool(tools.ForNewConversation(), ""); name != "" {
+		t.Errorf("an empty request names nothing: %q", name)
 	}
 }

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>unire</Name>
+  <Repository>ghcr.io/mistergregg/unire:latest</Repository>
+  <Registry>https://github.com/mistergregg/unire/pkgs/container/unire</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/mistergregg/unire/issues</Support>
+  <Project>https://github.com/mistergregg/unire</Project>
+  <Overview>Self-hosted control panel for AI coding agents. Start a coding task from the browser; it runs in its own disposable Docker sandbox on your repos and pushes a branch when it finishes. Single owner, one login. This container controls Docker on this server through the socket, so keep it on your private network and read docs/deploy.md first.</Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/mistergregg/unire/main/deploy/unraid/unire.xml</TemplateURL>
+  <Config Name="WebUI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the dashboard." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/unire" Mode="rw" Description="Database and master key. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unire</Config>
+  <Config Name="Docker socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Lets Unire start sandbox containers. This is root-level access to Docker on this server." Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+  <Config Name="Master key (optional)" Target="UNIRE_MASTER_KEY" Default="" Mode="" Description="64 hex characters. If set, the key that encrypts saved tokens is not stored in the data folder." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Sandbox image" Target="UNIRE_SANDBOX_IMAGE" Default="ghcr.io/mistergregg/unire-sandbox:latest" Mode="" Description="Image used for each coding session." Type="Variable" Display="advanced" Required="false" Mask="false">ghcr.io/mistergregg/unire-sandbox:latest</Config>
+</Container>

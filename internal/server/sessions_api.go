@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -61,8 +62,12 @@ func (s *Server) sandbox() Sandbox {
 		}
 		return def
 	}
+	defaultImage := os.Getenv("UNIRE_SANDBOX_IMAGE") // set in the container image
+	if defaultImage == "" {
+		defaultImage = "unire-sandbox"
+	}
 	return Sandbox{
-		Image:       get("sandbox_image", "unire-sandbox"),
+		Image:       get("sandbox_image", defaultImage),
 		CredsVolume: get("sandbox_creds_volume", "unire-creds-claude"),
 		Memory:      get("sandbox_memory", ""),
 		CPUs:        get("sandbox_cpus", ""),

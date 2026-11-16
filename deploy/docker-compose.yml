@@ -1,0 +1,19 @@
+# Unire on any Docker host. See docs/deploy.md first: the Docker socket mount
+# gives this container control of the host's Docker, so keep Unire on a
+# private network.
+services:
+  unire:
+    image: ghcr.io/mistergregg/unire:latest
+    container_name: unire
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - unire-data:/data # database and master key: back this up
+      - /var/run/docker.sock:/var/run/docker.sock # lets Unire start sandboxes
+    # environment:
+    #   UNIRE_MASTER_KEY: "<64 hex characters>"  # optional: keep the key out of /data
+    #   UNIRE_SANDBOX_IMAGE: ghcr.io/mistergregg/unire-sandbox:latest
+
+volumes:
+  unire-data:

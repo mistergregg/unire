@@ -283,6 +283,20 @@ func TestSandboxSettings(t *testing.T) {
 	}
 }
 
+func TestSandboxImageDefaultComesFromEnvironment(t *testing.T) {
+	t.Setenv("UNIRE_SANDBOX_IMAGE", "ghcr.io/example/unire-sandbox:latest")
+	e := newEnv(t)
+	e.setup()
+	if _, body := e.do("GET", "/api/sandbox", nil); !strings.Contains(body, `"image":"ghcr.io/example/unire-sandbox:latest"`) {
+		t.Errorf("env default ignored: %s", body)
+	}
+	// A saved value wins over the environment.
+	e.do("PUT", "/api/sandbox", map[string]string{"image": "mine", "credsVolume": "v"})
+	if _, body := e.do("GET", "/api/sandbox", nil); !strings.Contains(body, `"image":"mine"`) {
+		t.Errorf("saved image not used: %s", body)
+	}
+}
+
 func TestAgentsListed(t *testing.T) {
 	e := newEnv(t)
 	e.setup()

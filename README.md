@@ -29,6 +29,8 @@ docker build -t unire-sandbox docker/sandbox
 
 Needs Docker on the machine running `unire serve`. Only unattended sessions exist so far.
 
+To run it as a container (for example on Unraid) see [docs/deploy.md](docs/deploy.md).
+
 ## Command line launcher
 
 Needs Go, Docker, and an agent login stored in a Docker volume (see `experiments/m0-credentials/`).

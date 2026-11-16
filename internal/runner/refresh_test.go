@@ -93,6 +93,20 @@ func TestAnImageOnTheHostIsNeverWaitedFor(t *testing.T) {
 	// A second call while it runs does not start another pull or wait.
 	EnsureFresh(context.Background(), "ghcr.io/x/s")
 	close(release)
+	// Let the background update finish, so it cannot touch the next test's state.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		stateMu.Lock()
+		busy := inflight["ghcr.io/x/s"]
+		stateMu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background update never finished")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestWithNoImageAtAllItWaitsForTheDownload(t *testing.T) {

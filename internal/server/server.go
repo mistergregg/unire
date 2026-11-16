@@ -28,6 +28,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/vault"
 )
@@ -49,6 +50,9 @@ type Server struct {
 	store   *store.Store
 	vault   *vault.Vault
 
+	sessions      *sessions.Manager
+	runnerFactory RunnerFactory
+
 	mu       sync.Mutex
 	failures map[string]failure
 }
@@ -58,8 +62,12 @@ type failure struct {
 	until time.Time
 }
 
-// New opens the data directory (creating the database and key on first run).
-func New(dataDir string) (*Server, error) {
+// New opens the data directory (creating the database and key on first run)
+// and runs sessions in Docker.
+func New(dataDir string) (*Server, error) { return NewWith(dataDir, dockerRunner) }
+
+// NewWith is New with a custom way to build sandboxes (used by tests).
+func NewWith(dataDir string, rf RunnerFactory) (*Server, error) {
 	st, err := store.Open(dataDir)
 	if err != nil {
 		return nil, err
@@ -69,11 +77,20 @@ func New(dataDir string) (*Server, error) {
 		st.Close()
 		return nil, err
 	}
-	return &Server{dataDir: dataDir, store: st, vault: v, failures: map[string]failure{}}, nil
+	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, failures: map[string]failure{}}
+	s.sessions, err = sessions.New(st, s.sessionConfig)
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
-// Close releases the database.
-func (s *Server) Close() error { return s.store.Close() }
+// Close stops running sessions and releases the database.
+func (s *Server) Close() error {
+	s.sessions.Shutdown()
+	return s.store.Close()
+}
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
@@ -88,6 +105,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logins/revoke-all", s.auth(s.revokeAll))
 	mux.HandleFunc("POST /api/password", s.auth(s.changePassword))
 	mux.HandleFunc("GET /api/backup", s.auth(s.backup))
+
+	mux.HandleFunc("GET /api/agents", s.auth(s.agentNames))
+	mux.HandleFunc("GET /api/sandbox", s.auth(s.getSandbox))
+	mux.HandleFunc("PUT /api/sandbox", s.auth(s.putSandbox))
+	mux.HandleFunc("GET /api/workspaces", s.auth(s.listWorkspaces))
+	mux.HandleFunc("POST /api/workspaces", s.auth(s.saveWorkspace))
+	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))
+	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
+	mux.HandleFunc("POST /api/sessions", s.auth(s.startSession))
+	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))
+	mux.HandleFunc("GET /api/sessions/{id}/logs", s.auth(s.sessionLogs))
+	mux.HandleFunc("POST /api/sessions/{id}/stop", s.auth(s.stopSession))
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.auth(s.deleteSession))
 
 	mux.HandleFunc("GET /api/types", s.auth(s.types))
 	mux.HandleFunc("GET /api/servers", s.auth(s.listServers))

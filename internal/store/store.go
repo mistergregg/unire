@@ -44,6 +44,35 @@ var migrations = []string{
 		user_agent TEXT NOT NULL DEFAULT '',
 		ip         TEXT NOT NULL DEFAULT ''
 	);`,
+	// 2: workspaces and coding sessions
+	`CREATE TABLE workspaces (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		repos      TEXT NOT NULL, -- JSON list of repo references
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE sessions (
+		id          TEXT PRIMARY KEY,
+		task        TEXT NOT NULL,
+		agent       TEXT NOT NULL,
+		mode        TEXT NOT NULL,
+		prompt      TEXT NOT NULL,
+		branch      TEXT NOT NULL,
+		status      TEXT NOT NULL,
+		error       TEXT NOT NULL DEFAULT '',
+		repos       TEXT NOT NULL, -- JSON list of repo references
+		created_at  INTEGER NOT NULL,
+		started_at  INTEGER NOT NULL DEFAULT 0,
+		finished_at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE session_events (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		ts         INTEGER NOT NULL,
+		kind       TEXT NOT NULL, -- out (agent output) or log (progress)
+		text       TEXT NOT NULL
+	);
+	CREATE INDEX session_events_by_session ON session_events (session_id, id);`,
 }
 
 // DBFileName is the database file inside the data directory.

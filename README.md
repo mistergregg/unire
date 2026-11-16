@@ -14,7 +14,22 @@ Self-hosted control panel for AI coding agents: isolated sandboxes, shared memor
 - Hand results back as git branches and pull requests.
 - Later: remote workers on your other servers.
 
-## Try the launcher (Milestone 1, command line only)
+## Dashboard
+
+```bash
+go build -o bin/unire ./cmd/unire
+docker build -t unire-sandbox docker/sandbox
+./bin/unire serve            # http://127.0.0.1:8080, data in ./data
+```
+
+1. Open the page and set the owner password (first run only).
+2. **Git servers:** add Gitea, Forgejo, GitHub or GitLab with an access token. Tokens are encrypted and can never be viewed again.
+3. **Settings:** log the agent in once (the page shows the exact `docker run` command) so sessions can use your subscription.
+4. **Sessions, New session:** search your repos, pick one or several, write what the agent should do, and launch. Watch the log live; each repo gets an `agent/<agent>/<task>` branch pushed when the agent finishes.
+
+Needs Docker on the machine running `unire serve`. Only unattended sessions exist so far.
+
+## Command line launcher
 
 Needs Go, Docker, and an agent login stored in a Docker volume (see `experiments/m0-credentials/`).
 

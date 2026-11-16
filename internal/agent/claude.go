@@ -16,12 +16,13 @@ func (claude) Command(prompt, mode string) ([]string, error) {
 			return []string{"claude", "--dangerously-skip-permissions"}, nil
 		}
 		// -p runs once and exits, which is what an unattended session needs.
-		return []string{"claude", "-p", prompt, "--dangerously-skip-permissions"}, nil
+		// "--" keeps a prompt that starts with a dash from being read as a flag.
+		return []string{"claude", "-p", "--dangerously-skip-permissions", "--", prompt}, nil
 	case AskFirst:
 		if prompt == "" {
 			return []string{"claude"}, nil
 		}
-		return []string{"claude", prompt}, nil
+		return []string{"claude", "--", prompt}, nil
 	}
 	return nil, fmt.Errorf("unknown mode %q", mode)
 }

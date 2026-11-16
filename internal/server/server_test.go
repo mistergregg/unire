@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mistergregg/unire/internal/runner"
 )
 
 const goodPassword = "correct horse battery"
@@ -23,20 +25,21 @@ type env struct {
 	c    *http.Client
 	dir  string
 	seen *bytes.Buffer // every response body, to check for leaks
+	box  *fakeBox      // the fake sandbox every session runs in
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
 	jar, _ := cookiejar.New(nil)
-	e := &env{t: t, dir: dir, c: &http.Client{Jar: jar}, seen: &bytes.Buffer{}}
+	e := &env{t: t, dir: dir, c: &http.Client{Jar: jar}, seen: &bytes.Buffer{}, box: &fakeBox{}}
 	e.start()
 	return e
 }
 
 // start (re)opens the server on the same data directory, like a restart.
 func (e *env) start() {
-	s, err := New(e.dir)
+	s, err := NewWith(e.dir, func(Sandbox) runner.Runner { return fakeRunner{e.box} })
 	if err != nil {
 		e.t.Fatal(err)
 	}

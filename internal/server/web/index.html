@@ -10,8 +10,8 @@
 <header class="top">
   <div class="brand">Unire</div>
   <nav id="nav" hidden>
+    <button class="tab" data-view="sessions">Sessions</button>
     <button class="tab" data-view="servers">Git servers</button>
-    <button class="tab" data-view="repos">Find repos</button>
     <button class="tab" data-view="settings">Settings</button>
   </nav>
   <button id="logout" class="ghost" hidden>Log out</button>
@@ -33,6 +33,77 @@
     </div>
   </section>
 
+  <!-- Sessions -->
+  <section id="view-sessions" hidden>
+    <div class="between">
+      <h1>Sessions</h1>
+      <button id="new-session" class="primary">New session</button>
+    </div>
+    <div id="session-list" class="stack"></div>
+  </section>
+
+  <section id="view-new" hidden>
+    <button class="ghost" id="new-back">&larr; Sessions</button>
+    <h1>New session</h1>
+    <form id="new-form" autocomplete="off">
+      <div class="card">
+        <div class="grid">
+          <label>Task name
+            <input id="n-task" required maxlength="80" placeholder="Add a login page">
+          </label>
+          <label>Agent
+            <select id="n-agent"></select>
+          </label>
+        </div>
+        <label>What should the agent do?
+          <textarea id="n-prompt" required rows="5" maxlength="20000" placeholder="Describe the change. The agent works alone until it finishes."></textarea>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>Repos</h2>
+        <label>Load a saved workspace
+          <select id="n-workspace"></select>
+        </label>
+        <div class="row">
+          <select id="n-server" aria-label="Git server"></select>
+          <input id="n-query" type="search" placeholder="Search repos by name">
+          <button type="button" id="n-search">Search</button>
+        </div>
+        <div id="n-results" class="stack"></div>
+
+        <h2 class="spaced">Selected</h2>
+        <div id="n-selected" class="stack"></div>
+        <div class="row spaced">
+          <input id="n-ws-name" maxlength="60" placeholder="Save this selection as a workspace">
+          <button type="button" id="n-ws-save">Save workspace</button>
+        </div>
+      </div>
+
+      <button class="primary" type="submit" id="n-submit">Launch session</button>
+      <p class="muted">Runs unattended in a fresh Docker sandbox with the agent's auto-approve mode on. Each repo gets its own <code>agent/&hellip;</code> branch, pushed when the agent finishes.</p>
+    </form>
+  </section>
+
+  <section id="view-session" hidden>
+    <button class="ghost" id="s-back">&larr; Sessions</button>
+    <div class="between">
+      <h1 id="s-title"></h1>
+      <span id="s-status" class="badge"></span>
+    </div>
+    <p id="s-meta" class="muted"></p>
+    <div id="s-repos" class="stack"></div>
+    <details class="spaced"><summary>Prompt</summary><pre id="s-prompt" class="log"></pre></details>
+    <p id="s-error" class="err" hidden></p>
+    <div class="item-actions">
+      <button id="s-stop" class="danger" hidden>Stop</button>
+      <button id="s-delete" hidden>Delete</button>
+    </div>
+    <h2 class="spaced">Log</h2>
+    <pre id="s-log" class="log" aria-live="polite"></pre>
+  </section>
+
+  <!-- Git servers -->
   <section id="view-servers" hidden>
     <h1>Git servers</h1>
     <p class="muted">Tokens are encrypted on the server and can never be viewed again, only replaced.</p>
@@ -64,9 +135,38 @@
     </div>
   </section>
 
+  <!-- Settings -->
   <section id="view-settings" hidden>
     <h1>Settings</h1>
     <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
+
+    <div class="card">
+      <h2>Sandbox</h2>
+      <form id="sb-form" autocomplete="off">
+        <div class="grid">
+          <label>Sandbox image
+            <input id="sb-image" required>
+          </label>
+          <label>Agent login volume
+            <input id="sb-volume" required>
+          </label>
+          <label>Memory limit per session
+            <input id="sb-memory" placeholder="no limit, or e.g. 4g">
+          </label>
+          <label>CPU limit per session
+            <input id="sb-cpus" placeholder="no limit, or e.g. 2">
+          </label>
+        </div>
+        <button class="primary" type="submit" id="sb-submit">Save</button>
+      </form>
+      <p class="muted spaced">Log the agent in once. Run this in a terminal on the machine that runs Docker, then use <code>/login</code> inside and exit:</p>
+      <pre id="sb-login" class="log"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Saved workspaces</h2>
+      <div id="ws-list" class="stack"></div>
+    </div>
 
     <div class="card">
       <h2>Logged-in devices</h2>
@@ -95,18 +195,8 @@
       <a class="button" href="/api/backup" download>Download backup</a>
     </div>
   </section>
-
-  <section id="view-repos" hidden>
-    <h1>Find repos</h1>
-    <p class="muted">Search across a configured server. Picking repos for a session comes next.</p>
-    <form id="repo-form" class="row">
-      <select id="r-server"></select>
-      <input id="r-query" type="search" placeholder="Search by name or description">
-      <button class="primary" type="submit">Search</button>
-    </form>
-    <div id="repo-list" class="stack"></div>
-  </section>
 </main>
-<script src="/app.js"></script>
+<script src="/app.js" defer></script>
+<script src="/sessions.js" defer></script>
 </body>
 </html>

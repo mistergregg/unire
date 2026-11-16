@@ -46,4 +46,15 @@ button:disabled { opacity: .55; cursor: wait; }
 .ok { color: var(--ok); } .err { color: var(--danger); }
 .banner { background: var(--warn-bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
 .banner.error { color: var(--danger); }
+.between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.spaced { margin-top: 16px; }
+textarea { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
+.item.click { cursor: pointer; }
+.item.click:hover, .item.click:focus-visible { border-color: var(--accent); outline: none; }
+.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 13px/1.45 ui-monospace, Consolas, monospace; }
+.log .l-log { color: var(--muted); }
+.st-running, .st-queued { color: var(--accent); border-color: var(--accent); }
+.st-done { color: var(--ok); border-color: var(--ok); }
+.st-failed, .st-interrupted { color: var(--danger); border-color: var(--danger); }
+details summary { cursor: pointer; color: var(--muted); }
 code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; }

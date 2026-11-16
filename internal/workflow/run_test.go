@@ -46,21 +46,24 @@ func contains(s []string, v string) bool {
 	return false
 }
 
+func opts(tokens map[string]string) Options {
+	return Options{Out: io.Discard, Err: io.Discard, GitTokens: tokens}
+}
+
 func TestTokenNeverReachesAgentAndPushHappens(t *testing.T) {
 	sb := &fakeSandbox{}
 	spec := session.Spec{
 		ID: "t1", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
-		Repos: []session.Repo{{Name: "api", URL: "https://x/api.git"}},
+		Repos: []session.Repo{{Name: "api", URL: "https://git.example.com/me/api.git"}},
 	}
-	err := Run(context.Background(), fakeRunner{sb}, spec, Workflow(io.Discard, "tok123"))
-	if err != nil {
+	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(map[string]string{"api": "tok123"})); err != nil {
 		t.Fatal(err)
 	}
 	pushed := false
 	for _, c := range sb.calls {
 		isAgent := len(c.Argv) > 0 && c.Argv[0] == "claude"
-		if isAgent && len(c.Env) != 0 {
-			t.Errorf("agent exec got env %v; token must not reach the agent", c.Env)
+		if isAgent && (len(c.Env) != 0) {
+			t.Errorf("agent exec got env %v; the token must not reach the agent", c.Env)
 		}
 		if contains(c.Argv, "push") {
 			pushed = true
@@ -79,13 +82,58 @@ func TestTokenNeverReachesAgentAndPushHappens(t *testing.T) {
 	}
 }
 
+func TestTokenIsScopedToItsOwnHost(t *testing.T) {
+	sb := &fakeSandbox{}
+	spec := session.Spec{
+		ID: "t3", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
+		Repos: []session.Repo{
+			{Name: "api", URL: "https://git.example.com/me/api.git"},
+			{Name: "lib", URL: "https://github.com/me/lib.git"},
+		},
+	}
+	tokens := map[string]string{"api": "tok-a", "lib": "tok-b"}
+	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(tokens)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range sb.calls {
+		if !contains(c.Argv, "clone") {
+			continue
+		}
+		joined := strings.Join(c.Argv, " ")
+		switch {
+		case strings.Contains(joined, "api.git"):
+			if !strings.Contains(joined, "credential.https://git.example.com.helper") || c.Env["UNIRE_GIT_TOKEN"] != "tok-a" {
+				t.Errorf("api clone should use its own host's token only: %v env=%v", c.Argv, c.Env)
+			}
+		case strings.Contains(joined, "lib.git"):
+			if !strings.Contains(joined, "credential.https://github.com.helper") || c.Env["UNIRE_GIT_TOKEN"] != "tok-b" {
+				t.Errorf("lib clone should use its own host's token only: %v env=%v", c.Argv, c.Env)
+			}
+		}
+	}
+}
+
+func TestNoTokenForLocalOrSSHUrls(t *testing.T) {
+	sb := &fakeSandbox{}
+	spec := session.Spec{
+		ID: "t4", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off",
+		Repos: []session.Repo{{Name: "api", URL: "/remotes/api"}},
+	}
+	_ = Run(context.Background(), fakeRunner{sb}, spec, opts(map[string]string{"api": "tok"}))
+	for _, c := range sb.calls {
+		if _, ok := c.Env["UNIRE_GIT_TOKEN"]; ok {
+			t.Errorf("a token was sent for a non-http URL: %v", c.Argv)
+		}
+	}
+}
+
 func TestNoPushSkipsPush(t *testing.T) {
 	sb := &fakeSandbox{}
 	spec := session.Spec{
 		ID: "t2", Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off", NoPush: true,
 		Repos: []session.Repo{{Name: "api", URL: "u"}},
 	}
-	if err := Run(context.Background(), fakeRunner{sb}, spec, Workflow(io.Discard, "")); err != nil {
+	if err := Run(context.Background(), fakeRunner{sb}, spec, opts(nil)); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range sb.calls {
@@ -93,9 +141,4 @@ func TestNoPushSkipsPush(t *testing.T) {
 			t.Error("--no-push must not push")
 		}
 	}
-}
-
-// Workflow builds Options for tests.
-func Workflow(w io.Writer, token string) Options {
-	return Options{Out: w, Err: w, GitToken: token}
 }

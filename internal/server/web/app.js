@@ -1,5 +1,8 @@
 "use strict";
 
+// Shared helpers and the git servers and settings pages. The sessions pages
+// are in sessions.js, which loads after this file.
+
 const $ = (id) => document.getElementById(id);
 
 // Build DOM with textContent only, so server data is never parsed as HTML.
@@ -43,12 +46,25 @@ async function guarded(button, fn) {
   try { await fn(); banner(""); } catch (e) { banner(e.message, true); } finally { if (button) button.disabled = false; }
 }
 
+function ago(unix) {
+  if (!unix) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + " min ago";
+  if (s < 129600) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+
 // ---- views ----
-const VIEWS = ["auth", "servers", "repos", "settings"];
+const VIEWS = ["auth", "sessions", "new", "session", "servers", "settings"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", servers: "servers", settings: "settings" };
+let currentView = "";
 function show(name) {
+  currentView = name;
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
   $("nav").hidden = $("logout").hidden = name === "auth";
-  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(t.dataset.view === name)));
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
+  window.scrollTo(0, 0);
 }
 
 let setupMode = false;
@@ -70,12 +86,12 @@ async function init() {
   await enter();
 }
 
+let typeInfos = [];
 async function enter() {
   typeInfos = await api("GET", "/api/types");
-  const sel = $("f-type");
-  sel.replaceChildren(...typeInfos.map((t) => el("option", { value: t.type }, t.label)));
+  $("f-type").replaceChildren(...typeInfos.map((t) => el("option", { value: t.type }, t.label)));
   updateUrlHint();
-  await openServers();
+  await openSessions();
 }
 
 // ---- auth ----
@@ -93,14 +109,13 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { servers: openServers, repos: openRepos, settings: openSettings }[t.dataset.view];
+  const open = { sessions: openSessions, servers: openServers, settings: openSettings }[t.dataset.view];
   guarded(null, open);
 }));
 
 // ---- git servers ----
 // The form is built from each provider's own description (label, URL hint,
 // token help), so a new provider needs no UI change.
-let typeInfos = [];
 function updateUrlHint() {
   const info = typeInfos.find((t) => t.type === $("f-type").value) || {};
   $("f-url-hint").textContent = info.baseUrlHint ? "(" + info.baseUrlHint + ")" : "";
@@ -109,10 +124,9 @@ function updateUrlHint() {
 }
 $("f-type").addEventListener("change", updateUrlHint);
 
-let servers = [];
 async function openServers() {
   show("servers");
-  servers = await api("GET", "/api/servers");
+  const servers = await api("GET", "/api/servers");
   const list = $("server-list");
   if (!servers.length) {
     list.replaceChildren(el("p", { class: "muted" }, "No git servers yet. Add one below."));
@@ -131,7 +145,7 @@ function serverCard(s) {
   testBtn.addEventListener("click", () => guarded(testBtn, async () => {
     const r = await api("POST", "/api/servers/" + encodeURIComponent(s.id) + "/test");
     status.className = "ok"; status.textContent = "Connected as " + r.user;
-  }).then(() => {}));
+  }));
   replaceBtn.addEventListener("click", () => guarded(replaceBtn, async () => {
     if (!tokenInput.value) throw new Error("Enter the new token first.");
     const r = await api("PUT", "/api/servers/" + encodeURIComponent(s.id) + "/token", { token: tokenInput.value });
@@ -166,59 +180,62 @@ $("add-form").addEventListener("submit", (e) => {
   });
 });
 
-// ---- repos ----
-async function openRepos() {
-  show("repos");
-  servers = await api("GET", "/api/servers");
-  const sel = $("r-server");
-  sel.replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
-  $("repo-list").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first."));
-}
-
-$("repo-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const id = $("r-server").value;
-  if (!id) return banner("Add a git server first.", true);
-  guarded(e.submitter, async () => {
-    const q = encodeURIComponent($("r-query").value);
-    const repos = await api("GET", "/api/servers/" + encodeURIComponent(id) + "/repos?q=" + q);
-    $("repo-list").replaceChildren(...(repos.length ? repos.map(repoCard) : [el("p", { class: "muted" }, "No matching repos.")]));
-  });
-});
-
-function repoCard(r) {
-  return el("div", { class: "item" },
-    el("div", { class: "item-head" },
-      el("span", { class: "name" }, r.fullName),
-      el("span", { class: "badge" }, (r.private ? "private" : "public") + " · " + (r.defaultBranch || "?"))),
-    r.description ? el("div", { class: "muted" }, r.description) : "",
-    el("div", {}, el("code", {}, r.cloneUrl)));
-}
-
-// ---- settings: devices, password ----
+// ---- settings: sandbox, workspaces, devices, password ----
 function describeAgent(ua) {
   const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
   const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
   return ua ? browser + (os ? " on " + os : "") : "Unknown device";
 }
 
-function ago(unix) {
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
-  if (s < 90) return "just now";
-  if (s < 5400) return Math.round(s / 60) + " min ago";
-  if (s < 129600) return Math.round(s / 3600) + " h ago";
-  return Math.round(s / 86400) + " days ago";
+function fillSandbox(r) {
+  $("sb-image").value = r.sandbox.image;
+  $("sb-volume").value = r.sandbox.credsVolume;
+  $("sb-memory").value = r.sandbox.memory;
+  $("sb-cpus").value = r.sandbox.cpus;
+  $("sb-login").textContent = r.loginCommand;
 }
 
 async function openSettings() {
   show("settings");
+  fillSandbox(await api("GET", "/api/sandbox"));
+  await renderWorkspaces();
+  await renderLogins();
+}
+
+$("sb-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("sb-submit"), async () => {
+    fillSandbox(await api("PUT", "/api/sandbox", {
+      image: $("sb-image").value, credsVolume: $("sb-volume").value,
+      memory: $("sb-memory").value, cpus: $("sb-cpus").value,
+    }));
+    banner("Sandbox settings saved. They apply to new sessions.");
+  });
+});
+
+async function renderWorkspaces() {
+  const list = await api("GET", "/api/workspaces");
+  $("ws-list").replaceChildren(...(list.length ? list.map((w) => {
+    const btn = el("button", { class: "danger" }, "Delete");
+    btn.addEventListener("click", () => {
+      if (!confirm("Delete the workspace " + w.name + "?")) return;
+      guarded(btn, async () => { await api("DELETE", "/api/workspaces/" + encodeURIComponent(w.id)); await renderWorkspaces(); });
+    });
+    return el("div", { class: "item" },
+      el("div", { class: "item-head" }, el("span", { class: "name" }, w.name), el("span", { class: "badge" }, w.repos.length + " repos")),
+      el("div", { class: "muted" }, w.repos.map((r) => r.fullName).join(", ")),
+      el("div", { class: "item-actions" }, btn));
+  }) : [el("p", { class: "muted" }, "None yet. Save one from the New session page.")]));
+}
+
+async function renderLogins() {
   const logins = await api("GET", "/api/logins");
   $("login-list").replaceChildren(...logins.map((l) => {
     const btn = el("button", {}, l.current ? "Log out here" : "Log out");
     btn.addEventListener("click", () => guarded(btn, async () => {
       await api("DELETE", "/api/logins/" + encodeURIComponent(l.id));
       if (l.current) { showAuth(true); return; }
-      await openSettings();
+      await renderLogins();
     }));
     return el("div", { class: "item" },
       el("div", { class: "item-head" },
@@ -239,9 +256,10 @@ $("pw-form").addEventListener("submit", (e) => {
   guarded($("pw-submit"), async () => {
     await api("POST", "/api/password", { current: $("pw-current").value, new: $("pw-new").value });
     $("pw-form").reset();
-    await openSettings();
+    await renderLogins();
     banner("Password changed. Other devices were logged out.");
   });
 });
 
-init().catch((e) => banner(e.message, true));
+// Start after every script has loaded (sessions.js defines openSessions).
+window.addEventListener("load", () => init().catch((e) => banner(e.message, true)));

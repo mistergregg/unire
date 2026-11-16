@@ -122,8 +122,14 @@ func run(args []string) error {
 
 	stdin, _ := os.Stdin.Stat()
 	interactive := *prompt == "" && stdin != nil && stdin.Mode()&os.ModeCharDevice != 0
+	tokens := map[string]string{}
+	if tok := os.Getenv("UNIRE_GIT_TOKEN"); tok != "" {
+		for _, r := range parsed {
+			tokens[r.Name] = tok
+		}
+	}
 	return workflow.Run(ctx, runner.Docker{Image: *image, CredsVolume: *creds}, spec, workflow.Options{
 		Out: os.Stdout, Err: os.Stderr, In: os.Stdin, Interactive: interactive,
-		GitToken: os.Getenv("UNIRE_GIT_TOKEN"), Memory: *memory, CPUs: *cpus,
+		GitTokens: tokens, Memory: *memory, CPUs: *cpus,
 	})
 }

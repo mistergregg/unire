@@ -14,9 +14,10 @@ func TestClaudeCommands(t *testing.T) {
 		prompt, mode string
 		want         []string
 	}{
-		{"do it", HandsOff, []string{"claude", "-p", "do it", "--dangerously-skip-permissions"}},
+		{"do it", HandsOff, []string{"claude", "-p", "--dangerously-skip-permissions", "--", "do it"}},
+		{"--version", HandsOff, []string{"claude", "-p", "--dangerously-skip-permissions", "--", "--version"}},
 		{"", HandsOff, []string{"claude", "--dangerously-skip-permissions"}},
-		{"do it", AskFirst, []string{"claude", "do it"}},
+		{"do it", AskFirst, []string{"claude", "--", "do it"}},
 		{"", AskFirst, []string{"claude"}},
 	}
 	for _, c := range cases {

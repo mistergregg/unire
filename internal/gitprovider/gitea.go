@@ -2,6 +2,7 @@ package gitprovider
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 )
@@ -16,7 +17,7 @@ func init() {
 			"Accept":        {"application/json"},
 		})}, nil
 	}
-	help := "In Gitea: Settings, Applications, Generate New Token. Give it read and write access to repositories."
+	help := "In Gitea: Settings, Applications, Generate New Token. Under permissions choose: repository Read and Write, user Read, organization Read. (A token without user Read still works for cloning, but cannot be identified.)"
 	Register(Info{Type: "gitea", Label: "Gitea", BaseURLRequired: true, BaseURLHint: "e.g. https://git.example.com", TokenHelp: help}, f)
 	Register(Info{Type: "forgejo", Label: "Forgejo", BaseURLRequired: true, BaseURLHint: "e.g. https://codeberg.org", TokenHelp: help}, f)
 }
@@ -25,10 +26,22 @@ func (g gitea) TestConnection(ctx context.Context) (string, error) {
 	var u struct {
 		Login string `json:"login"`
 	}
-	if err := g.c.getJSON(ctx, "/user", &u); err != nil {
-		return "", err
+	err := g.c.getJSON(ctx, "/user", &u)
+	if err == nil {
+		return u.Login, nil
 	}
-	return u.Login, nil
+	// Gitea tokens have scopes. One made with repository access only is refused
+	// by /user (which needs "user: Read") but is perfectly good for what Unire
+	// does, so check the thing that matters: can it see repositories?
+	if hasStatus(err, http.StatusForbidden) {
+		var res struct {
+			Data []json.RawMessage `json:"data"`
+		}
+		if g.c.getJSON(ctx, "/repos/search?limit=1", &res) == nil {
+			return "a token without user permission (it can read repositories)", nil
+		}
+	}
+	return "", err
 }
 
 func (g gitea) ListRepos(ctx context.Context, query string) ([]Repo, error) {

@@ -29,7 +29,7 @@ If pulling fails with "unauthorized", open the package on GitHub (Packages, then
    docker run -it --rm -v unire-creds-claude:/home/node ghcr.io/mistergregg/unire-sandbox:latest claude
    ```
    Use `/login` inside, choose your subscription, finish in the browser, then `/exit`. The login is saved in the `unire-creds-claude` volume and shared by every session. (The same command is shown in Settings.)
-5. Add a git server under Git servers. Use the server's IP address and port, for example `http://192.168.0.10:3000`, because sandboxes cannot look up Unraid container names. A git server on your LAN works in every network mode: the git server of each repo in a session is always allowed.
+5. Add a git server under Git servers. Use the server's IP address and port, for example `http://192.168.0.10:3000`, because sandboxes cannot look up Unraid container names. A git server on your LAN works in every network mode: the git server of each repo in a session is always allowed. For Gitea, create the token under Settings, Applications and give it repository Read and Write, user Read and organization Read. (A repository-only token also works, but Unire cannot show whose token it is.) If the test fails, the message includes the server's own reason, for example a missing permission, or a note that a proxy or firewall in front of the server is blocking Unire.
 6. Press New session.
 
 ## Docker Compose

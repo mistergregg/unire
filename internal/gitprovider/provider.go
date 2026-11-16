@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -129,13 +130,62 @@ func (c *client) getJSON(ctx context.Context, path string, out any) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("the server rejected the token (HTTP %d)", resp.StatusCode)
+		return &httpError{Status: resp.StatusCode, msg: "the server rejected the token (HTTP " + fmt.Sprint(resp.StatusCode) + ")" + serverReason(resp, body)}
 	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("not found (HTTP 404): check the server URL and type")
+		return &httpError{Status: resp.StatusCode, msg: "not found (HTTP 404): check the server URL and type"}
 	case resp.StatusCode >= 300:
-		return fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
+		return &httpError{Status: resp.StatusCode, msg: fmt.Sprintf("unexpected response (HTTP %d)", resp.StatusCode)}
 	}
 	return json.Unmarshal(body, out)
+}
+
+// httpError is an error response from a git server's API.
+type httpError struct {
+	Status int
+	msg    string
+}
+
+func (e *httpError) Error() string { return e.msg }
+
+// serverReason adds why the server said no, which is usually the fastest way
+// to see a missing token permission. It uses only the "message" or "error"
+// field of a JSON reply, shortened, and never echoes a web page. A web page
+// instead of JSON usually means a proxy or firewall in front of the server.
+func serverReason(resp *http.Response, body []byte) string {
+	var j struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(body, &j) == nil {
+		m := strings.TrimSpace(j.Message)
+		if m == "" {
+			m = strings.TrimSpace(j.Error)
+		}
+		m = strings.Map(func(r rune) rune {
+			if r < 32 {
+				return ' '
+			}
+			return r
+		}, m)
+		if len(m) > 200 {
+			m = m[:200] + "…"
+		}
+		if m != "" {
+			return ": " + m
+		}
+		return ""
+	}
+	trimmed := strings.TrimSpace(string(body))
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/html") || strings.HasPrefix(trimmed, "<") {
+		return ". The reply was a web page, not an API answer, so a proxy or firewall in front of the server may be blocking Unire"
+	}
+	return ""
+}
+
+// hasStatus reports whether err is an API error with the given status.
+func hasStatus(err error, status int) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.Status == status
 }
 
 func matches(r Repo, query string) bool {

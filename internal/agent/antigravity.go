@@ -1,6 +1,10 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // Antigravity is Google's Antigravity CLI (`agy`), the replacement Google points
 // to now that Gemini CLI no longer accepts personal Google accounts (Unire used
@@ -107,38 +111,111 @@ func (a antigravity) StreamCommand(prompt, mode, ref string) ([]string, error) {
 	return []string{argv[0], argv[1], "--output-format=stream-json", argv[2]}, nil
 }
 
-// ParseEvent reads agy's stream-json. Each line is {"event": "<kind>", ...}.
-// The last one, "result", is the only kind seen so far: it carries the answer
-// ({"event":"result","result":{"response":"...","status":"...","error":"..."}}).
-// Any other kind is shown as a progress line made from its name and its first
-// text field, so what the agent is doing is visible while its exact format is
-// still being learned.
+// ParseEvent reads agy's stream-json (documented at
+// antigravity.google/docs/cli/headless). Each line is {"event": "<kind>",
+// "<kind>": {...}}: one "init", then a "step_update" for each step (a tool call,
+// a piece of the agent's reply, a checkpoint), then one "result" carrying the
+// final answer. Its reasoning is not streamed; what it does (the tools it runs
+// and the files it reads) is.
 func (antigravity) ParseEvent(line string) Event {
 	m, ok := parseObject(line)
 	if !ok {
 		return Event{}
 	}
 	kind, _ := m["event"].(string)
-	if kind == "" {
+	switch kind {
+	case "":
 		return Event{}
-	}
-	if kind == "result" {
+	case "init":
+		return Event{Known: true}
+	case "result":
 		res, _ := m["result"].(map[string]any)
 		ev := Event{Known: true, Answer: firstString(res, "response")}
-		if e := firstString(res, "error"); e != "" {
+		status, _ := res["status"].(string)
+		switch e := firstString(res, "error"); {
+		case e != "":
 			ev.Progress = "agent error: " + clip(e, 300)
+		case ev.Answer == "" && status != "" && status != "SUCCESS":
+			ev.Progress = "finished with status " + status
 		}
 		return ev
+	case "step_update":
+		step, _ := m["step_update"].(map[string]any)
+		return antigravityStep(step)
 	}
-	detail := firstString(m, "text", "message", "content", "thought", "thinking", "command", "path", "name", "tool", "tool_name", "title", "summary")
-	if detail == "" {
-		if inner, ok := m[kind].(map[string]any); ok {
-			detail = firstString(inner, "text", "message", "content", "thought", "command", "path", "name", "tool", "title", "summary")
-		}
-	}
+	// Some other kind: show it by name with whatever text it carries.
+	detail := firstString(m, "text", "message", "content", "name", "title", "summary")
 	p := kind
 	if detail != "" {
 		p += ": " + clip(detail, 200)
 	}
 	return Event{Known: true, Progress: p}
+}
+
+// antigravityStep turns one step_update into a progress line.
+func antigravityStep(step map[string]any) Event {
+	ev := Event{Known: true}
+	state, _ := step["state"].(string)
+	done := state == "DONE"
+	n, _ := step["step_index"].(float64)
+	ev.Step = int(n)
+	if _, isSub := step["subagent_info"]; isSub {
+		if done {
+			ev.Progress = "subagent finished"
+		}
+		return ev
+	}
+	switch step["step_type"] {
+	case "tool":
+		name := firstString(step, "tool_name")
+		info, _ := step["tool_info"].(map[string]any)
+		if name == "" {
+			name = firstString(info, "name")
+		}
+		if name == "" {
+			return ev
+		}
+		params, _ := info["parameters"].(map[string]any)
+		p := name
+		if d := toolDetail(params); d != "" {
+			p += " " + clip(d, 160)
+		}
+		if errInfo, ok := info["error"].(map[string]any); ok && done {
+			p += " (failed: " + clip(firstString(errInfo, "message", "type"), 120) + ")"
+		}
+		ev.Progress = p
+	case "agent_response":
+		delta, _ := step["text_delta"].(string)
+		if !done {
+			ev.Fragment = delta // part of the reply; the final answer comes in the result
+			return ev
+		}
+		ev.Fragment = delta
+		if strings.TrimSpace(delta) != "" {
+			ev.Text = delta
+			ev.Progress = "says: " + clip(delta, 200)
+		}
+	}
+	return ev
+}
+
+// toolDetail picks the argument that says what a tool call is about (a command,
+// a file, a query), whatever the tool calls it.
+func toolDetail(params map[string]any) string {
+	for _, k := range []string{"CommandLine", "command", "AbsolutePath", "TargetFile", "File", "Path", "path", "DirectoryPath", "SearchPath", "Query", "query", "Pattern", "Url", "url", "description"} {
+		if v, ok := params[k].(string); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if v, ok := params[k].(string); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

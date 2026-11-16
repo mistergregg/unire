@@ -21,6 +21,8 @@ type streamWriter struct {
 	buf      []byte
 	answer   string // the final answer, when the stream gave one
 	last     string // the last thing the agent wrote, used if there was no final answer
+	frag     string // a reply that arrived in pieces, used if there is nothing better
+	fragStep int
 	progress string // the last progress line, so a repeat is not shown twice
 }
 
@@ -53,6 +55,12 @@ func (w *streamWriter) line(l string) {
 	if ev.Text != "" {
 		w.last = ev.Text
 	}
+	if ev.Fragment != "" {
+		if ev.Step != w.fragStep {
+			w.frag, w.fragStep = "", ev.Step
+		}
+		w.frag += ev.Fragment
+	}
 	if ev.Answer != "" {
 		w.answer = ev.Answer
 	}
@@ -67,6 +75,9 @@ func (w *streamWriter) Close() {
 	final := w.answer
 	if final == "" {
 		final = w.last
+	}
+	if final == "" {
+		final = w.frag
 	}
 	if final != "" {
 		fmt.Fprintln(w.out, final)

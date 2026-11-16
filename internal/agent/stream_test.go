@@ -69,16 +69,30 @@ func TestAntigravityStreamCommandAndEvents(t *testing.T) {
 	if !ok.Known || ok.Answer != "The app looks great." || ok.Progress != "" {
 		t.Errorf("result = %+v", ok)
 	}
-	// Other kinds are shown by name with their first text field, whatever it is called.
+	// Lines in the format the CLI's headless documentation describes.
 	for line, want := range map[string]string{
-		`{"event":"thinking","text":"Planning the   change\nfirst"}`:        "thinking: Planning the change first",
-		`{"event":"tool_call","name":"read_file","args":{"path":"a.dart"}}`: "tool_call: read_file",
-		`{"event":"step","step":{"title":"Searching the code"}}`:            "step: Searching the code",
-		`{"event":"heartbeat"}`: "heartbeat",
+		`{"event":"init","conversation_id":"c1","init":{"cwd":"/workspace","tools":["run_command"],"permission_mode":"always-proceed"}}`:                                                                                                             "",
+		`{"event":"step_update","step_update":{"conversation_id":"c1","step_index":4,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"flutter analyze"},"output":"..."}}}`: "run_command flutter analyze",
+		`{"event":"step_update","step_update":{"step_index":5,"state":"ACTIVE","step_type":"tool","tool_name":"view_file","tool_info":{"parameters":{"AbsolutePath":"/workspace/gbr-site/nginx.conf"}}}}`:                                            "view_file /workspace/gbr-site/nginx.conf",
+		`{"event":"step_update","step_update":{"step_index":6,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"false"},"error":{"type":"EXIT","message":"exit status 1"}}}}`:                    "run_command false (failed: exit status 1)",
+		`{"event":"step_update","step_update":{"step_index":7,"state":"DONE","step_type":"agent_response","text_delta":"The site is fine."}}`:                                                                                                        "says: The site is fine.",
+		`{"event":"step_update","step_update":{"step_index":7,"state":"ACTIVE","step_type":"agent_response","text_delta":"The si"}}`:                                                                                                                 "",
+		`{"event":"step_update","step_update":{"step_index":8,"state":"DONE","step_type":"checkpoint","duration_seconds":3.2,"usage":{"total_tokens":10}}}`:                                                                                          "",
+		`{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input","text_delta":"the prompt"}}`:                                                                                                                   "",
+		`{"event":"step_update","step_update":{"step_index":9,"state":"DONE","subagent_info":{"subagents":[]}}}`:                                                                                                                                     "subagent finished",
+		`{"event":"something_new","message":"hello there"}`: "something_new: hello there",
 	} {
 		if ev := s.ParseEvent(line); !ev.Known || ev.Progress != want || ev.Answer != "" {
 			t.Errorf("ParseEvent(%s) = %+v, want progress %q", line, ev, want)
 		}
+	}
+	// A reply that arrives in pieces is kept together by its step number.
+	part := s.ParseEvent(`{"event":"step_update","step_update":{"step_index":7,"state":"ACTIVE","step_type":"agent_response","text_delta":"The si"}}`)
+	if part.Fragment != "The si" || part.Step != 7 {
+		t.Errorf("fragment = %+v", part)
+	}
+	if st := s.ParseEvent(`{"event":"result","result":{"status":"INTERRUPTED","response":""}}`); st.Progress != "finished with status INTERRUPTED" {
+		t.Errorf("interrupted result = %+v", st)
 	}
 	if ev := s.ParseEvent("Authentication required."); ev.Known {
 		t.Error("plain text is not part of the stream")

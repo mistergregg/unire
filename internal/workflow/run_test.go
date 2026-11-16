@@ -689,3 +689,19 @@ func TestStreamLinesSplitAcrossWritesAreJoined(t *testing.T) {
 		t.Errorf("answer = %q", out.String())
 	}
 }
+
+func TestAReplyThatArrivesInPiecesIsTheAnswerWhenThereIsNoResult(t *testing.T) {
+	var out, log bytes.Buffer
+	a, _ := agent.Get("antigravity")
+	w := &streamWriter{s: a.(agent.Streamer), out: &out, log: &log}
+	for _, l := range []string{
+		`{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"Hello "}}`,
+		`{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"world"}}`,
+	} {
+		w.Write([]byte(l + "\n"))
+	}
+	w.Close()
+	if strings.TrimSpace(out.String()) != "Hello world" {
+		t.Errorf("answer = %q, want the pieces joined", out.String())
+	}
+}

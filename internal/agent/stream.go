@@ -24,6 +24,10 @@ type Event struct {
 	Progress string // a short line about what the agent is doing, or ""
 	Text     string // text the agent wrote (the answer so far, or something it said on the way)
 	Answer   string // the final answer, on the last event
+	// Fragment is a piece of a reply that arrives in parts; Step says which reply
+	// (it is the step number), so a new Step starts a new reply.
+	Fragment string
+	Step     int
 }
 
 // clip makes s a single short line.

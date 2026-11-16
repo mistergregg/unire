@@ -56,6 +56,12 @@ Each is one file implementing a small interface, plus a shared conformance test 
 ### Agent adapters
 Launch command, login capture/restore (credential files), mode flags (auto-approve), done/waiting detection, native memory file name (CLAUDE.md, GEMINI.md, AGENTS.md…).
 
+### Runners (sandbox types)
+`prepare(session)`, `start(session)`, `attach(session)` (terminal stream), `exposePort(session, port)`, `stop(session)`, `capabilities()` (isolation level, resource limits).
+- **Docker runner (default, v1):** one container per session. All containers for the same agent mount one shared credentials volume; per-session copies of a login break after the first token refresh (see `experiments/m0-credentials/RESULTS.md`).
+- **Folder runner (later, lightweight):** a plain folder on the host using the host's own login. Weaker isolation, so not recommended with hands-off mode.
+- **VM runner (later):** for remote workers or hard isolation.
+
 ### Preview providers
 `detect(workspace)`, `start(session)`, `expose(session)`, `health()`, `stop()`.
 - v1: web dev server (reverse proxy), static build output, multiple servers per session (tab each), custom via project config (`command`, `port`, `ready-when`).
@@ -84,7 +90,7 @@ Rules:
 ## Security
 - Sandboxes: Docker, resource limits, restricted network egress, no host mounts.
 - Secrets delivered per session at start (memory/tmpfs), wiped at end; git tokens scoped to selected repos where the provider allows.
-- Agent logins stored in the vault; copied in at session start. Whether one login works across concurrent sessions/workers must be tested first (Milestone 0).
+- Agent logins stored in the vault and mounted into sandboxes through one shared credentials volume per login. Milestone 0 showed this survives concurrent token refreshes; per-session copies do not. Remote workers still need a solution (long-lived token or a refresh broker).
 - Dashboard: single admin login; intended behind Tailscale/Cloudflare Access, not the open internet.
 - Workers dial out to the controller (no inbound ports); a compromised worker exposes only its running sessions.
 
@@ -105,5 +111,5 @@ Controller (web UI, API, DB, vault, memory, git/preview/agent plugins) talks to 
 ## Open questions
 - License. (Name: Unire, from the Latin/Italian "to unite". Still to verify: GitHub org, domain, npm/PyPI/Docker Hub names.)
 - Implementation language (leaning Go for controller and worker, simple web front end).
-- Whether one agent login can run across concurrent sessions/workers (Milestone 0).
+- Credentials for remote workers (Milestone 0 covered a single machine only), and the same question for Gemini CLI and Codex.
 - Memory compression: which model and when, given subscription-only constraints (current plan: the session's own agent writes the summary).

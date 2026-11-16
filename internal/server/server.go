@@ -85,7 +85,13 @@ func New(dataDir string) (*Server, error) {
 	}
 	cancel()
 	proxy := egress.NewProxy()
-	return NewWithEgress(dataDir, dockerRunner, proxy, egress.Setup(context.Background(), proxy))
+	s, err := NewWithEgress(dataDir, dockerRunner, proxy, egress.Setup(context.Background(), proxy))
+	if err == nil {
+		// Fetch a newer sandbox image now, so the first session or sign-in after
+		// an update does not wait for the download.
+		go runner.Refresh(context.Background(), s.sandbox().Image)
+	}
+	return s, err
 }
 
 // NewWith is New with a custom way to build sandboxes and no network

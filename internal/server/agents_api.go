@@ -31,6 +31,7 @@ func dockerTerminal(sb Sandbox) terminal.Starter {
 		b := make([]byte, 4)
 		_, _ = rand.Read(b)
 		name := "unire-login-" + hex.EncodeToString(b)
+		d.Refresh(context.Background()) // an old image on this host may lack the agent
 		cmd := exec.Command("docker", d.LoginTerminalArgs(name, argv)...)
 		return terminal.StartCmd(cmd, cols, rows, func() {
 			// Closing the terminal kills the docker client; remove the container it left.

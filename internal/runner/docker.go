@@ -64,7 +64,11 @@ func (d Docker) runArgs(s StartSpec) []string {
 	return append(args, d.Image, "sleep", "infinity")
 }
 
+// Refresh updates the sandbox image when it comes from a registry.
+func (d Docker) Refresh(ctx context.Context) { Refresh(ctx, d.Image) }
+
 func (d Docker) Start(ctx context.Context, s StartSpec) (Sandbox, error) {
+	d.Refresh(ctx)
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", d.runArgs(s)...)
 	cmd.Stderr = &stderr
@@ -135,6 +139,7 @@ func CleanupOrphans(ctx context.Context) (int, error) {
 // RunOnce runs argv in a throwaway container with the agent login volume and
 // no network, and returns its combined output.
 func (d Docker) RunOnce(ctx context.Context, argv []string) (string, bool, error) {
+	d.Refresh(ctx)
 	args := append(d.oneShotArgs(), argv...)
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)

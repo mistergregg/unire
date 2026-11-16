@@ -41,6 +41,16 @@ function renderAgents(list) {
       out.textContent = r.output || "(nothing printed)";
       out.hidden = false;
     }));
+    const last = el("button", { type: "button", class: "ghost" }, "Show last sign-in output");
+    last.addEventListener("click", () => guarded(last, async () => {
+      try {
+        const r = await api("GET", "/api/agents/" + encodeURIComponent(a.id) + "/last-signin");
+        out.textContent = "What the last sign-in terminal showed (links, codes and email addresses removed):\n\n" + (r.output || "(nothing)");
+      } catch (e) {
+        out.textContent = e.message;
+      }
+      out.hidden = false;
+    }));
     const reset = el("button", { type: "button", class: "ghost danger" }, "Reset sign-in");
     reset.addEventListener("click", () => {
       if (!confirm("Reset " + a.label + "?\n\n" + a.resetHelp + "\n\nYou will need to sign in again.")) return;
@@ -54,7 +64,7 @@ function renderAgents(list) {
       el("div", { class: "item-head" }, el("span", { class: "name" }, a.label), stateBadge(a)),
       el("div", { class: "muted" }, a.description),
       ...notes,
-      el("div", { class: "item-actions" }, signIn, inspect, reset),
+      el("div", { class: "item-actions" }, signIn, inspect, last, reset),
       out);
   }));
 }

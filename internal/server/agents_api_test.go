@@ -192,6 +192,44 @@ func TestResetForgetsTheCachedSignInState(t *testing.T) {
 	}
 }
 
+func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	started := withTerminal(e)
+	if code, _ := e.do("GET", "/api/agents/gemini/last-signin", nil); code != http.StatusNotFound {
+		t.Errorf("before any sign-in = %d, want 404", code)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, e.wsURL("/api/agents/gemini/login"), &websocket.DialOptions{HTTPHeader: e.cookieHeader()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The terminal shows an error, a link and a code.
+	deadline := time.Now().Add(3 * time.Second)
+	for len(*started) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	(*started)[0].in <- []byte("\x1b[31mFailed to sign in. Message: needs GOOGLE_CLOUD_PROJECT\x1b[0m\r\nhttps://accounts.google.com/o/oauth2/v2/auth?state=SECRETSTATE\r\ncode 4/0AeanS0Zq2x9abcDEFghiJKL\r\n")
+	if _, _, err := c.Read(ctx); err != nil { // wait until the browser has received it
+		t.Fatal(err)
+	}
+	code, body := e.do("GET", "/api/agents/gemini/last-signin", nil)
+	if code != 200 || !strings.Contains(body, "Failed to sign in. Message: needs GOOGLE_CLOUD_PROJECT") {
+		t.Fatalf("last sign-in = %d %s", code, body)
+	}
+	for _, secret := range []string{"SECRETSTATE", "4/0AeanS0Zq2x9abcDEFghiJKL", "\\u001b"} {
+		if strings.Contains(body, secret) {
+			t.Errorf("leaked %q: %s", secret, body)
+		}
+	}
+	c.Close(websocket.StatusNormalClosure, "")
+	e.do("POST", "/api/logout", nil)
+	if code, _ := e.do("GET", "/api/agents/gemini/last-signin", nil); code != http.StatusUnauthorized {
+		t.Errorf("without login = %d", code)
+	}
+}
+
 func TestAgentToolsAreOwnerOnlyAndPostOnly(t *testing.T) {
 	e := newEnv(t)
 	e.setup()

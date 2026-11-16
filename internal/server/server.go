@@ -61,6 +61,7 @@ type Server struct {
 	terminalFor   TerminalFactory
 	termBusy      atomic.Bool // one sign-in terminal at a time
 	signins       statusCache
+	transcripts   transcripts
 
 	mu       sync.Mutex
 	failures map[string]failure
@@ -136,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/agents", s.auth(s.listAgents))
 	mux.HandleFunc("POST /api/agents/recheck", s.auth(s.recheckAgents))
+	mux.HandleFunc("GET /api/agents/{id}/last-signin", s.auth(s.lastSignin))
 	mux.HandleFunc("POST /api/agents/{id}/inspect", s.auth(s.agentTool(false)))
 	mux.HandleFunc("POST /api/agents/{id}/reset", s.auth(s.agentTool(true)))
 	mux.HandleFunc("GET /api/agents/{id}/login", s.auth(s.loginTerminal))

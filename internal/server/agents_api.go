@@ -169,6 +169,22 @@ func (s *Server) agentTool(reset bool) http.HandlerFunc {
 	}
 }
 
+// lastSignin returns what the agent's most recent sign-in terminal showed, as
+// plain text with codes, links and email addresses removed.
+func (s *Server) lastSignin(w http.ResponseWriter, r *http.Request) {
+	ad, err := agent.Get(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no such agent")
+		return
+	}
+	text, at, ok := s.transcripts.get(ad.Info().ID)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no sign-in has been opened since Unire started")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"output": text, "startedAt": at.Unix()})
+}
+
 // recheckAgents forgets cached sign-in answers (after a sign-in terminal closes).
 func (s *Server) recheckAgents(w http.ResponseWriter, r *http.Request) {
 	s.invalidateStatus()
@@ -232,12 +248,17 @@ func (s *Server) loginTerminal(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 
+	id := ad.Info().ID
+	s.transcripts.start(id)
 	go func() { // command output to the browser
 		buf := make([]byte, 4096)
 		for {
 			n, err := proc.Read(buf)
-			if n > 0 && c.Write(ctx, websocket.MessageBinary, buf[:n]) != nil {
-				return
+			if n > 0 {
+				s.transcripts.add(id, buf[:n]) // kept (cleaned) for "Show last sign-in output"
+				if c.Write(ctx, websocket.MessageBinary, buf[:n]) != nil {
+					return
+				}
 			}
 			if err != nil {
 				_ = c.Close(websocket.StatusNormalClosure, "the command finished")

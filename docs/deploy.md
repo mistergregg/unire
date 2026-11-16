@@ -42,6 +42,14 @@ Copy the data folder (`unire.db` and `master.key`), or use Settings, Download ba
 
 Pull the new image and recreate the container. The database upgrades itself at start-up; a database from a newer Unire is refused instead of being damaged.
 
+## If an agent's sign-in gets stuck
+
+On the Agents page, each agent has three tools:
+
+- **Show saved state** lists what the agent has saved (file names, sizes and non-secret settings, never credentials).
+- **Show last sign-in output** shows what the last sign-in terminal printed, as plain text with links, codes and email addresses removed. It is kept in memory only and is lost when Unire restarts. This is the place to find the error message when a sign-in ends somewhere unexpected.
+- **Reset sign-in** clears the agent's saved sign-in so you can start clean.
+
 ## Known limits
 
 - Sessions are unattended only (no interactive terminal yet).

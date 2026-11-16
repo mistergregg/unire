@@ -14,6 +14,19 @@ Self-hosted control panel for AI coding agents: isolated sandboxes, shared memor
 - Hand results back as git branches and pull requests.
 - Later: remote workers on your other servers.
 
+## Try the launcher (Milestone 1, command line only)
+
+Needs Go, Docker, and an agent login stored in a Docker volume (see `experiments/m0-credentials/`).
+
+```bash
+docker build -t unire-sandbox docker/sandbox
+go build -o bin/unire ./cmd/unire
+./bin/unire run --repo <git-url-or-local-path>#main --repo <another> \
+  --task "add login page" --creds <login-volume> --prompt "Add a login page"
+```
+
+Each repo is cloned into its own disposable container on a branch `agent/<agent>/<task>`; the result is pushed to that branch. Set `UNIRE_GIT_TOKEN` for HTTPS remotes that need a token. The token is only used for clone and push and is never given to the agent.
+
 ## License
 
 Unire is licensed under the [GNU AGPL v3.0](LICENSE). Commercial licensing is available from the project owner.

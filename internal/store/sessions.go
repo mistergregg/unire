@@ -245,6 +245,13 @@ func (s *Store) Events(sessionID string, after int64, limit int) ([]Event, error
 	return out, rows.Err()
 }
 
+// BranchTaken reports whether any session already uses this branch name.
+func (s *Store) BranchTaken(branch string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE branch = ?`, branch).Scan(&n)
+	return n > 0, err
+}
+
 // ChildOf returns the session that continues id, if any.
 func (s *Store) ChildOf(id string) (Session, bool, error) {
 	x, err := scanSession(s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions WHERE parent_id = ? ORDER BY created_at, id LIMIT 1`, id))

@@ -143,7 +143,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		mode = s.networkMode()
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(x, s.lastAnswer(x.ID)),
+		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(x, s.lastAnswer(x.ID)), Branch: sameAgentBranch(x, req.Agent),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID,
 	})
 	if err != nil {
@@ -210,4 +210,14 @@ func (s *Server) answerQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// sameAgentBranch is the branch a reply continues on: its conversation's own,
+// when the same agent carries on. A different agent starts a new branch from
+// the same work.
+func sameAgentBranch(prev store.Session, agentID string) string {
+	if agentID == prev.Agent {
+		return prev.Branch
+	}
+	return ""
 }

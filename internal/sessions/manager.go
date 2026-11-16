@@ -56,6 +56,7 @@ type Request struct {
 	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
 	Parent                    string // the session this one continues (a reply), or empty
+	Branch                    string // the branch to continue on (a reply, same agent); empty means a new, unused one
 	Preamble                  string // told to the agent before the prompt; not shown as part of what the owner wrote
 }
 
@@ -128,6 +129,11 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	}
 	used := map[string]bool{}
 	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Preamble + req.Prompt, Mode: req.Mode}
+	if req.Branch != "" {
+		spec.BranchName = req.Branch
+	} else {
+		spec.BranchName = m.freeBranch(spec)
+	}
 	tokens := map[string]string{}
 	var refs []store.RepoRef
 	var secrets []string
@@ -480,4 +486,21 @@ func (w *logWriter) emit(line string) {
 		line = line[:maxLine] + " …"
 	}
 	_ = w.st.AddEvent(w.id, w.kind, line)
+}
+
+// freeBranch is the branch name for a new conversation: the usual
+// agent/<agent>/<task>, with -2, -3 ... added if another conversation already
+// uses it, so two chats can work on the same repo at once and each gets its own
+// branch (and its own pull request).
+func (m *Manager) freeBranch(spec session.Spec) string {
+	base := spec.Branch()
+	name := base
+	for n := 2; n < 1000; n++ {
+		taken, err := m.st.BranchTaken(name)
+		if err != nil || !taken {
+			return name
+		}
+		name = fmt.Sprintf("%s-%d", base, n)
+	}
+	return name
 }

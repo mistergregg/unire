@@ -31,10 +31,17 @@ type Spec struct {
 	Mode   string // "hands-off" or "ask-first"
 	Repos  []Repo
 	NoPush bool
+	// BranchName, when set, is the branch to use instead of one derived from the
+	// agent and task. A reply uses its conversation's branch; a new conversation
+	// gets a name that no other conversation has.
+	BranchName string
 }
 
 // Branch returns the branch every repo in the session is checked out on.
 func (s Spec) Branch() string {
+	if s.BranchName != "" {
+		return s.BranchName
+	}
 	return fmt.Sprintf("agent/%s/%s", Slug(s.Agent), Slug(s.Task))
 }
 

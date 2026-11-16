@@ -76,6 +76,7 @@ async function openNew(prefill) {
   stopPolling();
   selectedRoot = null;
   setHash("");
+  $("n-submit").disabled = false;
   show("new");
   refreshSidebar();
   $("n-note").hidden = true;

@@ -262,7 +262,9 @@ async function openSession(id) {
     a.label + (a.loggedIn === false ? " (not signed in)" : ""))));
   $("reply-agent").value = tail.s.agent;
   setComposer();
-  for (const t of thread) await watch(t, token);
+  // Keep reading the log in the background. Waiting for it here would leave the
+  // button that opened this chat disabled until the agent has finished.
+  (async () => { for (const t of thread) await watch(t, token); })().catch((e) => banner(e.message, true));
 }
 
 // Reads a turn's log until it ends. Finished turns are read once; the running

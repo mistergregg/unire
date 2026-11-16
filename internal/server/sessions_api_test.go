@@ -470,6 +470,9 @@ func TestRepliesFormOneConversation(t *testing.T) {
 		t.Fatalf("reply = %d %v", code, second)
 	}
 	id2 := second["id"].(string)
+	if second["branch"] != first["branch"] {
+		t.Errorf("a reply continues on its conversation's branch: %v vs %v", second["branch"], first["branch"])
+	}
 	if second["parent"] != id1 || second["task"] != first["task"] || second["prompt"] != "Now add a logout button" {
 		t.Errorf("a reply keeps the conversation's name and shows only what was written: %v", second)
 	}

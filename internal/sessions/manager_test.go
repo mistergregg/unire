@@ -740,3 +740,32 @@ func TestAConversationKeepsOneWorkspace(t *testing.T) {
 	}
 	_ = st
 }
+
+func TestTwoChatsOnTheSameRepoGetDifferentBranches(t *testing.T) {
+	m, st := setup(t, &fakeSandbox{})
+	r := req("")
+	r.Task = "Fix the bug"
+	a, _ := m.Start(r)
+	b, _ := m.Start(r)
+	c, _ := m.Start(r)
+	m.Wait()
+	got := []string{a.Branch, b.Branch, c.Branch}
+	want := []string{"agent/claude/fix-the-bug", "agent/claude/fix-the-bug-2", "agent/claude/fix-the-bug-3"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("branches = %v, want %v", got, want)
+			break
+		}
+	}
+	// A reply carries on on its conversation's branch.
+	reply := r
+	reply.Parent, reply.Branch = b.ID, b.Branch
+	x, err := m.Start(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	if got, _, _ := st.Session(x.ID); got.Branch != b.Branch {
+		t.Errorf("a reply's branch = %q, want its conversation's %q", got.Branch, b.Branch)
+	}
+}

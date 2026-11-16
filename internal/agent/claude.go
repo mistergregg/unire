@@ -16,8 +16,8 @@ func (claude) MemoryMode() MemoryMode { return MemoryFile }
 func (claude) Info() Info {
 	return Info{
 		ID: "claude", Label: "Claude Code",
-		Description: "Anthropic's coding agent. Uses your Claude subscription.",
-		LoginHelp:   "It prints a link. Open it on any device, sign in to your Claude account, then paste the code it shows back into the terminal.",
+		Description: "Anthropic. Uses your Claude subscription.",
+		LoginHelp:   "Click the link, sign in, then paste the code it shows and press Enter.",
 		LoginArgv:   []string{"claude", "auth", "login", "--claudeai"},
 		StatusArgv:  []string{"claude", "auth", "status"},
 		LoggedIn: func(out string, ok bool) bool {

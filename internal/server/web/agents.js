@@ -23,25 +23,15 @@ function renderAgents(list) {
   $("agent-list").replaceChildren(...list.map((a) => {
     const signIn = el("button", { class: a.loggedIn ? "" : "primary" }, a.loggedIn ? "Sign in again" : "Sign in");
     signIn.addEventListener("click", () => guarded(signIn, async () => openTerminal(a)));
-    const v = a.verified || {};
-    const notes = [];
-    if (a.statusNote) notes.push(el("div", { class: "muted" }, "Sign-in check: " + a.statusNote + "."));
-    if (!v.unattended) {
-      notes.push(el("div", { class: "muted" },
-        "Not tested with a real unattended session yet. It follows the agent's own documentation, so if a session fails, the log will say why. Please report problems."));
-    }
-    if (!v.status && !a.statusNote) {
-      notes.push(el("div", { class: "muted" }, "This agent cannot report its sign-in reliably, so the badge is a best guess."));
-    }
-    // Troubleshooting: see what the agent has saved (no secrets), or start clean.
+    // Troubleshooting, tucked away: see what the agent has saved (no secrets), or start clean.
     const out = el("pre", { class: "log", hidden: "" });
-    const inspect = el("button", { type: "button", class: "ghost" }, "Show saved state");
+    const inspect = el("button", { type: "button", class: "ghost" }, "Saved state");
     inspect.addEventListener("click", () => guarded(inspect, async () => {
       const r = await api("POST", "/api/agents/" + encodeURIComponent(a.id) + "/inspect");
       out.textContent = r.output || "(nothing printed)";
       out.hidden = false;
     }));
-    const last = el("button", { type: "button", class: "ghost" }, "Show last sign-in output");
+    const last = el("button", { type: "button", class: "ghost" }, "Last sign-in output");
     last.addEventListener("click", () => guarded(last, async () => {
       try {
         const r = await api("GET", "/api/agents/" + encodeURIComponent(a.id) + "/last-signin");
@@ -63,9 +53,11 @@ function renderAgents(list) {
     return el("div", { class: "item" },
       el("div", { class: "item-head" }, el("span", { class: "name" }, a.label), stateBadge(a)),
       el("div", { class: "muted" }, a.description),
-      ...notes,
-      el("div", { class: "item-actions" }, signIn, inspect, last, reset),
-      out);
+      el("div", { class: "item-actions" }, signIn),
+      el("details", { class: "spaced" },
+        el("summary", {}, "Troubleshoot"),
+        el("div", { class: "item-actions" }, inspect, last, reset),
+        out));
   }));
 }
 

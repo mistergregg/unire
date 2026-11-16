@@ -3,7 +3,7 @@ FROM node:22-slim
 # chosen per session. To add an agent, install its CLI here (see docs/adding-an-agent.md).
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+    && npm install -g @anthropic-ai/claude-code @openai/codex \
     && mkdir /workspace && chown node:node /workspace
 
 # Antigravity CLI (agy), from Google's own installer (it checks a SHA-512). It goes in

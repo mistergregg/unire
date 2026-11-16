@@ -19,8 +19,8 @@ func (codex) MemoryMode() MemoryMode { return MemoryPrompt } // AGENTS.md discov
 func (codex) Info() Info {
 	return Info{
 		ID: "codex", Label: "Codex",
-		Description: "OpenAI's coding agent. Uses your ChatGPT subscription.",
-		LoginHelp:   "It shows a link and a one-time code. Open the link on any device, sign in to ChatGPT, and enter the code.",
+		Description: "OpenAI. Uses your ChatGPT subscription.",
+		LoginHelp:   "Open the link, sign in to ChatGPT, and enter the one-time code it shows.",
 		LoginArgv:   []string{"codex", "login", "--device-auth"},
 		StatusArgv:  []string{"codex", "login", "status"},
 		LoggedIn: func(out string, ok bool) bool {

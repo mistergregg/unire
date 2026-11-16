@@ -27,7 +27,7 @@ func containerName(id string) string { return "unire-" + id }
 // encrypt what they save in the login volume with a key derived from the
 // machine they ran on; Docker gives each container a new random hostname, so
 // without this a login saved by one container is unreadable in the next
-// (Gemini CLI: "Corrupted credentials file").
+// (seen with an agent CLI that stored an API key: "Corrupted credentials file").
 const Hostname = "unire-sandbox"
 
 func (d Docker) runArgs(s StartSpec) []string {

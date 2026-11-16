@@ -3,9 +3,10 @@ package agent
 import "fmt"
 
 // Antigravity is Google's Antigravity CLI (`agy`), the replacement Google points
-// to now that Gemini CLI no longer accepts personal Google accounts. Its command
-// line was read from the CLI's own --help (agy 1.5.9) and exercised up to its
-// sign-in screen; nothing here has been run with a signed-in account yet.
+// to now that Gemini CLI no longer accepts personal Google accounts (Unire used
+// to carry Gemini CLI; it was removed for that reason). The command line was
+// read from the CLI's own --help (agy 1.5.9) and exercised up to its sign-in
+// screen; nothing here has been run with a signed-in account yet.
 //
 // What was seen directly:
 //   - `agy --print=<prompt>` runs one prompt and exits; `--dangerously-skip-permissions`
@@ -16,9 +17,12 @@ import "fmt"
 //   - Not signed in, it prints a Google link and says "paste the authorization code
 //     here". The link's redirect is https://antigravity.google/oauth-callback (a
 //     normal web page, not localhost), so signing in from another machine's
-//     browser can work.
+//     browser works.
 //   - Interactively it first shows "Select login method: 1. Google OAuth,
 //     2. Use a Google Cloud project".
+//   - It keeps its login in the Linux Secret Service keyring when there is one
+//     and otherwise reads an auth.json file ("failed to read auth.json" is in the
+//     binary). A container has no keyring, so the file is what persists.
 type antigravity struct{}
 
 func init() { Register(antigravity{}) }
@@ -27,24 +31,32 @@ func (antigravity) Name() string           { return "antigravity" }
 func (antigravity) MemoryFile() string     { return "AGENTS.md" } // unverified
 func (antigravity) MemoryMode() MemoryMode { return MemoryPrompt }
 
-// Where agy keeps its sign-in is not known yet (an OS keyring was reported for
-// Linux). These scripts only touch paths with "antigravity" or "keyring" in
-// their name, and print file names and sizes, never contents.
-const antigravityInspectScript = `echo "files that look like Antigravity or keyring state (path, bytes):"; cd "$HOME" && find . -maxdepth 6 -type f \( -ipath "./*antigravity*" -o -ipath "./*keyring*" \) -not -ipath "*/staging/*" -not -ipath "*/builtin/*" -printf "  %P  %s\n" 2>/dev/null | head -40; echo; echo "API key variables set in this sandbox: $(env | grep -c '^GEMINI_API_KEY=\|^GOOGLE_API_KEY=')"`
+// The scripts below only look at paths with "antigravity" or "keyring" in their
+// name (below the home folder, never the home folder's own name), skip the
+// built-in skills, cache and crash logs, and print file names and sizes, never
+// contents.
+const antigravityFind = `cd "$HOME" && find . -maxdepth 6 -type f -ipath "./*antigravity*" -not -ipath "*/builtin/*" -not -ipath "*/cache/*" -not -ipath "*/crashes/*" -not -ipath "*/staging/*"`
+
+// antigravityStatusScript succeeds when a non-empty saved login file exists.
+// The file name (auth.json) comes from the binary, not from a real sign-in, so
+// this check is marked unverified.
+const antigravityStatusScript = antigravityFind + ` -size +0 \( -iname "auth*.json" -o -iname "*credential*" \) | grep -q .`
+
+const antigravityInspectScript = `echo "Antigravity files (name, bytes):"; ` + antigravityFind + ` -printf "  %P  %s\n" 2>/dev/null | head -40; cd "$HOME" && find . -maxdepth 6 -type f -ipath "./*keyring*" -printf "  %P  %s\n" 2>/dev/null | head -5; echo; echo "API key variables set in this sandbox: $(env | grep -c '^GEMINI_API_KEY=\|^GOOGLE_API_KEY=')"`
 
 const antigravityResetScript = `rm -rf "$HOME/.gemini/antigravity-cli" "$HOME"/.antigravity* "$HOME"/.config/antigravity* "$HOME"/.local/share/antigravity* "$HOME/.local/share/keyrings" && echo "Antigravity's saved sign-in and settings were removed."`
 
 func (antigravity) Info() Info {
 	return Info{
 		ID: "antigravity", Label: "Antigravity CLI",
-		Description: "Google's coding agent, the replacement for Gemini CLI. Uses your Google account.",
-		LoginHelp:   "Press Enter on \"1. Google OAuth\". It prints a Google link and asks you to paste the authorization code. Click the link, sign in, and copy the code the page shows you. Wait until the terminal asks for it, then paste it (Ctrl+Shift+V) and press Enter. When you are signed in, press Ctrl+D twice to leave.",
+		Description: "Google. Uses your Google account.",
+		LoginHelp:   "Press Enter on Google OAuth, click the link, sign in, then paste the code it shows (Ctrl+Shift+V) and press Enter. Press Ctrl+D twice to leave.",
 		LoginArgv:   []string{"agy"},
-		// agy has no sign-in status command, and where it keeps its login is not
-		// known yet, so the page reports the sign-in as unknown.
+		StatusArgv:  []string{"sh", "-c", antigravityStatusScript},
+		LoggedIn:    func(_ string, ok bool) bool { return ok },
 		InspectArgv: []string{"sh", "-c", antigravityInspectScript},
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
-		ResetHelp:   "Deletes Antigravity's saved sign-in and settings, so the next sign-in starts clean.",
+		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
 		Verified:    Verified{},
 	}
 }

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"reflect"
@@ -38,155 +37,12 @@ func TestCodexCommands(t *testing.T) {
 	}
 }
 
-func TestGeminiCommands(t *testing.T) {
-	a, _ := Get("gemini")
-	cases := []struct {
-		prompt, mode string
-		want         []string
-	}{
-		{"do it", HandsOff, []string{"gemini", "--skip-trust", "--session-id", ref, "--approval-mode", "yolo", "--prompt=do it"}},
-		{"-x weird", HandsOff, []string{"gemini", "--skip-trust", "--session-id", ref, "--approval-mode", "yolo", "--prompt=-x weird"}},
-		{"", HandsOff, []string{"gemini", "--skip-trust", "--session-id", ref, "--approval-mode", "yolo"}},
-		{"do it", AskFirst, []string{"gemini", "--skip-trust", "--session-id", ref, "--prompt-interactive=do it"}},
-	}
-	for _, c := range cases {
-		got, err := a.Command(c.prompt, c.mode, ref)
-		if err != nil || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
-		}
-	}
-	if _, err := a.Command("x", "bogus", ref); err == nil {
-		t.Error("unknown mode should fail")
-	}
-	if _, ok := a.FollowUp("x", HandsOff, ref); ok {
-		t.Error("Gemini must not resume 'the latest' conversation")
-	}
-}
-
-func TestGeminiSignInUsesAnAPIKeyAndSkipsTheMenu(t *testing.T) {
-	a, _ := Get("gemini")
-	argv := a.Info().LoginArgv
-	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
-		t.Fatalf("login argv = %v", argv)
-	}
-	for _, want := range []string{"gemini-api-key", "selectedType", "exec gemini --skip-trust"} {
-		if !strings.Contains(argv[2], want) {
-			t.Errorf("login script missing %q", want)
-		}
-	}
-	help := a.Info().LoginHelp
-	if !strings.Contains(help, "aistudio.google.com/app/apikey") || !strings.Contains(help, "paste it into the box") {
-		t.Errorf("the help must say where to get a key and where to paste it: %q", help)
-	}
-}
-
-// The settings step runs for real where sh and node exist (CI's Linux runners).
-func TestGeminiSettingsStepSelectsTheAPIKeyAndKeepsOtherSettings(t *testing.T) {
-	sh, err1 := exec.LookPath("sh")
-	_, err2 := exec.LookPath("node")
-	if err1 != nil || err2 != nil || runtime.GOOS == "windows" {
-		t.Skip("needs sh and node")
-	}
-	a, _ := Get("gemini")
-	script := strings.TrimSuffix(a.Info().LoginArgv[2], " && exec gemini --skip-trust")
-	home := t.TempDir()
-	if err := os.MkdirAll(home+"/.gemini", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	before := `{"security":{"auth":{"selectedType":"oauth-personal"}},"ui":{"theme":"dark"}}`
-	if err := os.WriteFile(home+"/.gemini/settings.json", []byte(before), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 2; i++ { // twice: running it again changes nothing
-		cmd := exec.Command(sh, "-c", script)
-		cmd.Env = append(os.Environ(), "HOME="+home)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("script failed: %v\n%s", err, out)
-		}
-	}
-	b, _ := os.ReadFile(home + "/.gemini/settings.json")
-	var got map[string]map[string]any
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("settings.json is not valid JSON: %v\n%s", err, b)
-	}
-	if got["security"]["auth"].(map[string]any)["selectedType"] != "gemini-api-key" || got["ui"]["theme"] != "dark" {
-		t.Errorf("settings = %s", b)
-	}
-	// A first-ever sign-in, with no settings file at all.
-	home2 := t.TempDir()
-	cmd := exec.Command(sh, "-c", script)
-	cmd.Env = append(os.Environ(), "HOME="+home2)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("script failed on a fresh home: %v\n%s", err, out)
-	}
-	if b, err := os.ReadFile(home2 + "/.gemini/settings.json"); err != nil || !strings.Contains(string(b), "gemini-api-key") {
-		t.Errorf("fresh home: %s, %v", b, err)
-	}
-}
-
 func TestEveryAgentCanBeInspectedAndReset(t *testing.T) {
 	for _, in := range Infos() {
 		if len(in.InspectArgv) == 0 || len(in.ResetArgv) == 0 || in.ResetHelp == "" {
 			t.Errorf("%s: needs a way to show its saved state and to reset it, and to say what reset removes", in.ID)
 		}
 	}
-}
-
-// The Gemini scripts run for real where sh exists (CI's Linux runners).
-func TestGeminiInspectShowsNoSecretsAndResetClearsTheRightFiles(t *testing.T) {
-	sh, err := exec.LookPath("sh")
-	if err != nil || runtime.GOOS == "windows" {
-		t.Skip("needs sh")
-	}
-	a, _ := Get("gemini")
-	home := t.TempDir()
-	d := home + "/.gemini"
-	os.MkdirAll(d+"/history", 0o755)
-	files := map[string]string{
-		"settings.json":           `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`,
-		"gemini-credentials.json": "SECRET-ENCRYPTED-KEY-MATERIAL",
-		"oauth_creds.json":        "SECRET-REFRESH-TOKEN",
-		"state.json":              "{}",
-		"installation_id":         "id",
-	}
-	for n, c := range files {
-		os.WriteFile(d+"/"+n, []byte(c), 0o644)
-	}
-	os.WriteFile(d+"/history/keep.txt", []byte("history"), 0o644)
-	run := func(argv []string) string {
-		cmd := exec.Command(sh, argv[1:]...)
-		cmd.Env = append(os.Environ(), "HOME="+home, "GEMINI_API_KEY=")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v failed: %v\n%s", argv[:2], err, out)
-		}
-		return string(out)
-	}
-
-	got := run(a.Info().InspectArgv)
-	for _, want := range []string{"gemini-credentials.json", "oauth_creds.json", "settings.json", "gemini-api-key", "API key variables set in this sandbox: 1"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("inspect output missing %q:\n%s", want, got)
-		}
-	}
-	for _, secret := range []string{"SECRET-ENCRYPTED-KEY-MATERIAL", "SECRET-REFRESH-TOKEN"} {
-		if strings.Contains(got, secret) {
-			t.Errorf("inspect must never print a credential file's contents: leaked %q", secret)
-		}
-	}
-
-	run(a.Info().ResetArgv)
-	for _, gone := range []string{"settings.json", "gemini-credentials.json", "oauth_creds.json", "state.json"} {
-		if _, err := os.Stat(d + "/" + gone); err == nil {
-			t.Errorf("reset should remove %s", gone)
-		}
-	}
-	for _, kept := range []string{"installation_id", "history/keep.txt"} {
-		if _, err := os.Stat(d + "/" + kept); err != nil {
-			t.Errorf("reset must keep %s", kept)
-		}
-	}
-	run(a.Info().ResetArgv) // resetting again is fine
 }
 
 func TestAntigravityCommands(t *testing.T) {
@@ -223,8 +79,51 @@ func TestAntigravityCommands(t *testing.T) {
 	if _, ok := a.FollowUp("x", HandsOff, ref); ok {
 		t.Error("agy must not resume 'the most recent' conversation: sessions share one home folder")
 	}
-	if len(a.Info().StatusArgv) != 0 {
-		t.Error("agy has no known sign-in check, so the page must report it as unknown, not guess")
+	if len(a.Info().StatusArgv) == 0 || a.Info().Verified.Status {
+		t.Error("agy's sign-in check looks for its saved login file, which has not been confirmed with a real sign-in, so it must be there and must not claim to be verified")
+	}
+}
+
+// The sign-in check runs for real where sh and GNU find exist (CI's Linux runners).
+func TestAntigravitySignInCheckFollowsItsSavedLogin(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	if out, err := exec.Command("find", "--version").CombinedOutput(); err != nil || !strings.Contains(string(out), "GNU") {
+		t.Skip("needs GNU find")
+	}
+	a, _ := Get("antigravity")
+	check := func(home string) bool {
+		cmd := exec.Command(sh, a.Info().StatusArgv[1:]...)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		return cmd.Run() == nil
+	}
+	home := t.TempDir()
+	if check(home) {
+		t.Error("an empty home is not signed in")
+	}
+	os.MkdirAll(home+"/.gemini/antigravity-cli/builtin/skills", 0o755)
+	os.WriteFile(home+"/.gemini/antigravity-cli/builtin/skills/token-guide.md", []byte("x"), 0o644)
+	os.WriteFile(home+"/.gemini/antigravity-cli/settings.json", []byte("{}"), 0o644)
+	os.MkdirAll(home+"/.gemini/antigravity-cli/cache", 0o755)
+	os.WriteFile(home+"/.gemini/antigravity-cli/cache/projects.json", []byte("x"), 0o644)
+	if check(home) {
+		t.Error("built-in files, settings and cache are not a login")
+	}
+	// Another agent's login must not count.
+	os.MkdirAll(home+"/.codex", 0o755)
+	os.WriteFile(home+"/.codex/auth.json", []byte("x"), 0o644)
+	if check(home) {
+		t.Error("another agent's auth.json is not Antigravity's login")
+	}
+	os.WriteFile(home+"/.gemini/antigravity-cli/auth.json", []byte(""), 0o644)
+	if check(home) {
+		t.Error("an empty file is not a login")
+	}
+	os.WriteFile(home+"/.gemini/antigravity-cli/auth.json", []byte(`{"x":1}`), 0o644)
+	if !check(home) {
+		t.Error("a saved auth.json should count as signed in")
 	}
 }
 
@@ -285,7 +184,7 @@ func TestAntigravityInspectAndResetOnlyTouchTheirOwnFiles(t *testing.T) {
 func TestAgentsAreCompleteAndSorted(t *testing.T) {
 	infos := Infos()
 	if len(infos) < 3 {
-		t.Fatalf("want claude, codex and gemini, got %d agents", len(infos))
+		t.Fatalf("want claude, codex and antigravity, got %d agents", len(infos))
 	}
 	for i, in := range infos {
 		a, err := Get(in.ID)
@@ -324,15 +223,15 @@ func TestLoginStatusReaders(t *testing.T) {
 	if !in.LoggedIn("Logged in using ChatGPT", true) {
 		t.Error("codex: logged in output not recognised")
 	}
-	g, _ := Get("gemini")
+	g, _ := Get("antigravity")
 	in = g.Info()
 	if !in.LoggedIn("", true) || in.LoggedIn("", false) {
-		t.Error("gemini: the credentials-file check should follow the exit status")
+		t.Error("antigravity: the sign-in file check should follow the exit status")
 	}
 }
 
 func TestUnverifiedAgentsSaySo(t *testing.T) {
-	for _, id := range []string{"codex", "gemini"} {
+	for _, id := range []string{"codex", "antigravity"} {
 		a, _ := Get(id)
 		if v := a.Info().Verified; v.Unattended || v.Hosts {
 			t.Errorf("%s: do not claim a real run was checked until one was", id)

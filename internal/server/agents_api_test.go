@@ -55,7 +55,7 @@ func TestAgentsPageListsAgentsWithSignInStatus(t *testing.T) {
 	e.box.setStatus(map[string]statusResult{
 		"claude": {`{"loggedIn": true, "authMethod": "claude.ai"}`, true},
 		"codex":  {"Not logged in", true},
-		"test":   {"", true}, // gemini's credentials-file check
+		"sh":     {"", true}, // antigravity's sign-in file check
 	})
 	code, body := e.do("GET", "/api/agents", nil)
 	if code != 200 {
@@ -68,10 +68,10 @@ func TestAgentsPageListsAgentsWithSignInStatus(t *testing.T) {
 		got[a["id"].(string)] = a
 	}
 	if len(got) < 3 {
-		t.Fatalf("want claude, codex and gemini: %s", body)
+		t.Fatalf("want claude, codex and antigravity: %s", body)
 	}
-	if got["claude"]["loggedIn"] != true || got["codex"]["loggedIn"] != false || got["gemini"]["loggedIn"] != true {
-		t.Errorf("sign-in states wrong: claude=%v codex=%v gemini=%v", got["claude"]["loggedIn"], got["codex"]["loggedIn"], got["gemini"]["loggedIn"])
+	if got["claude"]["loggedIn"] != true || got["codex"]["loggedIn"] != false || got["antigravity"]["loggedIn"] != true {
+		t.Errorf("sign-in states wrong: claude=%v codex=%v antigravity=%v", got["claude"]["loggedIn"], got["codex"]["loggedIn"], got["antigravity"]["loggedIn"])
 	}
 	for _, a := range list {
 		if a["label"] == "" || a["description"] == "" || a["loginHelp"] == "" {
@@ -106,14 +106,14 @@ func TestStatusUnknownIsNotReportedAsSignedOut(t *testing.T) {
 func TestStatusIsCachedUntilRechecked(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "test": {"", false}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "sh": {"", false}})
 	e.do("GET", "/api/agents", nil)
 	first := len(e.box.asked())
 	e.do("GET", "/api/agents", nil)
 	if len(e.box.asked()) != first {
 		t.Error("a second request inside the cache window should not start more containers")
 	}
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "test": {"", false}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "sh": {"", false}})
 	_, body := e.do("POST", "/api/agents/recheck", nil)
 	if !strings.Contains(strings.ReplaceAll(body, " ", ""), `"id":"claude"`) || !strings.Contains(body, `"loggedIn":true`) {
 		t.Errorf("recheck should show the new state: %s", body)
@@ -123,7 +123,7 @@ func TestStatusIsCachedUntilRechecked(t *testing.T) {
 func TestLaunchRefusedWhenAVerifiedAgentIsSignedOut(t *testing.T) {
 	e := newEnv(t)
 	base := withServer(t, e, "tok")
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "test": {"", false}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "sh": {"", false}})
 	code, res := e.launch(base, nil) // claude
 	if code != http.StatusBadRequest || !strings.Contains(res["error"].(string), "Claude Code is not signed in") || !strings.Contains(res["error"].(string), "Agents") {
 		t.Errorf("want a clear refusal pointing at the Agents page, got %d %v", code, res)
@@ -154,17 +154,16 @@ func TestInspectAndResetRunTheAgentsOwnCommands(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 	e.box.setStatus(map[string]statusResult{
-		"sh":     {"files in ~/.gemini (name, bytes):\n  settings.json  82", true},
+		"sh":     {"Antigravity files (name, bytes):\n  auth.json  82", true},
 		"claude": {`{"loggedIn": true}`, true},
 		"codex":  {"Not logged in", true},
-		"test":   {"", true},
 	})
-	code, body := e.do("POST", "/api/agents/gemini/inspect", nil)
-	if code != 200 || !strings.Contains(body, "settings.json") || !strings.Contains(body, `"ok":true`) {
+	code, body := e.do("POST", "/api/agents/antigravity/inspect", nil)
+	if code != 200 || !strings.Contains(body, "auth.json") || !strings.Contains(body, `"ok":true`) {
 		t.Errorf("inspect = %d %s", code, body)
 	}
 	before := len(e.box.asked())
-	if code, _ := e.do("POST", "/api/agents/gemini/reset", nil); code != 200 {
+	if code, _ := e.do("POST", "/api/agents/antigravity/reset", nil); code != 200 {
 		t.Fatalf("reset = %d", code)
 	}
 	if len(e.box.asked()) <= before || e.box.asked()[before] != "sh" {
@@ -178,9 +177,9 @@ func TestInspectAndResetRunTheAgentsOwnCommands(t *testing.T) {
 func TestResetForgetsTheCachedSignInState(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "test": {"", true}, "sh": {"done", true}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "sh": {"done", true}})
 	e.do("GET", "/api/agents", nil)
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "test": {"", true}, "sh": {"done", true}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "sh": {"done", true}})
 	e.do("POST", "/api/agents/claude/reset", nil)
 	_, body := e.do("GET", "/api/agents", nil)
 	var list []map[string]any
@@ -196,12 +195,12 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 	started := withTerminal(e)
-	if code, _ := e.do("GET", "/api/agents/gemini/last-signin", nil); code != http.StatusNotFound {
+	if code, _ := e.do("GET", "/api/agents/antigravity/last-signin", nil); code != http.StatusNotFound {
 		t.Errorf("before any sign-in = %d, want 404", code)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, e.wsURL("/api/agents/gemini/login"), &websocket.DialOptions{HTTPHeader: e.cookieHeader()})
+	c, _, err := websocket.Dial(ctx, e.wsURL("/api/agents/antigravity/login"), &websocket.DialOptions{HTTPHeader: e.cookieHeader()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +213,7 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 	if _, _, err := c.Read(ctx); err != nil { // wait until the browser has received it
 		t.Fatal(err)
 	}
-	code, body := e.do("GET", "/api/agents/gemini/last-signin", nil)
+	code, body := e.do("GET", "/api/agents/antigravity/last-signin", nil)
 	if code != 200 || !strings.Contains(body, "Failed to sign in. Message: needs GOOGLE_CLOUD_PROJECT") {
 		t.Fatalf("last sign-in = %d %s", code, body)
 	}
@@ -225,7 +224,7 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 	}
 	c.Close(websocket.StatusNormalClosure, "")
 	e.do("POST", "/api/logout", nil)
-	if code, _ := e.do("GET", "/api/agents/gemini/last-signin", nil); code != http.StatusUnauthorized {
+	if code, _ := e.do("GET", "/api/agents/antigravity/last-signin", nil); code != http.StatusUnauthorized {
 		t.Errorf("without login = %d", code)
 	}
 }
@@ -233,14 +232,14 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 func TestAgentToolsAreOwnerOnlyAndPostOnly(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
-	if code, _ := e.do("GET", "/api/agents/gemini/reset", nil); code == 200 {
+	if code, _ := e.do("GET", "/api/agents/antigravity/reset", nil); code == 200 {
 		t.Error("a reset must not be reachable with GET (a link or image could trigger it)")
 	}
-	if code, _ := e.do("POST", "/api/agents/gemini/reset", nil, true); code != http.StatusForbidden {
+	if code, _ := e.do("POST", "/api/agents/antigravity/reset", nil, true); code != http.StatusForbidden {
 		t.Errorf("a reset without the CSRF header = %d, want 403", code)
 	}
 	e.do("POST", "/api/logout", nil)
-	for _, p := range []string{"/api/agents/gemini/reset", "/api/agents/gemini/inspect"} {
+	for _, p := range []string{"/api/agents/antigravity/reset", "/api/agents/antigravity/inspect"} {
 		if code, _ := e.do("POST", p, nil); code != http.StatusUnauthorized {
 			t.Errorf("%s without login = %d", p, code)
 		}
@@ -251,7 +250,7 @@ func TestInspectOutputIsCapped(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 	e.box.setStatus(map[string]statusResult{"sh": {strings.Repeat("x", 50000), true}})
-	_, body := e.do("POST", "/api/agents/gemini/inspect", nil)
+	_, body := e.do("POST", "/api/agents/antigravity/inspect", nil)
 	if len(body) > 5000 {
 		t.Errorf("output not capped: %d bytes", len(body))
 	}
@@ -439,9 +438,9 @@ func TestClosingTheTerminalForgetsCachedSignInState(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 	withTerminal(e)
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "test": {"", false}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "sh": {"", false}})
 	e.do("GET", "/api/agents", nil)
-	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "test": {"", false}})
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "sh": {"", false}})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

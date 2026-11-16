@@ -344,25 +344,29 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 // ---- sessions ----
 
 type sessionView struct {
-	ID         string          `json:"id"`
-	Task       string          `json:"task"`
-	Agent      string          `json:"agent"`
-	Mode       string          `json:"mode"`
-	Prompt     string          `json:"prompt"`
-	Branch     string          `json:"branch"`
-	Status     string          `json:"status"`
-	Error      string          `json:"error"`
-	Network    string          `json:"network"`
-	Memory     bool            `json:"memory"`
-	Pushed     []string        `json:"pushed,omitempty"` // repos this session pushed a branch to (session detail only)
-	Repos      []store.RepoRef `json:"repos"`
-	CreatedAt  int64           `json:"createdAt"`
-	StartedAt  int64           `json:"startedAt"`
-	FinishedAt int64           `json:"finishedAt"`
+	ID           string          `json:"id"`
+	Task         string          `json:"task"`
+	Agent        string          `json:"agent"`
+	Mode         string          `json:"mode"`
+	Prompt       string          `json:"prompt"`
+	Branch       string          `json:"branch"`
+	Status       string          `json:"status"`
+	Error        string          `json:"error"`
+	Network      string          `json:"network"`
+	Memory       bool            `json:"memory"`
+	Parent       string          `json:"parent,omitempty"`
+	Latest       string          `json:"latest,omitempty"`       // list only: the newest turn of this conversation
+	LatestStatus string          `json:"latestStatus,omitempty"` // list only
+	Pushed       []string        `json:"pushed,omitempty"`       // repos this session pushed a branch to (session detail only)
+	Repos        []store.RepoRef `json:"repos"`
+	CreatedAt    int64           `json:"createdAt"`
+	StartedAt    int64           `json:"startedAt"`
+	FinishedAt   int64           `json:"finishedAt"`
 }
 
 func toView(x store.Session) sessionView {
-	v := sessionView{x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, x.Status, x.Error, x.Network, x.Memory, nil, x.Repos, x.CreatedAt.Unix(), 0, 0}
+	v := sessionView{ID: x.ID, Task: x.Task, Agent: x.Agent, Mode: x.Mode, Prompt: x.Prompt, Branch: x.Branch, Status: x.Status, Error: x.Error,
+		Network: x.Network, Memory: x.Memory, Parent: x.ParentID, Repos: x.Repos, CreatedAt: x.CreatedAt.Unix()}
 	if !x.StartedAt.IsZero() {
 		v.StartedAt = x.StartedAt.Unix()
 	}
@@ -373,14 +377,25 @@ func toView(x store.Session) sessionView {
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
-	list, err := s.store.Sessions(50)
+	list, err := s.store.Sessions(100)
 	if err != nil {
 		serverError(w)
 		return
 	}
+	// One row per conversation: its first turn, with the newest turn's status.
 	out := []sessionView{}
 	for _, x := range list {
-		out = append(out, toView(x))
+		if x.ParentID != "" {
+			if _, has, _ := s.store.Session(x.ParentID); has {
+				continue // a reply: shown inside its conversation
+			}
+		}
+		v := toView(x)
+		if thread, err := s.threadOf(x.ID); err == nil && len(thread) > 1 {
+			last := thread[len(thread)-1]
+			v.Latest, v.LatestStatus = last.ID, last.Status
+		}
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -417,11 +432,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	// Fail fast, with a way forward, when the agent is known not to be signed in.
 	// Only for agents whose sign-in check has been verified: a guess must never
 	// block someone who is in fact signed in.
-	if ad.Info().Verified.Status {
-		if st := s.agentStatus(r.Context(), ad); st.known && !st.loggedIn {
-			writeErr(w, http.StatusBadRequest, ad.Info().Label+" is not signed in. Open the Agents page and sign in first.")
-			return
-		}
+	if msg := s.requireSignedIn(r, ad); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
 	}
 	repos, err := s.resolveRepos(req.Repos)
 	if err != nil {
@@ -491,12 +504,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v := toView(x)
-	// Which repos got a pushed branch, so "Continue" knows what it can build on.
-	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
-		v.Pushed = pushedFrom(events, x.Repos)
-	}
-	writeJSON(w, http.StatusOK, v)
+	writeJSON(w, http.StatusOK, s.viewWithPushed(x))
 }
 
 func (s *Server) sessionLogs(w http.ResponseWriter, r *http.Request) {

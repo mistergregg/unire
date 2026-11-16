@@ -167,6 +167,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions", s.auth(s.startSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.auth(s.sessionLogs))
+	mux.HandleFunc("GET /api/sessions/{id}/thread", s.auth(s.getThread))
+	mux.HandleFunc("POST /api/sessions/{id}/reply", s.auth(s.replyToSession))
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.auth(s.stopSession))
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.auth(s.deleteSession))
 

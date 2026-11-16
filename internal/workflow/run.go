@@ -142,8 +142,12 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		if _, err := w.git(ctx, "", &repo, cloneArgs...); err != nil {
 			return res, fmt.Errorf("clone %s: %w", repo.Name, err)
 		}
-		if _, err := w.git(ctx, dir, &repo, "checkout", "-b", spec.Branch()); err != nil {
-			return res, fmt.Errorf("branch %s: %w", repo.Name, err)
+		// A reply continues the branch an earlier turn pushed: the clone is
+		// already on it, so there is nothing to create.
+		if repo.Base != spec.Branch() {
+			if _, err := w.git(ctx, dir, &repo, "checkout", "-b", spec.Branch()); err != nil {
+				return res, fmt.Errorf("branch %s: %w", repo.Name, err)
+			}
 		}
 		head, err := w.git(ctx, dir, &repo, "rev-parse", "HEAD")
 		if err != nil {

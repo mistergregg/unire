@@ -32,7 +32,7 @@ async function openSessions() {
 function sessionRow(s) {
   const open = () => openSession(s.id);
   const row = el("div", { class: "item click", role: "button", tabindex: "0" },
-    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task), statusBadge(s.status)),
+    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task), statusBadge(s.latestStatus || s.status)),
     el("div", { class: "muted" }, s.agent + " · " + s.repos.map((r) => r.fullName).join(", ")),
     el("div", { class: "muted" }, "started " + ago(s.startedAt || s.createdAt)));
   row.addEventListener("click", open);
@@ -183,126 +183,5 @@ $("new-form").addEventListener("submit", (e) => {
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
     });
     await openSession(s.id);
-  });
-});
-
-// ---- one session ----
-let currentSession = null;
-
-function renderSessionHeader(s) {
-  currentSession = s;
-  $("s-title").textContent = s.task;
-  $("s-prompt").textContent = s.prompt;
-  $("s-repos").replaceChildren(...s.repos.map((r) => el("div", { class: "muted" },
-    el("code", {}, r.fullName + (r.base ? "@" + r.base : "")), " → ", el("code", {}, s.branch))));
-  setSessionStatus(s.status, s.error, s);
-}
-
-function setSessionStatus(status, error, s) {
-  const badge = $("s-status");
-  badge.className = "badge st-" + status;
-  badge.textContent = status;
-  const meta = currentSession || s;
-  $("s-meta").textContent = meta.agent + " · " + meta.mode + " · network: " + meta.network + " · started " + ago(meta.startedAt || meta.createdAt);
-  $("s-error").hidden = !error;
-  $("s-error").textContent = error || "";
-  $("s-stop").hidden = isFinished(status);
-  $("s-delete").hidden = !isFinished(status);
-  $("s-continue").hidden = !isFinished(status);
-  if (isFinished(status) && currentSession && summaryShownFor !== currentSession.id) loadSummary(currentSession.id);
-}
-
-// The summary is saved just before a session is marked finished, so it can be
-// fetched as soon as the status says so.
-let summaryShownFor = null;
-async function loadSummary(id) {
-  summaryShownFor = id;
-  const wrap = $("s-summary-wrap");
-  wrap.hidden = true;
-  try {
-    const x = await api("GET", "/api/memory/summaries/" + encodeURIComponent(id));
-    if (currentSession && currentSession.id !== id) return;
-    $("s-summary").textContent = x.summary;
-    $("s-summary-note").textContent = x.source === "agent"
-      ? "Written by the agent when it finished. It is saved as memory for these repos."
-      : "Unire wrote this because the agent did not. It is saved as memory for these repos.";
-    wrap.hidden = false;
-  } catch (_) { /* memory was off for this session, or none was saved */ }
-}
-
-$("s-continue").addEventListener("click", () => guarded($("s-continue"), async () => {
-  const s = await api("GET", "/api/sessions/" + encodeURIComponent(currentSession.id));
-  const pushed = new Set(s.pushed || []);
-  const repos = s.repos.map((r) => (pushed.has(r.fullName) ? { ...r, base: s.branch, defaultBranch: s.branch } : { ...r, defaultBranch: "" }));
-  const note = pushed.size
-    ? "The base branch is set to this session's branch (" + s.branch + ") for the repos where it pushed one. Choose any agent; it starts with the project memory."
-    : "That session pushed nothing, so the new one starts from the original base branches.";
-  await openNew({ task: "Continue: " + s.task, repos, note });
-}));
-
-// One log line. A blocked connection gets an Allow button that adds the
-// address to the owner's allowed list for future sessions.
-function logLine(e) {
-  if (e.kind === "net") return el("div", { class: "l-log" }, "· connected to " + e.text);
-  if (e.kind === "blocked") {
-    const m = /^blocked (\S+) \(/.exec(e.text);
-    const line = el("div", { class: "l-blocked" }, "⛔ " + e.text + " ");
-    if (m) {
-      const btn = el("button", { type: "button", class: "small" }, "Allow " + m[1]);
-      btn.addEventListener("click", () => guarded(btn, async () => {
-        await api("POST", "/api/network/allow", { address: m[1] });
-        btn.textContent = "Allowed for future sessions";
-        btn.disabled = true;
-      }));
-      line.append(btn);
-    }
-    return line;
-  }
-  return el("div", { class: "l-" + e.kind }, e.kind === "log" ? "· " + e.text : e.text);
-}
-
-function appendLog(events) {
-  const log = $("s-log");
-  const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
-  for (const e of events) log.append(logLine(e));
-  if (nearBottom && events.length) window.scrollTo(0, document.body.scrollHeight);
-}
-
-async function openSession(id) {
-  stopPolling();
-  show("session");
-  summaryShownFor = null;
-  $("s-summary-wrap").hidden = true;
-  $("s-log").replaceChildren();
-  const token = (pollToken = {});
-  let after = 0;
-  renderSessionHeader(await api("GET", "/api/sessions/" + encodeURIComponent(id)));
-
-  const tick = async () => {
-    if (pollToken !== token || currentView !== "session") return;
-    let more = false;
-    try {
-      const r = await api("GET", "/api/sessions/" + encodeURIComponent(id) + "/logs?after=" + after);
-      if (pollToken !== token) return;
-      appendLog(r.events);
-      if (r.events.length) after = r.events[r.events.length - 1].id;
-      more = r.events.length === 500;
-      setSessionStatus(r.status, r.error);
-      if (r.finished && !more) return; // done: stop polling
-    } catch (e) { banner(e.message, true); }
-    schedule(tick, more ? 0 : 1000);
-  };
-  await tick();
-}
-
-$("s-stop").addEventListener("click", () => guarded($("s-stop"), async () => {
-  await api("POST", "/api/sessions/" + encodeURIComponent(currentSession.id) + "/stop");
-  banner("Stopping…");
-}));
-$("s-delete").addEventListener("click", () => {
-  if (!confirm("Delete this session and its log?")) return;
-  guarded($("s-delete"), async () => {
-    await api("DELETE", "/api/sessions/" + encodeURIComponent(currentSession.id));
-    await openSessions();
   });
 });

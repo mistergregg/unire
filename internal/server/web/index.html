@@ -93,21 +93,19 @@
       <span id="s-status" class="badge"></span>
     </div>
     <p id="s-meta" class="muted"></p>
-    <div id="s-repos" class="stack"></div>
-    <details class="spaced"><summary>Prompt</summary><pre id="s-prompt" class="log"></pre></details>
+    <div id="chat" class="chat" aria-live="polite"></div>
     <p id="s-error" class="err" hidden></p>
-    <div class="item-actions">
-      <button id="s-stop" class="danger" hidden>Stop</button>
-      <button id="s-continue" hidden>Continue with a new session&hellip;</button>
-      <button id="s-delete" hidden>Delete</button>
-    </div>
-    <div id="s-summary-wrap" hidden>
-      <h2 class="spaced">Summary</h2>
-      <p id="s-summary-note" class="muted"></p>
-      <pre id="s-summary" class="log"></pre>
-    </div>
-    <h2 class="spaced">Log</h2>
-    <pre id="s-log" class="log" aria-live="polite"></pre>
+    <form id="reply-form" class="composer" autocomplete="off">
+      <textarea id="reply-text" rows="2" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
+      <div class="between">
+        <select id="reply-agent" aria-label="Agent for the next message"></select>
+        <span class="row">
+          <button id="s-stop" type="button" class="danger" hidden>Stop</button>
+          <button id="reply-send" type="submit" class="primary">Send</button>
+        </span>
+      </div>
+    </form>
+    <div class="item-actions"><button id="s-delete" type="button" hidden>Delete conversation</button></div>
   </section>
 
   <!-- Agents -->
@@ -278,6 +276,7 @@
 <script src="/vendor/addon-web-links.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/sessions.js" defer></script>
+<script src="/chat.js" defer></script>
 <script src="/memory.js" defer></script>
 <script src="/agents.js" defer></script>
 </body>

@@ -76,3 +76,27 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-bre
 .result:hover:not(:disabled) { background: var(--bg); }
 .result:disabled { opacity: .55; cursor: default; }
 .results > p { margin: 8px 12px; }
+
+.chat { display: flex; flex-direction: column; gap: 22px; margin: 16px 0; }
+.turn { display: flex; flex-direction: column; gap: 10px; }
+.bubble { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; max-width: 100%; overflow-wrap: anywhere; }
+.bubble.user { align-self: flex-end; background: var(--panel); max-width: 88%; }
+.bubble.user .said { white-space: pre-wrap; }
+.bubble.agent { background: var(--bg); }
+.who { font-size: 12px; margin-bottom: 4px; }
+.md p { margin: 0 0 10px; white-space: pre-wrap; }
+.md p:last-child, .md li:last-child { margin-bottom: 0; }
+.md h4 { margin: 14px 0 6px; font-size: 15px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+.md pre.code { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow: auto; margin: 0 0 10px; }
+.md a { color: var(--accent); }
+.activity { font-size: 13px; }
+.steps { margin-top: 6px; max-height: 40vh; overflow: auto; font: 12px/1.45 ui-monospace, Consolas, monospace; }
+.steps .l-log { color: var(--muted); }
+.steps .l-blocked { color: var(--danger); }
+.turn-foot { font-size: 13px; }
+.turn-foot > * + * { margin-top: 4px; }
+.composer { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 14px; border-top: 1px solid var(--line); }
+.composer textarea { margin-bottom: 8px; }
+.composer select { width: auto; margin: 0; }

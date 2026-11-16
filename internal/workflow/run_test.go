@@ -420,3 +420,27 @@ func (noResume) Command(prompt, mode, ref string) ([]string, error) {
 	return []string{"fresh-agent", prompt}, nil
 }
 func (noResume) FollowUp(prompt, mode, ref string) ([]string, bool) { return nil, false }
+
+func TestAReplyContinuesTheBranchWithoutCreatingIt(t *testing.T) {
+	branches := func(base string) int {
+		sb := &fakeSandbox{}
+		spec := baseSpec()
+		spec.Repos[0].Base = base
+		if _, err := run(t, sb, spec, opts(nil)); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, c := range sb.calls {
+			if contains(c.Argv, "checkout") {
+				n++
+			}
+		}
+		return n
+	}
+	if got := branches(""); got != 1 {
+		t.Errorf("a first turn creates its branch: %d checkouts", got)
+	}
+	if got := branches("agent/claude/demo"); got != 0 {
+		t.Errorf("a reply is already on its branch after cloning it: %d checkouts", got)
+	}
+}

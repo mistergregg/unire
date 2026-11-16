@@ -452,3 +452,71 @@ func TestLaunchNamesTheTaskFromThePrompt(t *testing.T) {
 		t.Errorf("launch without a name = %d %s", code, body)
 	}
 }
+
+func TestRepliesFormOneConversation(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	code, first := e.launch(base, map[string]any{"task": "", "prompt": "Add a login page"})
+	if code != http.StatusCreated {
+		t.Fatalf("launch = %d %v", code, first)
+	}
+	id1 := first["id"].(string)
+	e.waitStatus(id1, "done")
+
+	code, second := replyTo(e, id1, map[string]any{"prompt": "Now add a logout button"})
+	if code != http.StatusCreated {
+		t.Fatalf("reply = %d %v", code, second)
+	}
+	id2 := second["id"].(string)
+	if second["parent"] != id1 || second["task"] != first["task"] || second["prompt"] != "Now add a logout button" {
+		t.Errorf("a reply keeps the conversation's name and shows only what was written: %v", second)
+	}
+	e.waitStatus(id2, "done")
+
+	if code, _ := replyTo(e, id1, map[string]any{"prompt": "again"}); code != http.StatusConflict {
+		t.Errorf("replying to a turn that already has a reply = %d, want 409", code)
+	}
+	if code, _ := replyTo(e, id2, map[string]any{"prompt": "  "}); code != http.StatusBadRequest {
+		t.Errorf("an empty reply = %d, want 400", code)
+	}
+
+	// Either turn opens the same conversation, first to last.
+	for _, id := range []string{id1, id2} {
+		_, body := e.do("GET", "/api/sessions/"+id+"/thread", nil)
+		var thread []map[string]any
+		json.Unmarshal([]byte(body), &thread)
+		if len(thread) != 2 || thread[0]["id"] != id1 || thread[1]["id"] != id2 {
+			t.Errorf("thread from %s = %s", id, body)
+		}
+	}
+	// The list shows the conversation once, with the newest turn's state.
+	_, body := e.do("GET", "/api/sessions", nil)
+	var list []map[string]any
+	json.Unmarshal([]byte(body), &list)
+	if len(list) != 1 || list[0]["id"] != id1 || list[0]["latest"] != id2 {
+		t.Errorf("list = %s", body)
+	}
+}
+
+func TestCannotReplyWhileTheAgentIsRunning(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	box := e.box
+	box.mu.Lock()
+	box.block = make(chan struct{})
+	box.mu.Unlock()
+	_, first := e.launch(base, nil)
+	id := first["id"].(string)
+	e.waitStatus(id, "running")
+	if code, _ := replyTo(e, id, map[string]any{"prompt": "more"}); code != http.StatusConflict {
+		t.Errorf("reply to a running session = %d, want 409", code)
+	}
+	e.do("POST", "/api/sessions/"+id+"/stop", nil)
+}
+
+func replyTo(e *env, id string, body map[string]any) (int, map[string]any) {
+	code, raw := e.do("POST", "/api/sessions/"+id+"/reply", body)
+	var res map[string]any
+	json.Unmarshal([]byte(raw), &res)
+	return code, res
+}

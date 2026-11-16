@@ -101,6 +101,8 @@ var migrations = []string{
 		PRIMARY KEY (session_id, repo_key)
 	);
 	CREATE INDEX summary_repos_by_repo ON summary_repos (repo_key);`,
+	// 5: a reply continues a conversation: it is a new session whose parent is the one before it
+	`ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

@@ -53,6 +53,8 @@ type Request struct {
 	Network                   egress.Mode // empty means internet only
 	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
+	Parent                    string // the session this one continues (a reply), or empty
+	Preamble                  string // told to the agent before the prompt; not shown as part of what the owner wrote
 }
 
 // Manager runs sessions.
@@ -121,7 +123,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 		return store.Session{}, fmt.Errorf("network protection is not available (%s). Choose \"full\" network access to run without it", cfg.Egress.Info.Reason)
 	}
 	used := map[string]bool{}
-	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: req.Mode}
+	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Preamble + req.Prompt, Mode: req.Mode}
 	tokens := map[string]string{}
 	var refs []store.RepoRef
 	var secrets []string
@@ -134,7 +136,8 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 			secrets = append(secrets, r.Token)
 		}
 	}
-	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, Branch: spec.Branch(), Network: string(req.Network), Memory: req.Memory, Repos: refs}
+	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, // what the owner wrote, without the preamble
+		Branch: spec.Branch(), Network: string(req.Network), Memory: req.Memory, Repos: refs, ParentID: req.Parent}
 
 	m.mu.Lock()
 	if m.closing {

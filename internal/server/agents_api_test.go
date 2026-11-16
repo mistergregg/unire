@@ -150,6 +150,75 @@ func TestLaunchAllowedWhenTheSignInCheckCannotRun(t *testing.T) {
 	}
 }
 
+func TestInspectAndResetRunTheAgentsOwnCommands(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.setStatus(map[string]statusResult{
+		"sh":     {"files in ~/.gemini (name, bytes):\n  settings.json  82", true},
+		"claude": {`{"loggedIn": true}`, true},
+		"codex":  {"Not logged in", true},
+		"test":   {"", true},
+	})
+	code, body := e.do("POST", "/api/agents/gemini/inspect", nil)
+	if code != 200 || !strings.Contains(body, "settings.json") || !strings.Contains(body, `"ok":true`) {
+		t.Errorf("inspect = %d %s", code, body)
+	}
+	before := len(e.box.asked())
+	if code, _ := e.do("POST", "/api/agents/gemini/reset", nil); code != 200 {
+		t.Fatalf("reset = %d", code)
+	}
+	if len(e.box.asked()) <= before || e.box.asked()[before] != "sh" {
+		t.Errorf("reset should have run the agent's own reset command, asked: %v", e.box.asked())
+	}
+	if code, _ := e.do("POST", "/api/agents/nope/reset", nil); code != http.StatusNotFound {
+		t.Errorf("unknown agent = %d", code)
+	}
+}
+
+func TestResetForgetsTheCachedSignInState(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": true}`, true}, "codex": {"Not logged in", true}, "test": {"", true}, "sh": {"done", true}})
+	e.do("GET", "/api/agents", nil)
+	e.box.setStatus(map[string]statusResult{"claude": {`{"loggedIn": false}`, true}, "codex": {"Not logged in", true}, "test": {"", true}, "sh": {"done", true}})
+	e.do("POST", "/api/agents/claude/reset", nil)
+	_, body := e.do("GET", "/api/agents", nil)
+	var list []map[string]any
+	json.Unmarshal([]byte(body), &list)
+	for _, a := range list {
+		if a["id"] == "claude" && a["loggedIn"] != false {
+			t.Errorf("after a reset the page must show the new state, got %v", a["loggedIn"])
+		}
+	}
+}
+
+func TestAgentToolsAreOwnerOnlyAndPostOnly(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	if code, _ := e.do("GET", "/api/agents/gemini/reset", nil); code == 200 {
+		t.Error("a reset must not be reachable with GET (a link or image could trigger it)")
+	}
+	if code, _ := e.do("POST", "/api/agents/gemini/reset", nil, true); code != http.StatusForbidden {
+		t.Errorf("a reset without the CSRF header = %d, want 403", code)
+	}
+	e.do("POST", "/api/logout", nil)
+	for _, p := range []string{"/api/agents/gemini/reset", "/api/agents/gemini/inspect"} {
+		if code, _ := e.do("POST", p, nil); code != http.StatusUnauthorized {
+			t.Errorf("%s without login = %d", p, code)
+		}
+	}
+}
+
+func TestInspectOutputIsCapped(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.setStatus(map[string]statusResult{"sh": {strings.Repeat("x", 50000), true}})
+	_, body := e.do("POST", "/api/agents/gemini/inspect", nil)
+	if len(body) > 5000 {
+		t.Errorf("output not capped: %d bytes", len(body))
+	}
+}
+
 // ---- login terminal ----
 
 type echoProc struct {

@@ -27,6 +27,9 @@ func (codex) Info() Info {
 			o := strings.ToLower(out)
 			return ok && strings.TrimSpace(o) != "" && !strings.Contains(o, "not logged in")
 		},
+		InspectArgv: []string{"codex", "login", "status"},
+		ResetArgv:   []string{"codex", "logout"},
+		ResetHelp:   "Signs Codex out of the saved login.",
 		// The status text was seen when signed out; the signed-in text and a
 		// real unattended run need an account to check.
 		Verified: Verified{},

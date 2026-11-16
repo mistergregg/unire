@@ -23,6 +23,14 @@ func (gemini) MemoryMode() MemoryMode { return MemoryPrompt } // GEMINI.md loadi
 // folder" question.
 const geminiLoginScript = `node -e 'const fs=require("fs"),p=process.env.HOME+"/.gemini/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}s.security=s.security||{};s.security.auth=s.security.auth||{};s.security.auth.selectedType="oauth-personal";fs.mkdirSync(require("path").dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' && exec gemini --skip-trust`
 
+// geminiInspectScript prints what Gemini has saved, without any secret: file
+// names and sizes, the settings file (it holds the chosen sign-in type, not a
+// key), and whether an API key variable is set in the sandbox.
+const geminiInspectScript = `d="$HOME/.gemini"; echo "files in ~/.gemini (name, bytes):"; for f in "$d"/* "$d"/.[!.]*; do [ -f "$f" ] && echo "  $(basename "$f")  $(wc -c < "$f")"; done; echo; echo "settings.json:"; cat "$d/settings.json" 2>/dev/null || echo "  (none)"; echo; echo "API key variables set in this sandbox: $(env | grep -c '^GEMINI_API_KEY=\|^GOOGLE_API_KEY=')"`
+
+// geminiResetScript removes Gemini's sign-in, stored API key and settings.
+const geminiResetScript = `d="$HOME/.gemini"; rm -f "$d/settings.json" "$d/gemini-credentials.json" "$d/oauth_creds.json" "$d/state.json" "$d/mcp-oauth-tokens.json" && echo "Gemini's saved sign-in, API key and settings were removed."`
+
 func (gemini) Info() Info {
 	return Info{
 		ID: "gemini", Label: "Gemini CLI",
@@ -30,9 +38,12 @@ func (gemini) Info() Info {
 		LoginHelp:   "It prints a long Google link and waits at \"Enter the authorization code:\". Click the link, sign in with Google, copy the code Google shows you, then paste it at that prompt (Ctrl+Shift+V) and press Enter. Wait for the prompt before pasting. When it says you are signed in, type /quit.",
 		LoginArgv:   []string{"sh", "-c", geminiLoginScript},
 		// Gemini has no status command. A sign-in leaves this file behind.
-		StatusArgv: []string{"test", "-f", "/home/node/.gemini/oauth_creds.json"},
-		LoggedIn:   func(_ string, ok bool) bool { return ok },
-		Verified:   Verified{},
+		StatusArgv:  []string{"test", "-f", "/home/node/.gemini/oauth_creds.json"},
+		LoggedIn:    func(_ string, ok bool) bool { return ok },
+		InspectArgv: []string{"sh", "-c", geminiInspectScript},
+		ResetArgv:   []string{"sh", "-c", geminiResetScript},
+		ResetHelp:   "Deletes Gemini's saved sign-in, stored API key and settings, so the next sign-in starts clean. Its history is kept.",
+		Verified:    Verified{},
 	}
 }
 

@@ -124,6 +124,71 @@ func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testin
 	}
 }
 
+func TestEveryAgentCanBeInspectedAndReset(t *testing.T) {
+	for _, in := range Infos() {
+		if len(in.InspectArgv) == 0 || len(in.ResetArgv) == 0 || in.ResetHelp == "" {
+			t.Errorf("%s: needs a way to show its saved state and to reset it, and to say what reset removes", in.ID)
+		}
+	}
+}
+
+// The Gemini scripts run for real where sh exists (CI's Linux runners).
+func TestGeminiInspectShowsNoSecretsAndResetClearsTheRightFiles(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	a, _ := Get("gemini")
+	home := t.TempDir()
+	d := home + "/.gemini"
+	os.MkdirAll(d+"/history", 0o755)
+	files := map[string]string{
+		"settings.json":           `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`,
+		"gemini-credentials.json": "SECRET-ENCRYPTED-KEY-MATERIAL",
+		"oauth_creds.json":        "SECRET-REFRESH-TOKEN",
+		"state.json":              "{}",
+		"installation_id":         "id",
+	}
+	for n, c := range files {
+		os.WriteFile(d+"/"+n, []byte(c), 0o644)
+	}
+	os.WriteFile(d+"/history/keep.txt", []byte("history"), 0o644)
+	run := func(argv []string) string {
+		cmd := exec.Command(sh, argv[1:]...)
+		cmd.Env = append(os.Environ(), "HOME="+home, "GEMINI_API_KEY=")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", argv[:2], err, out)
+		}
+		return string(out)
+	}
+
+	got := run(a.Info().InspectArgv)
+	for _, want := range []string{"gemini-credentials.json", "oauth_creds.json", "settings.json", "gemini-api-key", "API key variables set in this sandbox: 1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect output missing %q:\n%s", want, got)
+		}
+	}
+	for _, secret := range []string{"SECRET-ENCRYPTED-KEY-MATERIAL", "SECRET-REFRESH-TOKEN"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("inspect must never print a credential file's contents: leaked %q", secret)
+		}
+	}
+
+	run(a.Info().ResetArgv)
+	for _, gone := range []string{"settings.json", "gemini-credentials.json", "oauth_creds.json", "state.json"} {
+		if _, err := os.Stat(d + "/" + gone); err == nil {
+			t.Errorf("reset should remove %s", gone)
+		}
+	}
+	for _, kept := range []string{"installation_id", "history/keep.txt"} {
+		if _, err := os.Stat(d + "/" + kept); err != nil {
+			t.Errorf("reset must keep %s", kept)
+		}
+	}
+	run(a.Info().ResetArgv) // resetting again is fine
+}
+
 func TestAgentsAreCompleteAndSorted(t *testing.T) {
 	infos := Infos()
 	if len(infos) < 3 {

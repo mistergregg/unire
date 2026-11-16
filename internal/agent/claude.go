@@ -24,7 +24,11 @@ func (claude) Info() Info {
 			compact := strings.Join(strings.Fields(out), "")
 			return ok && strings.Contains(compact, `"loggedIn":true`)
 		},
-		Verified: Verified{Unattended: true, Status: true, Hosts: true},
+		// The status output names the account, so it is shown to the owner only.
+		InspectArgv: []string{"claude", "auth", "status"},
+		ResetArgv:   []string{"claude", "auth", "logout"},
+		ResetHelp:   "Signs Claude Code out of the saved login.",
+		Verified:    Verified{Unattended: true, Status: true, Hosts: true},
 	}
 }
 

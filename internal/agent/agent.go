@@ -41,6 +41,14 @@ type Info struct {
 	// signed in; empty if the agent has no way to say. LoggedIn reads its output.
 	StatusArgv []string                              `json:"-"`
 	LoggedIn   func(output string, exitOK bool) bool `json:"-"`
+	// InspectArgv prints what the agent has saved (never secrets) so a stuck
+	// sign-in can be diagnosed. ResetArgv clears the agent's saved sign-in and
+	// settings so the owner can start clean. Both run with no network, in a
+	// throwaway sandbox that has the login volume mounted.
+	InspectArgv []string `json:"-"`
+	ResetArgv   []string `json:"-"`
+	// ResetHelp says what a reset removes.
+	ResetHelp string `json:"resetHelp"`
 	// Verified says what has been checked against the real agent.
 	Verified Verified `json:"verified"`
 }

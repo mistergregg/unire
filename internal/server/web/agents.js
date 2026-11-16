@@ -33,11 +33,29 @@ function renderAgents(list) {
     if (!v.status && !a.statusNote) {
       notes.push(el("div", { class: "muted" }, "This agent cannot report its sign-in reliably, so the badge is a best guess."));
     }
+    // Troubleshooting: see what the agent has saved (no secrets), or start clean.
+    const out = el("pre", { class: "log", hidden: "" });
+    const inspect = el("button", { type: "button", class: "ghost" }, "Show saved state");
+    inspect.addEventListener("click", () => guarded(inspect, async () => {
+      const r = await api("POST", "/api/agents/" + encodeURIComponent(a.id) + "/inspect");
+      out.textContent = r.output || "(nothing printed)";
+      out.hidden = false;
+    }));
+    const reset = el("button", { type: "button", class: "ghost danger" }, "Reset sign-in");
+    reset.addEventListener("click", () => {
+      if (!confirm("Reset " + a.label + "?\n\n" + a.resetHelp + "\n\nYou will need to sign in again.")) return;
+      guarded(reset, async () => {
+        const r = await api("POST", "/api/agents/" + encodeURIComponent(a.id) + "/reset");
+        renderAgents(await api("POST", "/api/agents/recheck"));
+        banner(r.output || "Reset.");
+      });
+    });
     return el("div", { class: "item" },
       el("div", { class: "item-head" }, el("span", { class: "name" }, a.label), stateBadge(a)),
       el("div", { class: "muted" }, a.description),
       ...notes,
-      el("div", { class: "item-actions" }, signIn));
+      el("div", { class: "item-actions" }, signIn, inspect, reset),
+      out);
   }));
 }
 

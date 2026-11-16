@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +129,44 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
+}
+
+// agentTool runs an agent's own diagnostic or reset command in a throwaway
+// sandbox with no network. The commands are fixed by the agent's adapter; the
+// browser sends nothing but the agent's id.
+func (s *Server) agentTool(reset bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ad, err := agent.Get(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "no such agent")
+			return
+		}
+		info := ad.Info()
+		argv := info.InspectArgv
+		if reset {
+			argv = info.ResetArgv
+		}
+		if len(argv) == 0 {
+			writeErr(w, http.StatusBadRequest, info.Label+" has nothing to "+map[bool]string{false: "show", true: "reset"}[reset])
+			return
+		}
+		one, ok := s.runnerFactory(s.sandbox()).(runner.OneShot)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "this cannot be done from here")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		out, okExit, err := one.RunOnce(ctx, argv)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "could not ask Docker: "+shorten(err.Error(), 120))
+			return
+		}
+		if reset {
+			s.invalidateStatus() // the sign-in state has changed
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"output": shorten(strings.TrimSpace(out), 4000), "ok": okExit})
+	}
 }
 
 // recheckAgents forgets cached sign-in answers (after a sign-in terminal closes).

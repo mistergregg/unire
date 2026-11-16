@@ -136,6 +136,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/agents", s.auth(s.listAgents))
 	mux.HandleFunc("POST /api/agents/recheck", s.auth(s.recheckAgents))
+	mux.HandleFunc("POST /api/agents/{id}/inspect", s.auth(s.agentTool(false)))
+	mux.HandleFunc("POST /api/agents/{id}/reset", s.auth(s.agentTool(true)))
 	mux.HandleFunc("GET /api/agents/{id}/login", s.auth(s.loginTerminal))
 	mux.HandleFunc("GET /api/sandbox", s.auth(s.getSandbox))
 	mux.HandleFunc("PUT /api/sandbox", s.auth(s.putSandbox))

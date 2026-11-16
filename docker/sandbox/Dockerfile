@@ -5,6 +5,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
     && mkdir /workspace && chown node:node /workspace
+
+# Antigravity CLI (agy), from Google's own installer (it checks a SHA-512). It goes in
+# /usr/local/bin, not the home folder, because the home folder is replaced by the login
+# volume when a sandbox starts. The binary updates itself when it can write to its
+# folder; here it cannot, so the version in the image is the version that runs.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+    && agy --version
 USER node
 ENV HOME=/home/node
 WORKDIR /workspace

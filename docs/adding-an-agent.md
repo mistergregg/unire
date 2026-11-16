@@ -58,4 +58,4 @@ The agent appears on the **Agents** page with its sign-in state and a **Sign in*
 ## Not agents
 
 - **Ollama** runs models; it is not an agent. It would be a model backend for an agent that can use one (Claude Code and Codex can), configured per agent. Not built yet.
-- **Antigravity** (`agy`) keeps its sign-in in the operating system's keyring, which a plain container does not have, so a subscription sign-in is not expected to persist there. It could be added with an API key. Not built yet.
+- **Antigravity** is an agent now (`internal/agent/antigravity.go`). Its sign-in works in the terminal (Google link, then paste the code). Not yet checked with a signed-in account: where it keeps its login, and whether that survives into unattended sessions.

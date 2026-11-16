@@ -28,6 +28,28 @@ func TestTranscriptKeepsTheMessageAndDropsEverythingSecret(t *testing.T) {
 	}
 }
 
+func TestTranscriptHidesThePiecesOfAWrappedLink(t *testing.T) {
+	raw := "Signing in. If not:\r\n" +
+		" https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235v\r\n" +
+		" cre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=PUBLICHASHPIECE1234\r\n" +
+		" o0x_50v8&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2\r\n" +
+		" _ZL1vyGzUwhQ9dxE9w\r\n" +
+		"Got an error: token exchange failed: oauth2: \"invalid_grant\" \"Bad Request\"\r\n"
+	got := cleanTranscript([]byte(raw))
+	for _, leaked := range []string{"PUBLICHASHPIECE", "redirect_uri", "code_challenge", "googleusercontent", "o0x_50v8"} {
+		if strings.Contains(got, leaked) {
+			t.Errorf("a piece of the link leaked (%q):\n%s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, `Got an error: token exchange failed: oauth2: "invalid_grant" "Bad Request"`) {
+		t.Errorf("the real error must survive:\n%s", got)
+	}
+	// Ordinary long text with spaces is not a link piece.
+	if got := cleanTranscript([]byte("This sentence is long but has spaces in it, so it is kept as written.\r\n")); !strings.Contains(got, "kept as written") {
+		t.Errorf("normal text was removed: %q", got)
+	}
+}
+
 func TestTranscriptCollapsesRedrawsAndBorders(t *testing.T) {
 	var raw strings.Builder
 	for i := 0; i < 20; i++ { // a TUI redraws the same screen over and over

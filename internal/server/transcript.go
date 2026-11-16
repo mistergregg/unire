@@ -117,7 +117,12 @@ func cleanTranscript(raw []byte) string {
 	return text
 }
 
+// A long link that wraps over several screen lines leaves pieces with no spaces
+// in them, such as "o0x_50v8&code_challenge_method=S256&redirect_uri=https%3A".
+var linkPiece = regexp.MustCompile(`^\s*\S{30,}\s*$`)
+
 func redactLine(l string) string {
+	// Whole links first, so a complete one is shown as "<link to host>".
 	l = urlRe.ReplaceAllStringFunc(l, func(u string) string {
 		host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 		if i := strings.IndexAny(host, "/?#"); i >= 0 {
@@ -125,6 +130,10 @@ func redactLine(l string) string {
 		}
 		return "<link to " + host + ">"
 	})
+	// What is left with no spaces and link characters is a wrapped piece.
+	if linkPiece.MatchString(l) && strings.ContainsAny(l, "=&%/") {
+		return "<part of a link>"
+	}
 	l = emailRe.ReplaceAllString(l, "<email>")
 	l = codeRe.ReplaceAllString(l, "<code>")
 	return tokenRe.ReplaceAllString(l, "<token>")

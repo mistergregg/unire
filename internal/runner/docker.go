@@ -23,10 +23,18 @@ type dockerSandbox struct{ name string }
 
 func containerName(id string) string { return "unire-" + id }
 
+// Hostname is the same in every container Unire starts. Some agent CLIs
+// encrypt what they save in the login volume with a key derived from the
+// machine they ran on; Docker gives each container a new random hostname, so
+// without this a login saved by one container is unreadable in the next
+// (Gemini CLI: "Corrupted credentials file").
+const Hostname = "unire-sandbox"
+
 func (d Docker) runArgs(s StartSpec) []string {
 	args := []string{
 		"run", "-d",
 		"--name", containerName(s.SessionID),
+		"--hostname", Hostname,
 		"--label", "unire.session=" + s.SessionID,
 		"-v", d.CredsVolume + ":/home/node",
 		"-w", "/workspace",
@@ -144,7 +152,7 @@ func (d Docker) RunOnce(ctx context.Context, argv []string) (string, bool, error
 
 func (d Docker) oneShotArgs() []string {
 	return []string{
-		"run", "--rm", "--network", "none", "--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
+		"run", "--rm", "--hostname", Hostname, "--network", "none", "--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
 		"-v", d.CredsVolume + ":/home/node", "-w", "/home/node", d.Image,
 	}
 }
@@ -153,7 +161,7 @@ func (d Docker) oneShotArgs() []string {
 // terminal. Only the agent logins are mounted: no repos and no git tokens.
 func (d Docker) LoginTerminalArgs(name string, argv []string) []string {
 	args := []string{
-		"run", "-it", "--rm", "--name", name, "--label", "unire.login=1",
+		"run", "-it", "--rm", "--name", name, "--hostname", Hostname, "--label", "unire.login=1",
 		"--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
 		"-e", "TERM=xterm-256color", "-v", d.CredsVolume + ":/home/node", "-w", "/home/node", d.Image,
 	}

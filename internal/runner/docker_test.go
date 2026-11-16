@@ -12,7 +12,7 @@ func TestRunArgs(t *testing.T) {
 		SessionID: "ab12", Memory: "2g",
 		Mounts: []Mount{{HostPath: "/h/api", ContainerPath: "/remotes/api"}},
 	})
-	want := []string{"run", "-d", "--name", "unire-ab12", "--label", "unire.session=ab12",
+	want := []string{"run", "-d", "--name", "unire-ab12", "--hostname", "unire-sandbox", "--label", "unire.session=ab12",
 		"-v", "creds:/home/node", "-w", "/workspace",
 		"--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges", "--memory", "2g",
 		"-v", "/h/api:/remotes/api", "img", "sleep", "infinity"}
@@ -35,6 +35,23 @@ func TestRunArgsNetworkAndEnv(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(d.runArgs(StartSpec{SessionID: "x"}), " "), "--network") {
 		t.Error("no network flag when none is requested")
+	}
+}
+
+// A login saved by one container must be readable by the next, and some agent
+// CLIs encrypt it with a key derived from the hostname.
+func TestEveryContainerShareOneHostname(t *testing.T) {
+	d := Docker{Image: "img", CredsVolume: "creds"}
+	cases := map[string][]string{
+		"session":        d.runArgs(StartSpec{SessionID: "x"}),
+		"one-shot":       d.oneShotArgs(),
+		"login terminal": d.LoginTerminalArgs("n", []string{"x"}),
+	}
+	for name, args := range cases {
+		joined := " " + strings.Join(args, " ") + " "
+		if !strings.Contains(joined, " --hostname unire-sandbox ") {
+			t.Errorf("%s does not set the shared hostname: %v", name, args)
+		}
 	}
 }
 

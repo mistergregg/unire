@@ -2,12 +2,12 @@
 
 Self-hosted control panel for AI coding agents: isolated sandboxes, shared memory, live preview.
 
-> **Status:** an early working version. Claude Code is tested with real sessions; Codex and Gemini CLI are in but not yet tested with a real signed-in session. See [SPEC.md](SPEC.md) for the plan and what is still to build.
+> **Status:** an early working version. Claude Code is tested with real sessions; Codex, Gemini CLI and Antigravity CLI are in but not yet tested with a real signed-in session. See [SPEC.md](SPEC.md) for the plan and what is still to build.
 
 ## What it does
 
 - Start a coding task from a browser and run it in its own disposable sandbox.
-- Use the agent CLI you choose (Claude Code, Codex, Gemini CLI, and others via adapters), with your own subscriptions.
+- Use the agent CLI you choose (Claude Code, Codex, Gemini CLI, Antigravity CLI, and others via adapters), with your own subscriptions.
 - Work on multiple repos at once, from any git server (Gitea, GitHub, GitLab, plain git, and more via plugins).
 - Remember what was done and carry it across agents and sessions.
 - Show a live preview of the app or site being built, with pluggable preview types.
@@ -24,7 +24,7 @@ docker build -t unire-sandbox docker/sandbox
 
 1. Open the page and set the owner password (first run only).
 2. **Git servers:** add Gitea, Forgejo, GitHub or GitLab with an access token. Tokens are encrypted and can never be viewed again.
-3. **Agents:** press Sign in on Claude Code, Codex or Gemini CLI. A terminal opens in the browser running that agent's own login, so sessions use your subscription. Another agent is one file: see [docs/adding-an-agent.md](docs/adding-an-agent.md).
+3. **Agents:** press Sign in on Claude Code, Codex, Antigravity CLI or Gemini CLI. A terminal opens in the browser running that agent's own login, so sessions use your subscription (Gemini CLI uses a free API key from Google AI Studio instead, because Google ended its personal Google-account sign-in). Another agent is one file: see [docs/adding-an-agent.md](docs/adding-an-agent.md).
 4. **Sessions, New session:** search your repos, pick one or several, write what the agent should do, and launch. Watch the log live; each repo gets an `agent/<agent>/<task>` branch pushed when the agent finishes.
 
 Needs Docker on the machine running `unire serve`. Only unattended sessions exist so far.

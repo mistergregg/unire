@@ -13,15 +13,21 @@ func (gemini) Name() string           { return "gemini" }
 func (gemini) MemoryFile() string     { return "GEMINI.md" }
 func (gemini) MemoryMode() MemoryMode { return MemoryPrompt } // GEMINI.md loading is unverified
 
-// geminiLoginScript prepares Gemini's settings, then starts it. Gemini opens
-// with a menu (1 Sign in with Google, 2 Gemini API key, 3 Vertex AI) where the
-// number keys are shortcuts, so pasting a sign-in code while the menu is up can
-// jump to "Enter Gemini API Key" (seen in practice). Choosing Google here, in
-// Gemini's own settings file, skips the menu and goes straight to the link and
-// the code prompt. It replaces any earlier choice (such as an API key picked by
-// mistake) and keeps the other settings. --skip-trust avoids the "trust this
-// folder" question.
-const geminiLoginScript = `node -e 'const fs=require("fs"),p=process.env.HOME+"/.gemini/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}s.security=s.security||{};s.security.auth=s.security.auth||{};s.security.auth.selectedType="oauth-personal";fs.mkdirSync(require("path").dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' && exec gemini --skip-trust`
+// Why an API key: Google has ended Gemini CLI's sign-in for personal Google
+// accounts. After a successful Google sign-in it answers "This client is no
+// longer supported for Gemini Code Assist for individuals ... migrate to the
+// Antigravity suite" (seen in practice). A Gemini API key from Google AI Studio
+// still works, and the CLI keeps it in its own credentials file in the login
+// volume. That file can only be read by containers with the same hostname as
+// the one that wrote it (a different hostname gives "Corrupted credentials
+// file", seen in practice), which is why every Unire container has a fixed
+// hostname.
+//
+// geminiLoginScript sets Gemini's own sign-in choice to "API key" and starts it,
+// which skips its three-way menu (where number keys are shortcuts) and opens the
+// key box directly. It replaces any earlier choice and keeps other settings.
+// --skip-trust avoids the "trust this folder" question.
+const geminiLoginScript = `node -e 'const fs=require("fs"),p=process.env.HOME+"/.gemini/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}s.security=s.security||{};s.security.auth=s.security.auth||{};s.security.auth.selectedType="gemini-api-key";fs.mkdirSync(require("path").dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")' && exec gemini --skip-trust`
 
 // geminiInspectScript prints what Gemini has saved, without any secret: file
 // names and sizes, the settings file (it holds the chosen sign-in type, not a
@@ -34,11 +40,11 @@ const geminiResetScript = `d="$HOME/.gemini"; rm -f "$d/settings.json" "$d/gemin
 func (gemini) Info() Info {
 	return Info{
 		ID: "gemini", Label: "Gemini CLI",
-		Description: "Google's Gemini coding agent. Uses your Google account.",
-		LoginHelp:   "It prints a long Google link and waits at \"Enter the authorization code:\". Click the link, sign in with Google, copy the code Google shows you, then paste it at that prompt (Ctrl+Shift+V) and press Enter. Wait for the prompt before pasting. When it says you are signed in, type /quit.",
+		Description: "Google's Gemini coding agent, used with a Gemini API key from Google AI Studio (it has a free tier). Google has ended Google-account sign-in for personal accounts in Gemini CLI and points to Antigravity instead.",
+		LoginHelp:   "Create a key at aistudio.google.com/app/apikey (click the link), then paste it into the box in this terminal with Ctrl+Shift+V and press Enter. It is saved in the login volume. When the Gemini prompt appears, type /quit. Nothing happens to your key outside your own server except calls to Google's Gemini API.",
 		LoginArgv:   []string{"sh", "-c", geminiLoginScript},
-		// Gemini has no status command. A sign-in leaves this file behind.
-		StatusArgv:  []string{"test", "-f", "/home/node/.gemini/oauth_creds.json"},
+		// Gemini has no status command. Storing a key leaves this file behind.
+		StatusArgv:  []string{"test", "-s", "/home/node/.gemini/gemini-credentials.json"},
 		LoggedIn:    func(_ string, ok bool) bool { return ok },
 		InspectArgv: []string{"sh", "-c", geminiInspectScript},
 		ResetArgv:   []string{"sh", "-c", geminiResetScript},

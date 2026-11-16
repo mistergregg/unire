@@ -63,25 +63,25 @@ func TestGeminiCommands(t *testing.T) {
 	}
 }
 
-func TestGeminiSignInSkipsTheMenuWhereDigitsAreShortcuts(t *testing.T) {
+func TestGeminiSignInUsesAnAPIKeyAndSkipsTheMenu(t *testing.T) {
 	a, _ := Get("gemini")
 	argv := a.Info().LoginArgv
 	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("login argv = %v", argv)
 	}
-	for _, want := range []string{"oauth-personal", "selectedType", "exec gemini --skip-trust"} {
+	for _, want := range []string{"gemini-api-key", "selectedType", "exec gemini --skip-trust"} {
 		if !strings.Contains(argv[2], want) {
 			t.Errorf("login script missing %q", want)
 		}
 	}
 	help := a.Info().LoginHelp
-	if !strings.Contains(help, "Enter the authorization code") || !strings.Contains(help, "Wait for the prompt before pasting") {
-		t.Errorf("the help must say where to paste and when: %q", help)
+	if !strings.Contains(help, "aistudio.google.com/app/apikey") || !strings.Contains(help, "paste it into the box") {
+		t.Errorf("the help must say where to get a key and where to paste it: %q", help)
 	}
 }
 
 // The settings step runs for real where sh and node exist (CI's Linux runners).
-func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testing.T) {
+func TestGeminiSettingsStepSelectsTheAPIKeyAndKeepsOtherSettings(t *testing.T) {
 	sh, err1 := exec.LookPath("sh")
 	_, err2 := exec.LookPath("node")
 	if err1 != nil || err2 != nil || runtime.GOOS == "windows" {
@@ -93,7 +93,7 @@ func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testin
 	if err := os.MkdirAll(home+"/.gemini", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	before := `{"security":{"auth":{"selectedType":"gemini-api-key"}},"ui":{"theme":"dark"}}`
+	before := `{"security":{"auth":{"selectedType":"oauth-personal"}},"ui":{"theme":"dark"}}`
 	if err := os.WriteFile(home+"/.gemini/settings.json", []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testin
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("settings.json is not valid JSON: %v\n%s", err, b)
 	}
-	if got["security"]["auth"].(map[string]any)["selectedType"] != "oauth-personal" || got["ui"]["theme"] != "dark" {
+	if got["security"]["auth"].(map[string]any)["selectedType"] != "gemini-api-key" || got["ui"]["theme"] != "dark" {
 		t.Errorf("settings = %s", b)
 	}
 	// A first-ever sign-in, with no settings file at all.
@@ -119,7 +119,7 @@ func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testin
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("script failed on a fresh home: %v\n%s", err, out)
 	}
-	if b, err := os.ReadFile(home2 + "/.gemini/settings.json"); err != nil || !strings.Contains(string(b), "oauth-personal") {
+	if b, err := os.ReadFile(home2 + "/.gemini/settings.json"); err != nil || !strings.Contains(string(b), "gemini-api-key") {
 		t.Errorf("fresh home: %s, %v", b, err)
 	}
 }
@@ -187,6 +187,99 @@ func TestGeminiInspectShowsNoSecretsAndResetClearsTheRightFiles(t *testing.T) {
 		}
 	}
 	run(a.Info().ResetArgv) // resetting again is fine
+}
+
+func TestAntigravityCommands(t *testing.T) {
+	a, _ := Get("antigravity")
+	cases := []struct {
+		prompt, mode string
+		want         []string
+	}{
+		{"do it", HandsOff, []string{"agy", "--dangerously-skip-permissions", "--print=do it"}},
+		// `-p "--version"` and `-p -- "--version"` both ran as flags in the real CLI.
+		{"--version", HandsOff, []string{"agy", "--dangerously-skip-permissions", "--print=--version"}},
+		{"-h please\nsecond line", HandsOff, []string{"agy", "--dangerously-skip-permissions", "--print=-h please\nsecond line"}},
+		{"", HandsOff, []string{"agy", "--dangerously-skip-permissions"}},
+		{"do it", AskFirst, []string{"agy", "--prompt-interactive=do it"}},
+		{"", AskFirst, []string{"agy"}},
+	}
+	for _, c := range cases {
+		got, err := a.Command(c.prompt, c.mode, ref)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
+		}
+	}
+	for _, c := range cases {
+		got, _ := a.Command(c.prompt, c.mode, ref)
+		for _, arg := range got[1:] {
+			if arg == c.prompt && c.prompt != "" && strings.HasPrefix(c.prompt, "-") {
+				t.Errorf("a dash-leading prompt must never be a separate argument: %v", got)
+			}
+		}
+	}
+	if _, err := a.Command("x", "bogus", ref); err == nil {
+		t.Error("unknown mode should fail")
+	}
+	if _, ok := a.FollowUp("x", HandsOff, ref); ok {
+		t.Error("agy must not resume 'the most recent' conversation: sessions share one home folder")
+	}
+	if len(a.Info().StatusArgv) != 0 {
+		t.Error("agy has no known sign-in check, so the page must report it as unknown, not guess")
+	}
+}
+
+func TestAntigravityInspectAndResetOnlyTouchTheirOwnFiles(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	if out, err := exec.Command("find", "--version").CombinedOutput(); err != nil || !strings.Contains(string(out), "GNU") {
+		t.Skip("needs GNU find")
+	}
+	a, _ := Get("antigravity")
+	home := t.TempDir()
+	write := func(p, c string) {
+		os.MkdirAll(home+"/"+p[:strings.LastIndex(p, "/")], 0o755)
+		os.WriteFile(home+"/"+p, []byte(c), 0o644)
+	}
+	write(".gemini/antigravity-cli/settings.json", "SECRET-SETTINGS")
+	write(".local/share/keyrings/login.keyring", "SECRET-KEYRING")
+	write(".config/antigravity/state", "x")
+	write(".claude/.credentials.json", "CLAUDE-LOGIN-MUST-SURVIVE")
+	write(".gemini/gemini-credentials.json", "GEMINI-KEY-MUST-SURVIVE")
+	write(".codex/auth.json", "CODEX-LOGIN-MUST-SURVIVE")
+	run := func(argv []string) string {
+		cmd := exec.Command(sh, argv[1:]...)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", argv[:2], err, out)
+		}
+		return string(out)
+	}
+	got := run(a.Info().InspectArgv)
+	if !strings.Contains(got, "antigravity-cli/settings.json") || !strings.Contains(got, "login.keyring") {
+		t.Errorf("inspect should list the files:\n%s", got)
+	}
+	for _, secret := range []string{"SECRET-SETTINGS", "SECRET-KEYRING", "MUST-SURVIVE"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("inspect must print names and sizes only, leaked %q", secret)
+		}
+	}
+	if strings.Contains(got, ".claude") || strings.Contains(got, ".codex") || strings.Contains(got, "gemini-credentials") {
+		t.Errorf("inspect must not list other agents' files:\n%s", got)
+	}
+	run(a.Info().ResetArgv)
+	for _, gone := range []string{".gemini/antigravity-cli", ".local/share/keyrings", ".config/antigravity"} {
+		if _, err := os.Stat(home + "/" + gone); err == nil {
+			t.Errorf("reset should remove %s", gone)
+		}
+	}
+	for _, kept := range []string{".claude/.credentials.json", ".gemini/gemini-credentials.json", ".codex/auth.json"} {
+		if _, err := os.Stat(home + "/" + kept); err != nil {
+			t.Errorf("resetting Antigravity must never touch another agent's login: %s was removed", kept)
+		}
+	}
 }
 
 func TestAgentsAreCompleteAndSorted(t *testing.T) {

@@ -66,7 +66,42 @@ async function recheckAgents() {
 }
 
 // ---- the sign-in terminal ----
+
+// The agent prints a sign-in link, often wrapped over several lines. Find the
+// newest one on screen and offer it as a button, so nobody has to copy it.
+let scanTimer = null;
+function scheduleLinkScan() {
+  clearTimeout(scanTimer);
+  scanTimer = setTimeout(() => {
+    if (!termSession) return;
+    const buf = termSession.term.buffer.active;
+    let text = "";
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (line) text += (line.isWrapped ? "" : "\n") + line.translateToString(true);
+    }
+    const found = text.match(/https:\/\/[^\s"'<>│┃]+/g);
+    const link = found && found[found.length - 1];
+    $("term-link").hidden = !link;
+    if (link) $("term-open").href = link;
+  }, 300);
+}
+
+$("term-code-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const code = $("term-code").value.trim();
+  if (!code || !termSession || termSession.ws.readyState !== WebSocket.OPEN) return;
+  termSession.term.paste(code); // as if pasted into the terminal
+  const { ws } = termSession;
+  setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode("\r")); }, 200);
+  $("term-code").value = "";
+  termSession.term.focus();
+});
+
 function closeTerminal() {
+  clearTimeout(scanTimer);
+  $("term-link").hidden = true;
+  $("term-code").value = "";
   if (!termSession) { $("term-card").hidden = true; return; }
   const { term, ws, onResize } = termSession;
   termSession = null;
@@ -104,7 +139,7 @@ async function openTerminal(a) {
   termSession = { term, ws, onResize };
 
   ws.onopen = () => term.focus();
-  ws.onmessage = (e) => term.write(new Uint8Array(e.data));
+  ws.onmessage = (e) => { term.write(new Uint8Array(e.data)); scheduleLinkScan(); };
   ws.onerror = () => banner("Could not open the sign-in terminal. Another one may already be open, or Docker is not reachable.", true);
   ws.onclose = (e) => {
     if (termSession && termSession.ws === ws) {

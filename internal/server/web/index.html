@@ -132,8 +132,16 @@
         <button id="term-close" type="button">Close</button>
       </div>
       <p id="term-help" class="muted"></p>
+      <div id="term-link" class="row" hidden>
+        <a id="term-open" class="button primary" target="_blank" rel="noopener noreferrer">Open sign-in link</a>
+        <span class="muted">Sign in there, then paste the code below.</span>
+      </div>
+      <form id="term-code-form" class="row" autocomplete="off">
+        <input id="term-code" placeholder="Paste the code here" spellcheck="false" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
       <div id="term" aria-label="Sign-in terminal"></div>
-      <p class="muted">Click in the terminal to type. Paste with Ctrl+Shift+V.</p>
+      <p class="muted">You can also click in the terminal and type. Use the arrow keys to choose.</p>
     </div>
   </section>
 

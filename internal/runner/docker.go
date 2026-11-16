@@ -30,6 +30,19 @@ func (d Docker) runArgs(s StartSpec) []string {
 		"-v", d.CredsVolume + ":/home/node",
 		"-w", "/workspace",
 	}
+	// A sandbox has no need to craft raw packets or gain privileges.
+	args = append(args, "--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges")
+	if s.Network != "" {
+		args = append(args, "--network", s.Network)
+	}
+	envKeys := make([]string, 0, len(s.Env))
+	for k := range s.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		args = append(args, "-e", k+"="+s.Env[k])
+	}
 	if s.Memory != "" {
 		args = append(args, "--memory", s.Memory)
 	}
@@ -85,6 +98,20 @@ func (b dockerSandbox) Exec(ctx context.Context, o ExecOpts) error {
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
 	return cmd.Run()
+}
+
+// Address returns the sandbox's IP address on the named Docker network.
+func (b dockerSandbox) Address(ctx context.Context, network string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format",
+		`{{(index .NetworkSettings.Networks "`+network+`").IPAddress}}`, b.name).Output()
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("the sandbox has no address on network %q", network)
+	}
+	return ip, nil
 }
 
 func (b dockerSandbox) Stop(ctx context.Context) error {

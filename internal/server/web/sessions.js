@@ -53,16 +53,30 @@ let lastResults = [];
 async function openNew() {
   stopPolling();
   show("new");
-  const [servers, agents, workspaces] = await Promise.all([
-    api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces")]);
-  serverList = servers; workspaceList = workspaces; selected = []; lastResults = [];
+  const [servers, agents, workspaces, net] = await Promise.all([
+    api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);
+  serverList = servers; workspaceList = workspaces; selected = []; lastResults = []; networkInfo = net;
   $("new-form").reset();
+  const def = net.modes.find((m) => m.id === net.mode);
+  $("n-network").replaceChildren(
+    el("option", { value: "" }, "Default: " + (def ? def.label : net.mode)),
+    ...net.modes.map((m) => el("option", { value: m.id }, m.label)));
+  updateNetworkDesc();
   $("n-agent").replaceChildren(...agents.map((a) => el("option", { value: a }, a)));
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
   fillWorkspaceSelect();
   $("n-results").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first (Git servers tab)."));
   renderSelected();
 }
+
+function updateNetworkDesc() {
+  const id = $("n-network").value || networkInfo.mode;
+  const warn = id === "full" ? " Use this only for repos you trust." : "";
+  const off = !networkInfo.protection.available && id !== "full" ? " Not available right now: " + networkInfo.protection.reason + "." : "";
+  $("n-network-desc").textContent = modeText(id) + warn + off;
+  $("n-network-desc").className = id === "full" || off ? "err" : "muted";
+}
+$("n-network").addEventListener("change", updateNetworkDesc);
 
 function fillWorkspaceSelect() {
   $("n-workspace").replaceChildren(
@@ -139,7 +153,8 @@ $("new-form").addEventListener("submit", (e) => {
   guarded($("n-submit"), async () => {
     if (!selected.length) throw new Error("Choose at least one repo.");
     const s = await api("POST", "/api/sessions", {
-      task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value, repos: refsOf(),
+      task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
+      network: $("n-network").value, repos: refsOf(),
     });
     await openSession(s.id);
   });
@@ -162,17 +177,38 @@ function setSessionStatus(status, error, s) {
   badge.className = "badge st-" + status;
   badge.textContent = status;
   const meta = currentSession || s;
-  $("s-meta").textContent = meta.agent + " · " + meta.mode + " · started " + ago(meta.startedAt || meta.createdAt);
+  $("s-meta").textContent = meta.agent + " · " + meta.mode + " · network: " + meta.network + " · started " + ago(meta.startedAt || meta.createdAt);
   $("s-error").hidden = !error;
   $("s-error").textContent = error || "";
   $("s-stop").hidden = isFinished(status);
   $("s-delete").hidden = !isFinished(status);
 }
 
+// One log line. A blocked connection gets an Allow button that adds the
+// address to the owner's allowed list for future sessions.
+function logLine(e) {
+  if (e.kind === "net") return el("div", { class: "l-log" }, "· connected to " + e.text);
+  if (e.kind === "blocked") {
+    const m = /^blocked (\S+) \(/.exec(e.text);
+    const line = el("div", { class: "l-blocked" }, "⛔ " + e.text + " ");
+    if (m) {
+      const btn = el("button", { type: "button", class: "small" }, "Allow " + m[1]);
+      btn.addEventListener("click", () => guarded(btn, async () => {
+        await api("POST", "/api/network/allow", { address: m[1] });
+        btn.textContent = "Allowed for future sessions";
+        btn.disabled = true;
+      }));
+      line.append(btn);
+    }
+    return line;
+  }
+  return el("div", { class: "l-" + e.kind }, e.kind === "log" ? "· " + e.text : e.text);
+}
+
 function appendLog(events) {
   const log = $("s-log");
   const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
-  for (const e of events) log.append(el("div", { class: "l-" + e.kind }, e.kind === "log" ? "· " + e.text : e.text));
+  for (const e of events) log.append(logLine(e));
   if (nearBottom && events.length) window.scrollTo(0, document.body.scrollHeight);
 }
 

@@ -27,6 +27,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/gitprovider"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
@@ -52,6 +53,8 @@ type Server struct {
 
 	sessions      *sessions.Manager
 	runnerFactory RunnerFactory
+	egressProxy   *egress.Proxy
+	egressInfo    egress.Info
 
 	mu       sync.Mutex
 	failures map[string]failure
@@ -64,10 +67,19 @@ type failure struct {
 
 // New opens the data directory (creating the database and key on first run)
 // and runs sessions in Docker.
-func New(dataDir string) (*Server, error) { return NewWith(dataDir, dockerRunner) }
+func New(dataDir string) (*Server, error) {
+	proxy := egress.NewProxy()
+	return NewWithEgress(dataDir, dockerRunner, proxy, egress.Setup(context.Background(), proxy))
+}
 
-// NewWith is New with a custom way to build sandboxes (used by tests).
+// NewWith is New with a custom way to build sandboxes and no network
+// protection (used by tests).
 func NewWith(dataDir string, rf RunnerFactory) (*Server, error) {
+	return NewWithEgress(dataDir, rf, egress.NewProxy(), egress.Info{Reason: "not configured"})
+}
+
+// NewWithEgress is NewWith with network protection supplied by the caller.
+func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info egress.Info) (*Server, error) {
 	st, err := store.Open(dataDir)
 	if err != nil {
 		return nil, err
@@ -77,7 +89,7 @@ func NewWith(dataDir string, rf RunnerFactory) (*Server, error) {
 		st.Close()
 		return nil, err
 	}
-	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, failures: map[string]failure{}}
+	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info, failures: map[string]failure{}}
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()
@@ -109,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents", s.auth(s.agentNames))
 	mux.HandleFunc("GET /api/sandbox", s.auth(s.getSandbox))
 	mux.HandleFunc("PUT /api/sandbox", s.auth(s.putSandbox))
+	mux.HandleFunc("GET /api/network", s.auth(s.getNetwork))
+	mux.HandleFunc("PUT /api/network", s.auth(s.putNetwork))
+	mux.HandleFunc("POST /api/network/allow", s.auth(s.allowAddress))
 	mux.HandleFunc("GET /api/workspaces", s.auth(s.listWorkspaces))
 	mux.HandleFunc("POST /api/workspaces", s.auth(s.saveWorkspace))
 	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))

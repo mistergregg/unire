@@ -8,7 +8,7 @@ The controller needs `/var/run/docker.sock` to start sandboxes. Access to that s
 
 - Keep the dashboard on your LAN or behind Tailscale or Cloudflare Access. Do not forward its port to the internet.
 - Use a strong owner password. Repeated wrong passwords lock the login for a minute.
-- Sandboxes can reach your network. Restricting their network access is planned but not built yet, and agents run in auto-approve mode, so only point Unire at repos and servers you are happy for an agent to work on.
+- Agents run in auto-approve mode, so Unire limits what a sandbox can reach: by default the internet but not your private network. See [network.md](network.md) for the modes and the allowed-address list. This protection works when Unire runs as a container (as described here), not when the binary is run directly.
 
 ## Images
 
@@ -29,7 +29,7 @@ If pulling fails with "unauthorized", open the package on GitHub (Packages, then
    docker run -it --rm -v unire-creds-claude:/home/node ghcr.io/mistergregg/unire-sandbox:latest claude
    ```
    Use `/login` inside, choose your subscription, finish in the browser, then `/exit`. The login is saved in the `unire-creds-claude` volume and shared by every session. (The same command is shown in Settings.)
-5. Add a git server under Git servers. From a sandbox, a server on the same Unraid box must be reached by the server's IP address and port, for example `http://192.168.0.10:3000`, because sandboxes do not share Unraid's container name lookup.
+5. Add a git server under Git servers. Use the server's IP address and port, for example `http://192.168.0.10:3000`, because sandboxes cannot look up Unraid container names. A git server on your LAN works in every network mode: the git server of each repo in a session is always allowed.
 6. Press New session.
 
 ## Docker Compose

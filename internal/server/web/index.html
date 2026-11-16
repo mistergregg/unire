@@ -55,6 +55,10 @@
             <select id="n-agent"></select>
           </label>
         </div>
+        <label>Network access
+          <select id="n-network"></select>
+        </label>
+        <p id="n-network-desc" class="muted"></p>
         <label>What should the agent do?
           <textarea id="n-prompt" required rows="5" maxlength="20000" placeholder="Describe the change. The agent works alone until it finishes."></textarea>
         </label>
@@ -161,6 +165,22 @@
       </form>
       <p class="muted spaced">Log the agent in once. Run this in a terminal on the machine that runs Docker, then use <code>/login</code> inside and exit:</p>
       <pre id="sb-login" class="log"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Network access for sandboxes</h2>
+      <p id="net-status" class="muted"></p>
+      <form id="net-form" autocomplete="off">
+        <label>Default for new sessions
+          <select id="net-mode"></select>
+        </label>
+        <p id="net-desc" class="muted"></p>
+        <label>Allowed addresses
+          <textarea id="net-allow" rows="4" placeholder="One per line, for example:&#10;192.168.0.50:5432&#10;nas.local&#10;192.168.0.0/24"></textarea>
+        </label>
+        <p class="muted">Used in Internet only and Agent only mode, on top of the internet (or the agent's own service) and your git servers. A host name, an address or a range, optionally with a port. Your sessions' git servers are always allowed.</p>
+        <button class="primary" type="submit" id="net-submit">Save</button>
+      </form>
     </div>
 
     <div class="card">

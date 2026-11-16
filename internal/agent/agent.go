@@ -16,6 +16,9 @@ type Adapter interface {
 	Command(prompt, mode string) ([]string, error)
 	// MemoryFile is the agent's native context file name.
 	MemoryFile() string
+	// Hosts lists the host names the agent must reach to work at all (its AI
+	// service and login). They stay reachable in the agent-only network mode.
+	Hosts() []string
 }
 
 var adapters = map[string]Adapter{}

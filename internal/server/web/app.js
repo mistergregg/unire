@@ -195,9 +195,36 @@ function fillSandbox(r) {
   $("sb-login").textContent = r.loginCommand;
 }
 
+// Network settings. The mode list and descriptions come from the server.
+let networkInfo = null;
+function modeText(id) { const m = networkInfo.modes.find((x) => x.id === id); return m ? m.description : ""; }
+
+function fillNetwork(info) {
+  networkInfo = info;
+  const p = info.protection;
+  $("net-status").textContent = p.available
+    ? "Network protection is active: sandboxes have no direct route out and go through Unire's filter."
+    : "Network protection is NOT available: " + p.reason + ". Sessions in Internet only or Agent only mode will not start until it is; Full access still works.";
+  $("net-status").className = p.available ? "muted" : "err";
+  $("net-mode").replaceChildren(...info.modes.map((m) => el("option", { value: m.id }, m.label)));
+  $("net-mode").value = info.mode;
+  $("net-desc").textContent = modeText(info.mode);
+  $("net-allow").value = info.allow.join("\n");
+}
+
+$("net-mode").addEventListener("change", () => { $("net-desc").textContent = modeText($("net-mode").value); });
+$("net-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("net-submit"), async () => {
+    fillNetwork(await api("PUT", "/api/network", { mode: $("net-mode").value, allow: $("net-allow").value.split("\n") }));
+    banner("Network settings saved. They apply to new sessions.");
+  });
+});
+
 async function openSettings() {
   show("settings");
   fillSandbox(await api("GET", "/api/sandbox"));
+  fillNetwork(await api("GET", "/api/network"));
   await renderWorkspaces();
   await renderLogins();
 }

@@ -73,6 +73,8 @@ var migrations = []string{
 		text       TEXT NOT NULL
 	);
 	CREATE INDEX session_events_by_session ON session_events (session_id, id);`,
+	// 3: network mode per session
+	`ALTER TABLE sessions ADD COLUMN network TEXT NOT NULL DEFAULT 'internet';`,
 }
 
 // DBFileName is the database file inside the data directory.

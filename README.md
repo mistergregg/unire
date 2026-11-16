@@ -29,7 +29,7 @@ docker build -t unire-sandbox docker/sandbox
 
 Needs Docker on the machine running `unire serve`. Only unattended sessions exist so far.
 
-To run it as a container (for example on Unraid) see [docs/deploy.md](docs/deploy.md).
+To run it as a container (for example on Unraid) see [docs/deploy.md](docs/deploy.md). Sandboxes can reach the internet but, by default, not your private network; see [docs/network.md](docs/network.md).
 
 ## Command line launcher
 

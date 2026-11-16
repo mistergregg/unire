@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
@@ -27,6 +28,15 @@ type Config struct {
 	Runner runner.Runner
 	Memory string
 	CPUs   string
+	Egress Egress
+}
+
+// Egress is the sandbox network protection: the proxy, whether it is working,
+// and the owner's allowed addresses.
+type Egress struct {
+	Proxy *egress.Proxy
+	Info  egress.Info
+	Allow []egress.Entry
 }
 
 // Repo is a repo to clone, with the token for its server.
@@ -38,6 +48,7 @@ type Repo struct {
 // Request is what the owner asks for.
 type Request struct {
 	Task, Agent, Prompt, Mode string
+	Network                   egress.Mode // empty means internet only
 	Repos                     []Repo
 }
 
@@ -85,6 +96,16 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	if len(req.Repos) == 0 {
 		return store.Session{}, errors.New("choose at least one repo")
 	}
+	if req.Network == "" {
+		req.Network = egress.ModeInternet
+	}
+	if _, ok := egress.ParseMode(string(req.Network)); !ok {
+		return store.Session{}, fmt.Errorf("unknown network mode %q", req.Network)
+	}
+	// Fail closed: never run a protected mode without the protection.
+	if cfg := m.config(); req.Network != egress.ModeFull && !cfg.Egress.Info.Available {
+		return store.Session{}, fmt.Errorf("network protection is not available (%s). Choose \"full\" network access to run without it", cfg.Egress.Info.Reason)
+	}
 	used := map[string]bool{}
 	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: req.Mode}
 	tokens := map[string]string{}
@@ -99,7 +120,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 			secrets = append(secrets, r.Token)
 		}
 	}
-	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, Branch: spec.Branch(), Repos: refs}
+	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, Branch: spec.Branch(), Network: string(req.Network), Repos: refs}
 
 	m.mu.Lock()
 	if m.closing {
@@ -116,7 +137,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Unlock()
 
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
-	go m.run(ctx, spec, tokens, secrets)
+	go m.run(ctx, spec, req.Network, tokens, secrets)
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -146,7 +167,7 @@ func (m *Manager) Shutdown() {
 // Wait blocks until all sessions have finished (for tests).
 func (m *Manager) Wait() { m.wg.Wait() }
 
-func (m *Manager) run(ctx context.Context, spec session.Spec, tokens map[string]string, secrets []string) {
+func (m *Manager) run(ctx context.Context, spec session.Spec, network egress.Mode, tokens map[string]string, secrets []string) {
 	defer m.wg.Done()
 	defer func() {
 		m.mu.Lock()
@@ -172,7 +193,17 @@ func (m *Manager) run(ctx context.Context, spec session.Spec, tokens map[string]
 
 	_ = m.st.MarkRunning(spec.ID)
 	cfg := m.config()
-	err := workflow.Run(ctx, cfg.Runner, spec, workflow.Options{
+	var rn runner.Runner = cfg.Runner
+	if network != egress.ModeFull {
+		pol, perr := m.policyFor(spec, network, cfg)
+		if perr != nil {
+			m.finish(ctx, spec.ID, perr, secrets)
+			return
+		}
+		rn = &netRunner{inner: cfg.Runner, proxy: cfg.Egress.Proxy, info: cfg.Egress.Info, pol: pol, st: m.st, id: spec.ID}
+	}
+	_ = m.st.AddEvent(spec.ID, "log", "network: "+networkLabel(network))
+	err := workflow.Run(ctx, rn, spec, workflow.Options{
 		Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs,
 	})
 	out.Flush()

@@ -19,6 +19,16 @@ type StartSpec struct {
 	Mounts    []Mount
 	Memory    string // e.g. "4g"; empty means no limit
 	CPUs      string // e.g. "2"; empty means no limit
+	// Network is the Docker network to attach to; empty means the default.
+	Network string
+	// Env is set inside the sandbox for every command.
+	Env map[string]string
+}
+
+// Addressable is implemented by sandboxes that can report their address on a
+// network, which the egress proxy uses to recognise them.
+type Addressable interface {
+	Address(ctx context.Context, network string) (string, error)
 }
 
 // ExecOpts describes one command to run in the sandbox. Argv is passed

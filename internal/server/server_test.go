@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 )
 
@@ -26,20 +27,22 @@ type env struct {
 	dir  string
 	seen *bytes.Buffer // every response body, to check for leaks
 	box  *fakeBox      // the fake sandbox every session runs in
+	info egress.Info   // network protection as the server sees it
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
 	jar, _ := cookiejar.New(nil)
-	e := &env{t: t, dir: dir, c: &http.Client{Jar: jar}, seen: &bytes.Buffer{}, box: &fakeBox{}}
+	e := &env{t: t, dir: dir, c: &http.Client{Jar: jar}, seen: &bytes.Buffer{}, box: &fakeBox{},
+		info: egress.Info{Available: true, Network: "unire-sandbox", ProxyURL: "http://unire-egress:3128"}}
 	e.start()
 	return e
 }
 
 // start (re)opens the server on the same data directory, like a restart.
 func (e *env) start() {
-	s, err := NewWith(e.dir, func(Sandbox) runner.Runner { return fakeRunner{e.box} })
+	s, err := NewWithEgress(e.dir, func(Sandbox) runner.Runner { return fakeRunner{e.box} }, egress.NewProxy(), e.info)
 	if err != nil {
 		e.t.Fatal(err)
 	}

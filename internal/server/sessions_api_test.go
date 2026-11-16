@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 )
 
@@ -53,6 +54,9 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	return nil
 }
 func (b *fakeBox) Stop(context.Context) error { return nil }
+
+// Address makes the fake look like a Docker sandbox on the protected network.
+func (b *fakeBox) Address(context.Context, string) (string, error) { return "172.30.0.7", nil }
 
 func (b *fakeBox) snapshot() []runner.ExecOpts {
 	b.mu.Lock()
@@ -294,6 +298,96 @@ func TestSandboxImageDefaultComesFromEnvironment(t *testing.T) {
 	e.do("PUT", "/api/sandbox", map[string]string{"image": "mine", "credsVolume": "v"})
 	if _, body := e.do("GET", "/api/sandbox", nil); !strings.Contains(body, `"image":"mine"`) {
 		t.Errorf("saved image not used: %s", body)
+	}
+}
+
+func TestNetworkSettings(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	_, body := e.do("GET", "/api/network", nil)
+	if !strings.Contains(body, `"mode":"internet"`) || !strings.Contains(body, `"available":true`) || !strings.Contains(body, "Full access") {
+		t.Errorf("defaults = %s", body)
+	}
+	for name, req := range map[string]map[string]any{
+		"unknown mode": {"mode": "wide-open", "allow": []string{}},
+		"bad entry":    {"mode": "internet", "allow": []string{"not a host!"}},
+		"bad port":     {"mode": "internet", "allow": []string{"10.0.0.1:99999"}},
+	} {
+		if code, _ := e.do("PUT", "/api/network", req); code != http.StatusBadRequest {
+			t.Errorf("%s accepted: %d", name, code)
+		}
+	}
+	ok := map[string]any{"mode": "agent-only", "allow": []string{"192.168.0.50:5432", " nas.local ", "192.168.0.50:5432", ""}}
+	code, body := e.do("PUT", "/api/network", ok)
+	if code != 200 || !strings.Contains(body, `"mode":"agent-only"`) || !strings.Contains(body, `["192.168.0.50:5432","nas.local"]`) {
+		t.Errorf("save = %d %s", code, body)
+	}
+	// The "Allow" button in a session log.
+	if code, body = e.do("POST", "/api/network/allow", map[string]string{"address": "192.168.0.1:80"}); code != 200 || !strings.Contains(body, "192.168.0.1:80") {
+		t.Errorf("allow = %d %s", code, body)
+	}
+	if code, _ = e.do("POST", "/api/network/allow", map[string]string{"address": "bad address!"}); code != http.StatusBadRequest {
+		t.Errorf("bad allow = %d", code)
+	}
+	e.restart()
+	if _, body = e.do("GET", "/api/network", nil); !strings.Contains(body, "agent-only") || !strings.Contains(body, "192.168.0.1:80") {
+		t.Errorf("settings lost on restart: %s", body)
+	}
+}
+
+func TestSessionNetworkModes(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+
+	// Default is internet only, recorded on the session and in its log.
+	code, sess := e.launch(base, nil)
+	if code != http.StatusCreated || sess["network"] != "internet" {
+		t.Fatalf("default launch = %d %v", code, sess)
+	}
+	res := e.waitStatus(sess["id"].(string), "done")
+	raw, _ := json.Marshal(res)
+	if !strings.Contains(string(raw), "network: internet only") {
+		t.Errorf("log should state the network mode: %s", raw)
+	}
+
+	// A saved default changes what new sessions get, and a per-session choice overrides it.
+	e.do("PUT", "/api/network", map[string]any{"mode": "agent-only", "allow": []string{}})
+	_, s2 := e.launch(base, nil)
+	if s2["network"] != "agent-only" {
+		t.Errorf("saved default not used: %v", s2["network"])
+	}
+	_, s3 := e.launch(base, map[string]any{"network": "full"})
+	if s3["network"] != "full" {
+		t.Errorf("per-session choice ignored: %v", s3["network"])
+	}
+	if code, _ := e.launch(base, map[string]any{"network": "bogus"}); code != http.StatusBadRequest {
+		t.Errorf("unknown mode = %d, want 400", code)
+	}
+	e.waitStatus(s2["id"].(string), "done")
+	e.waitStatus(s3["id"].(string), "done")
+}
+
+func TestProtectedModesRefusedWithoutProtection(t *testing.T) {
+	e := newEnv(t)
+	e.info = egress.Info{Reason: "Unire is not running in a Docker container"}
+	e.restart()
+	base := withServer(t, e, "tok")
+
+	code, res := e.launch(base, nil) // default: internet only
+	if code != http.StatusBadRequest || !strings.Contains(res["error"].(string), "not running in a Docker container") {
+		t.Errorf("want a refusal with the reason, got %d %v", code, res)
+	}
+	if len(e.box.snapshot()) != 0 {
+		t.Error("nothing may run when protection is unavailable")
+	}
+	code, res = e.launch(base, map[string]any{"network": "full"})
+	if code != http.StatusCreated {
+		t.Errorf("full access should still work: %d %v", code, res)
+	}
+	e.waitStatus(res["id"].(string), "done")
+	_, body := e.do("GET", "/api/network", nil)
+	if !strings.Contains(body, `"available":false`) || !strings.Contains(body, "not running in a Docker container") {
+		t.Errorf("status should explain: %s", body)
 	}
 }
 

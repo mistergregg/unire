@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mistergregg/unire/internal/agent"
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
@@ -76,7 +77,125 @@ func (s *Server) sandbox() Sandbox {
 
 func (s *Server) sessionConfig() sessions.Config {
 	sb := s.sandbox()
-	return sessions.Config{Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs}
+	allow, _ := egress.ParseEntries(s.allowList()) // saved entries were validated when saved
+	return sessions.Config{
+		Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs,
+		Egress: sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
+	}
+}
+
+// ---- network settings ----
+
+func (s *Server) networkMode() egress.Mode {
+	if v, ok, _ := s.store.Setting("network_mode"); ok {
+		if m, ok := egress.ParseMode(v); ok {
+			return m
+		}
+	}
+	return egress.ModeInternet
+}
+
+func (s *Server) allowList() []string {
+	v, _, _ := s.store.Setting("network_allow")
+	var out []string
+	for _, l := range strings.Split(v, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func (s *Server) saveAllowList(list []string) error {
+	return s.store.SetSetting("network_allow", strings.Join(list, "\n"))
+}
+
+// cleanAllowList validates entries and removes blanks and duplicates.
+func cleanAllowList(in []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range in {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		e, err := egress.ParseEntry(l)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[e.String()] {
+			seen[e.String()] = true
+			out = append(out, e.String())
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) getNetwork(w http.ResponseWriter, _ *http.Request) {
+	allow := s.allowList()
+	if allow == nil {
+		allow = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":       s.networkMode(),
+		"allow":      allow,
+		"protection": s.egressInfo,
+		"modes": []map[string]string{
+			{"id": string(egress.ModeInternet), "label": "Internet only", "description": "The internet, your git servers and the addresses you allow. Your private network is blocked."},
+			{"id": string(egress.ModeAgentOnly), "label": "Agent only", "description": "Only the agent's own service, your git servers and the addresses you allow. Package installs and web fetches fail."},
+			{"id": string(egress.ModeFull), "label": "Full access", "description": "No filtering. The agent can reach everything the server can, including your home network."},
+		},
+	})
+}
+
+func (s *Server) putNetwork(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode  string   `json:"mode"`
+		Allow []string `json:"allow"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	mode, ok := egress.ParseMode(req.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "unknown network mode")
+		return
+	}
+	allow, err := cleanAllowList(req.Allow)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.SetSetting("network_mode", string(mode)); err != nil {
+		serverError(w)
+		return
+	}
+	if err := s.saveAllowList(allow); err != nil {
+		serverError(w)
+		return
+	}
+	s.getNetwork(w, r)
+}
+
+// allowAddress adds one address to the allowed list (the "Allow" button next
+// to a blocked connection in a session log).
+func (s *Server) allowAddress(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Address string `json:"address"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	list, err := cleanAllowList(append(s.allowList(), req.Address))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.saveAllowList(list); err != nil {
+		serverError(w)
+		return
+	}
+	s.getNetwork(w, r)
 }
 
 func (s *Server) getSandbox(w http.ResponseWriter, _ *http.Request) {
@@ -240,6 +359,7 @@ type sessionView struct {
 	Branch     string          `json:"branch"`
 	Status     string          `json:"status"`
 	Error      string          `json:"error"`
+	Network    string          `json:"network"`
 	Repos      []store.RepoRef `json:"repos"`
 	CreatedAt  int64           `json:"createdAt"`
 	StartedAt  int64           `json:"startedAt"`
@@ -247,7 +367,7 @@ type sessionView struct {
 }
 
 func toView(x store.Session) sessionView {
-	v := sessionView{x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, x.Status, x.Error, x.Repos, x.CreatedAt.Unix(), 0, 0}
+	v := sessionView{x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, x.Status, x.Error, x.Network, x.Repos, x.CreatedAt.Unix(), 0, 0}
 	if !x.StartedAt.IsZero() {
 		v.StartedAt = x.StartedAt.Unix()
 	}
@@ -272,10 +392,11 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Task   string          `json:"task"`
-		Agent  string          `json:"agent"`
-		Prompt string          `json:"prompt"`
-		Repos  []store.RepoRef `json:"repos"`
+		Task    string          `json:"task"`
+		Agent   string          `json:"agent"`
+		Prompt  string          `json:"prompt"`
+		Network string          `json:"network"` // empty means the saved default
+		Repos   []store.RepoRef `json:"repos"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -298,8 +419,16 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mode := s.networkMode()
+	if req.Network != "" {
+		var ok bool
+		if mode, ok = egress.ParseMode(req.Network); !ok {
+			writeErr(w, http.StatusBadRequest, "unknown network mode")
+			return
+		}
+	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Repos: repos})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Repos: repos})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

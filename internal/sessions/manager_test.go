@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
 )
 
@@ -66,7 +69,7 @@ func setup(t *testing.T, sb *fakeSandbox) (*Manager, *store.Store) {
 }
 
 func req(token string) Request {
-	return Request{Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off", Repos: []Repo{
+	return Request{Task: "demo", Agent: "claude", Prompt: "go", Mode: "hands-off", Network: egress.ModeFull, Repos: []Repo{
 		{Ref: store.RepoRef{ServerID: "g", FullName: "me/api", CloneURL: "https://g/me/api.git"}, Token: token},
 		{Ref: store.RepoRef{ServerID: "g", FullName: "other/api", CloneURL: "https://g/other/api.git"}, Token: token},
 	}}
@@ -195,6 +198,160 @@ func TestShutdownMarksInterrupted(t *testing.T) {
 	}
 	if _, err := m.Start(req("")); err == nil {
 		t.Error("starting after shutdown should fail")
+	}
+}
+
+// ---- network protection ----
+
+// Address makes fakeSandbox look like a Docker sandbox on the protected network.
+func (f *fakeSandbox) Address(context.Context, string) (string, error) { return "172.30.0.9", nil }
+
+func protectedSetup(t *testing.T, sb *fakeSandbox, available bool, allow ...string) (*Manager, *store.Store, *egress.Proxy, *fakeRunner) {
+	t.Helper()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	proxy := egress.NewProxy()
+	entries, err := egress.ParseEntries(allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{sb: sb}
+	info := egress.Info{Available: available, Reason: "test says no", Network: "unire-sandbox", ProxyURL: "http://unire-egress:3128"}
+	m, err := New(st, func() Config {
+		return Config{Runner: fr, Egress: Egress{Proxy: proxy, Info: info, Allow: entries}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, st, proxy, fr
+}
+
+func TestProtectedModeRefusedWhenProtectionUnavailable(t *testing.T) {
+	m, _, _, _ := protectedSetup(t, &fakeSandbox{}, false)
+	r := req("")
+	r.Network = egress.ModeInternet
+	_, err := m.Start(r)
+	if err == nil || !strings.Contains(err.Error(), "test says no") || !strings.Contains(err.Error(), "full") {
+		t.Errorf("want a refusal that explains why and offers full access, got %v", err)
+	}
+	r.Network = egress.ModeFull
+	if _, err := m.Start(r); err != nil {
+		t.Errorf("full access should still start: %v", err)
+	}
+	m.Wait()
+	r.Network = "bogus"
+	if _, err := m.Start(r); err == nil {
+		t.Error("an unknown mode should be refused")
+	}
+}
+
+func TestProtectedSessionJoinsNetworkAndRegistersWithProxy(t *testing.T) {
+	sb := &fakeSandbox{block: make(chan struct{})}
+	m, st, proxy, _ := protectedSetup(t, sb, true, "192.168.0.50:5432")
+	r := req("")
+	r.Network = egress.ModeInternet
+	r.Repos = []Repo{{Ref: store.RepoRef{ServerID: "g", FullName: "me/api", CloneURL: "http://192.168.0.242:3300/me/api.git"}}}
+	x, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRunning(t, st, x.ID)
+
+	// The sandbox at 172.30.0.9 is known to the proxy with this session's
+	// policy: the LAN git server and the allowed database are reachable, the
+	// router and other LAN hosts are not, the internet is.
+	for _, c := range []struct {
+		host string
+		ip   string
+		port int
+		want bool
+	}{
+		{"192.168.0.242", "192.168.0.242", 3300, true},
+		{"192.168.0.50", "192.168.0.50", 5432, true},
+		{"192.168.0.1", "192.168.0.1", 80, false},
+		{"192.168.0.242", "192.168.0.242", 22, false},
+		{"github.com", "140.82.112.3", 443, true},
+	} {
+		if got, why := proxy.Decide("172.30.0.9", c.host, net.ParseIP(c.ip), c.port); got != c.want {
+			t.Errorf("%s:%d allowed=%v (%s), want %v", c.host, c.port, got, why, c.want)
+		}
+	}
+	close(sb.block)
+	m.Wait()
+	if _, still := proxy.Policy("172.30.0.9"); still {
+		t.Error("the sandbox must be unregistered when the session ends")
+	}
+
+	log := logText(st, x.ID)
+	if !strings.Contains(log, "log: network: internet only") {
+		t.Errorf("log should say which network mode applies:\n%s", log)
+	}
+	got, _, _ := st.Session(x.ID)
+	if got.Network != "internet" {
+		t.Errorf("stored network = %q", got.Network)
+	}
+}
+
+func waitRunning(t *testing.T, st *store.Store, id string) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if s, _, _ := st.Session(id); s.Status == store.StatusRunning {
+			time.Sleep(50 * time.Millisecond) // let the sandbox start and register
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("session never started running")
+}
+
+func TestAgentOnlyModeStillHonoursAllowedAddresses(t *testing.T) {
+	sb := &fakeSandbox{block: make(chan struct{})}
+	m, st, proxy, _ := protectedSetup(t, sb, true, "192.168.0.50:5432")
+	r := req("")
+	r.Network = egress.ModeAgentOnly
+	r.Repos = []Repo{{Ref: store.RepoRef{ServerID: "g", FullName: "me/api", CloneURL: "http://192.168.0.242:3300/me/api.git"}}}
+	x, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRunning(t, st, x.ID)
+	for _, c := range []struct {
+		host string
+		ip   string
+		port int
+		want bool
+	}{
+		{"api.anthropic.com", "160.79.104.10", 443, true}, // the agent's own service
+		{"192.168.0.242", "192.168.0.242", 3300, true},    // the git server
+		{"192.168.0.50", "192.168.0.50", 5432, true},      // allowed by the owner
+		{"example.com", "93.184.216.34", 443, false},      // the general internet is closed
+		{"192.168.0.1", "192.168.0.1", 80, false},
+	} {
+		if got, why := proxy.Decide("172.30.0.9", c.host, net.ParseIP(c.ip), c.port); got != c.want {
+			t.Errorf("%s:%d allowed=%v (%s), want %v", c.host, c.port, got, why, c.want)
+		}
+	}
+	close(sb.block)
+	m.Wait()
+}
+
+func TestGitEntriesCoverEachServerOnce(t *testing.T) {
+	repos := []session.Repo{
+		{URL: "http://192.168.0.242:3300/a/x.git"},
+		{URL: "http://192.168.0.242:3300/a/y.git"},
+		{URL: "https://git.example.com/a/z.git"},
+		{URL: "/remotes/local"},
+	}
+	var got []string
+	for _, e := range gitEntries(repos) {
+		got = append(got, e.String())
+	}
+	want := []string{"192.168.0.242:3300", "git.example.com:443"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("gitEntries = %v, want %v", got, want)
 	}
 }
 

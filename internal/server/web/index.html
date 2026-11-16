@@ -50,50 +50,44 @@
     <h1>New session</h1>
     <p id="n-note" class="banner" hidden></p>
     <form id="new-form" autocomplete="off">
+      <input id="n-task" type="hidden">
       <div class="card">
-        <div class="grid">
-          <label>Task name
-            <input id="n-task" required maxlength="80" placeholder="Add a login page">
-          </label>
-          <label>Agent
-            <select id="n-agent"></select>
-          </label>
+        <textarea id="n-prompt" required rows="6" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+        <div class="between spaced">
+          <select id="n-agent" aria-label="Agent"></select>
+          <button class="primary" type="submit" id="n-submit">Start</button>
         </div>
-        <label>Network access
-          <select id="n-network"></select>
-        </label>
-        <p id="n-network-desc" class="muted"></p>
-        <label>What should the agent do?
-          <textarea id="n-prompt" required rows="5" maxlength="20000" placeholder="Describe the change. The agent works alone until it finishes."></textarea>
-        </label>
-        <label class="check">
-          <input id="n-memory" type="checkbox" checked> Use project memory
-        </label>
-        <p class="muted">The agent starts with what earlier sessions learned about these repos, and writes down what it learned when it finishes. This costs one short extra request to the agent at the end.</p>
       </div>
 
       <div class="card">
         <h2>Repos</h2>
-        <label>Load a saved workspace
-          <select id="n-workspace"></select>
-        </label>
-        <div class="row">
+        <div id="n-selected" class="stack"></div>
+        <select id="n-workspace" aria-label="Saved workspace"></select>
+        <div class="row spaced">
           <select id="n-server" aria-label="Git server"></select>
-          <input id="n-query" type="search" placeholder="Search repos by name">
-          <button type="button" id="n-search">Search</button>
+          <input id="n-query" type="search" placeholder="Search your repos to add">
         </div>
         <div id="n-results" class="stack"></div>
-
-        <h2 class="spaced">Selected</h2>
-        <div id="n-selected" class="stack"></div>
-        <div class="row spaced">
-          <input id="n-ws-name" maxlength="60" placeholder="Save this selection as a workspace">
-          <button type="button" id="n-ws-save">Save workspace</button>
-        </div>
+        <details class="spaced">
+          <summary>Save these repos as a workspace</summary>
+          <div class="row spaced">
+            <input id="n-ws-name" maxlength="60" placeholder="Workspace name">
+            <button type="button" id="n-ws-save">Save</button>
+          </div>
+        </details>
       </div>
 
-      <button class="primary" type="submit" id="n-submit">Launch session</button>
-      <p class="muted">Runs unattended in a fresh Docker sandbox with the agent's auto-approve mode on. Each repo gets its own <code>agent/&hellip;</code> branch, pushed when the agent finishes.</p>
+      <details class="card">
+        <summary>Options</summary>
+        <label class="spaced">Network access
+          <select id="n-network"></select>
+        </label>
+        <p id="n-network-desc" class="muted"></p>
+        <label class="check">
+          <input id="n-memory" type="checkbox" checked> Use project memory
+        </label>
+        <p class="muted">The agent starts with what earlier sessions learned about these repos and writes down what it learned when it finishes.</p>
+      </details>
     </form>
   </section>
 

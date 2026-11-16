@@ -398,9 +398,12 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Task, req.Prompt = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt)
+	if req.Task == "" {
+		req.Task = taskNameFrom(req.Prompt) // the name is made from what was asked
+	}
 	switch {
-	case req.Task == "" || len(req.Task) > 80:
-		writeErr(w, http.StatusBadRequest, "task name is required (80 characters max)")
+	case len(req.Task) > 80:
+		writeErr(w, http.StatusBadRequest, "task name is too long (80 characters max)")
 		return
 	case req.Prompt == "" || len(req.Prompt) > 20000:
 		writeErr(w, http.StatusBadRequest, "tell the agent what to do (20,000 characters max)")
@@ -547,4 +550,26 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+// taskNameFrom makes a short name from the first line of the prompt: the
+// words that fit in 60 characters, cut at a word boundary.
+func taskNameFrom(prompt string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+	words := strings.Fields(line)
+	name := ""
+	for _, w := range words {
+		next := w
+		if name != "" {
+			next = name + " " + w
+		}
+		if len([]rune(next)) > 60 {
+			if name == "" { // one very long word
+				name = string([]rune(w)[:57])
+			}
+			return name + "…"
+		}
+		name = next
+	}
+	return name
 }

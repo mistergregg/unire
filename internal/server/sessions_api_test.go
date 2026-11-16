@@ -219,7 +219,7 @@ func TestLaunchValidation(t *testing.T) {
 	base := withServer(t, e, "tok")
 	cases := map[string]map[string]any{
 		"no prompt":     {"prompt": "  "},
-		"no task":       {"task": ""},
+		"task too long": {"task": strings.Repeat("x", 81)},
 		"unknown agent": {"agent": "nope"},
 		"no repos":      {"repos": []any{}},
 		"unknown srv":   {"repos": []any{map[string]any{"serverId": "zzz", "fullName": "a/b", "cloneUrl": base + "/a/b.git"}}},
@@ -426,5 +426,29 @@ func TestAgentsListed(t *testing.T) {
 	}
 	if _, err := url.Parse(e.ts.URL); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTaskNameComesFromThePrompt(t *testing.T) {
+	cases := map[string]string{
+		"Add a login page":                    "Add a login page",
+		"  Fix the bug\nthen update the docs": "Fix the bug",
+		"":                                    "",
+		strings.Repeat("word ", 30):           strings.TrimSpace(strings.Repeat("word ", 12)) + "…",
+		strings.Repeat("x", 100):              strings.Repeat("x", 57) + "…",
+	}
+	for in, want := range cases {
+		if got := taskNameFrom(in); got != want {
+			t.Errorf("taskNameFrom(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLaunchNamesTheTaskFromThePrompt(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	code, body := e.launch(base, map[string]any{"task": "", "prompt": "Add a login page\nwith a form"})
+	if code != http.StatusCreated || body["task"] != "Add a login page" {
+		t.Errorf("launch without a name = %d %s", code, body)
 	}
 }

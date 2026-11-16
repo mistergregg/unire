@@ -67,6 +67,7 @@ async function openNew(prefill) {
   $("n-agent").replaceChildren(...agents.map((a) => el("option", { value: a.id },
     a.label + (a.loggedIn === false ? " (not signed in)" : ""))));
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
+  $("n-server").hidden = servers.length < 2; // nothing to choose with one server
   fillWorkspaceSelect();
   $("n-results").replaceChildren(servers.length ? "" : el("p", { class: "muted" }, "Add a git server first (Git servers tab)."));
   if (prefill) {
@@ -87,8 +88,9 @@ function updateNetworkDesc() {
 $("n-network").addEventListener("change", updateNetworkDesc);
 
 function fillWorkspaceSelect() {
+  $("n-workspace").hidden = !workspaceList.length;
   $("n-workspace").replaceChildren(
-    el("option", { value: "" }, workspaceList.length ? "None" : "No saved workspaces yet"),
+    el("option", { value: "" }, "Load a saved workspace…"),
     ...workspaceList.map((w) => el("option", { value: w.id }, w.name + " (" + w.repos.length + " repos)")));
 }
 
@@ -111,7 +113,7 @@ function renderSelected() {
     return el("div", { class: "item" },
       el("div", { class: "item-head" }, el("span", { class: "name" }, r.fullName), el("span", { class: "badge" }, srv ? srv.name : r.serverId)),
       el("div", { class: "item-actions" }, base, remove));
-  }) : [el("p", { class: "muted" }, "No repos chosen yet.")]));
+  }) : [el("p", { class: "muted" }, "Add the repos this task needs.")]));
 }
 
 function renderResults() {
@@ -140,8 +142,16 @@ async function searchRepos() {
   renderResults();
   if (!repos.length) $("n-results").replaceChildren(el("p", { class: "muted" }, "No matching repos."));
 }
-$("n-search").addEventListener("click", () => guarded($("n-search"), searchRepos));
-$("n-query").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); guarded($("n-search"), searchRepos); } });
+// Search as you type (and once on opening the box), so there is no Search button.
+let searchTimer = null;
+const searchSoon = (ms) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => searchRepos().catch((e) => banner(e.message, true)), ms);
+};
+$("n-query").addEventListener("input", () => searchSoon(300));
+$("n-query").addEventListener("focus", () => { if (!lastResults.length) searchSoon(0); });
+$("n-query").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+$("n-server").addEventListener("change", () => searchSoon(0));
 
 const refsOf = () => selected.map(({ serverId, fullName, cloneUrl, base }) => ({ serverId, fullName, cloneUrl, base }));
 

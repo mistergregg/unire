@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unire</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Unire</div>
+  <nav id="nav" hidden>
+    <button class="tab" data-view="servers">Git servers</button>
+    <button class="tab" data-view="repos">Find repos</button>
+  </nav>
+  <button id="logout" class="ghost" hidden>Log out</button>
+</header>
+
+<main>
+  <p id="banner" class="banner" role="status" hidden></p>
+
+  <section id="view-auth" hidden>
+    <div class="card narrow">
+      <h1 id="auth-title"></h1>
+      <p id="auth-hint" class="muted"></p>
+      <form id="auth-form" autocomplete="off">
+        <label>Password
+          <input id="auth-password" type="password" required minlength="1" autocomplete="current-password">
+        </label>
+        <button class="primary" type="submit" id="auth-submit"></button>
+      </form>
+    </div>
+  </section>
+
+  <section id="view-servers" hidden>
+    <h1>Git servers</h1>
+    <p class="muted">Tokens are encrypted on the server and can never be viewed again, only replaced.</p>
+    <div id="server-list" class="stack"></div>
+
+    <div class="card">
+      <h2>Add a git server</h2>
+      <form id="add-form" autocomplete="off">
+        <div class="grid">
+          <label>Name
+            <input id="f-name" required maxlength="60" placeholder="Home Gitea">
+          </label>
+          <label>Type
+            <select id="f-type"></select>
+          </label>
+        </div>
+        <label>Server URL <span class="muted" id="f-url-hint"></span>
+          <input id="f-url" type="url" placeholder="https://git.example.com">
+        </label>
+        <label>Access token
+          <input id="f-token" type="password" required autocomplete="new-password" spellcheck="false">
+        </label>
+        <p id="f-token-help" class="muted"></p>
+        <label class="check">
+          <input id="f-insecure" type="checkbox"> Skip TLS certificate check (self-signed certificate)
+        </label>
+        <button class="primary" type="submit" id="add-submit">Test and save</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="view-repos" hidden>
+    <h1>Find repos</h1>
+    <p class="muted">Search across a configured server. Picking repos for a session comes next.</p>
+    <form id="repo-form" class="row">
+      <select id="r-server"></select>
+      <input id="r-query" type="search" placeholder="Search by name or description">
+      <button class="primary" type="submit">Search</button>
+    </form>
+    <div id="repo-list" class="stack"></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

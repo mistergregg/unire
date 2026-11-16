@@ -70,6 +70,9 @@ async function openTerminal(a) {
   const term = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 2000, theme: { background: "#0b0e13", foreground: "#e7eaee" } });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  // Make the sign-in links clickable, so a long link that wraps over several
+  // lines never has to be copied by hand.
+  if (typeof WebLinksAddon !== "undefined") term.loadAddon(new WebLinksAddon.WebLinksAddon());
   term.open($("term"));
   fit.fit();
 

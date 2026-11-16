@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,6 +60,67 @@ func TestGeminiCommands(t *testing.T) {
 	}
 	if _, ok := a.FollowUp("x", HandsOff, ref); ok {
 		t.Error("Gemini must not resume 'the latest' conversation")
+	}
+}
+
+func TestGeminiSignInSkipsTheMenuWhereDigitsAreShortcuts(t *testing.T) {
+	a, _ := Get("gemini")
+	argv := a.Info().LoginArgv
+	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
+		t.Fatalf("login argv = %v", argv)
+	}
+	for _, want := range []string{"oauth-personal", "selectedType", "exec gemini --skip-trust"} {
+		if !strings.Contains(argv[2], want) {
+			t.Errorf("login script missing %q", want)
+		}
+	}
+	help := a.Info().LoginHelp
+	if !strings.Contains(help, "Enter the authorization code") || !strings.Contains(help, "Wait for the prompt before pasting") {
+		t.Errorf("the help must say where to paste and when: %q", help)
+	}
+}
+
+// The settings step runs for real where sh and node exist (CI's Linux runners).
+func TestGeminiSettingsStepReplacesAnAPIKeyChoiceAndKeepsOtherSettings(t *testing.T) {
+	sh, err1 := exec.LookPath("sh")
+	_, err2 := exec.LookPath("node")
+	if err1 != nil || err2 != nil || runtime.GOOS == "windows" {
+		t.Skip("needs sh and node")
+	}
+	a, _ := Get("gemini")
+	script := strings.TrimSuffix(a.Info().LoginArgv[2], " && exec gemini --skip-trust")
+	home := t.TempDir()
+	if err := os.MkdirAll(home+"/.gemini", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := `{"security":{"auth":{"selectedType":"gemini-api-key"}},"ui":{"theme":"dark"}}`
+	if err := os.WriteFile(home+"/.gemini/settings.json", []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // twice: running it again changes nothing
+		cmd := exec.Command(sh, "-c", script)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("script failed: %v\n%s", err, out)
+		}
+	}
+	b, _ := os.ReadFile(home + "/.gemini/settings.json")
+	var got map[string]map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("settings.json is not valid JSON: %v\n%s", err, b)
+	}
+	if got["security"]["auth"].(map[string]any)["selectedType"] != "oauth-personal" || got["ui"]["theme"] != "dark" {
+		t.Errorf("settings = %s", b)
+	}
+	// A first-ever sign-in, with no settings file at all.
+	home2 := t.TempDir()
+	cmd := exec.Command(sh, "-c", script)
+	cmd.Env = append(os.Environ(), "HOME="+home2)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script failed on a fresh home: %v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(home2 + "/.gemini/settings.json"); err != nil || !strings.Contains(string(b), "oauth-personal") {
+		t.Errorf("fresh home: %s, %v", b, err)
 	}
 }
 

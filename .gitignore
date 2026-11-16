@@ -1,21 +1,23 @@
-# Secrets and local config
+# Secrets and local config. Folder patterns start with / so they only match at
+# the repo root and never hide source packages such as internal/vault.
 .env
 .env.*
 *.pem
 *.key
-secrets/
-vault/
+/secrets/
 
-# Data
-data/
+# Local data (the dashboard's database and key when run from the repo)
+/data/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # Dependencies and build output
 node_modules/
-dist/
-build/
-bin/
+/dist/
+/build/
+/bin/
 *.exe
 
 # Editor and OS

@@ -90,6 +90,7 @@ let selected = []; // { serverId, fullName, cloneUrl, base, defaultBranch }
 let serverList = [];
 let workspaceList = [];
 let lastResults = [];
+let forkFrom = ""; // the conversation the New chat form starts from, if any
 
 // prefill (optional): { task, repos, note } for continuing an earlier session.
 async function openNew(prefill) {
@@ -100,6 +101,7 @@ async function openNew(prefill) {
   show("new");
   refreshSidebar();
   $("n-note").hidden = true;
+  forkFrom = (prefill && prefill.forkFrom) || "";
   const [servers, agents, workspaces, net] = await Promise.all([
     api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);
   serverList = servers; workspaceList = workspaces; selected = []; lastResults = []; networkInfo = net;
@@ -116,6 +118,7 @@ async function openNew(prefill) {
   fillWorkspaceSelect();
   $("n-results").replaceChildren(); $("n-results").hidden = true;
   $("n-query").disabled = !servers.length;
+  $("n-parent").replaceChildren(el("option", { value: "" }, "None"), ...sideList.map((c) => el("option", { value: c.id }, c.task)));
   $("n-query").placeholder = servers.length ? "Add a repo: search your git servers" : "Add a git server first (Git servers tab)";
   if (prefill) {
     $("n-task").value = prefill.task;
@@ -226,6 +229,7 @@ $("new-form").addEventListener("submit", (e) => {
     const s = await api("POST", "/api/sessions", {
       task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
+      forkFrom, parent: $("n-parent").value,
     });
     await openSession(s.id);
   });

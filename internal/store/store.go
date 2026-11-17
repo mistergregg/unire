@@ -123,6 +123,11 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN memory_chars INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE sessions ADD COLUMN memory_ms INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE pull_requests ADD COLUMN state TEXT NOT NULL DEFAULT '';`,
+	// 9: links between conversations (on the first session of each): the one this was started from (a handoff, for
+	// information) and a parent it keeps getting updates from, with how many of the parent's finished turns it has seen
+	`ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN upstream_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN upstream_seen INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // DBFileName is the database file inside the data directory.

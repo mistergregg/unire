@@ -219,3 +219,10 @@ a.button.primary:hover { filter: brightness(1.08); }
 table.stats { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.stats th, table.stats td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 table.stats th { color: var(--muted); font-weight: 600; }
+
+/* links between chats */
+.pill.alert { border-color: var(--accent); color: var(--accent); }
+.chat-link { color: inherit; text-decoration: underline; text-decoration-color: var(--line); }
+.chat-link:hover { color: var(--accent); }
+#s-links:empty { display: none; }
+#s-links select { margin: 0; padding: 2px 8px; width: auto; }

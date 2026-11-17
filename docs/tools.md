@@ -18,7 +18,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 | Situation | Tools |
 |---|---|
-| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `branches`, `repo`, `memory` (with memory on) |
+| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `branches`, `repo`, `memory` (with memory on), `parent` (if it follows a parent chat) |
 | A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
 | A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
@@ -151,3 +151,7 @@ into it.
 ### `repo`
 
 `unire repo "<name or words>"` brings another of the owner's repos into the session. See "Which repos a chat uses" above.
+
+### `parent`
+
+In a chat that follows a parent chat, `unire parent` shows where the parent stands now. See [linking-chats.md](linking-chats.md).

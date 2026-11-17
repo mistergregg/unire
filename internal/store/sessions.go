@@ -89,31 +89,34 @@ func (s *Store) DeleteWorkspace(id string) (bool, error) {
 
 // Session is one coding session.
 type Session struct {
-	ID         string
-	Task       string
-	Agent      string
-	Mode       string
-	Prompt     string
-	Branch     string
-	Status     string
-	Error      string
-	Network    string // network mode: internet, agent-only or full
-	Memory     bool   // use and update project memory
-	ParentID   string // the session this one continues, or empty
-	Repos      []RepoRef
-	CreatedAt  time.Time
-	StartedAt  time.Time // zero until it starts
-	FinishedAt time.Time // zero until it ends
+	ID           string
+	Task         string
+	Agent        string
+	Mode         string
+	Prompt       string
+	Branch       string
+	Status       string
+	Error        string
+	Network      string // network mode: internet, agent-only or full
+	Memory       bool   // use and update project memory
+	ParentID     string // the session this one continues, or empty
+	ForkedFrom   string // the conversation (its first session) this one was started from, or empty
+	UpstreamID   string // the conversation (its first session) it keeps getting updates from, or empty
+	UpstreamSeen int    // how many finished turns of that conversation it has been told about
+	Repos        []RepoRef
+	CreatedAt    time.Time
+	StartedAt    time.Time // zero until it starts
+	FinishedAt   time.Time // zero until it ends
 }
 
-const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id`
+const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var repos string
 	var created, started, finished int64
 	var mem int
-	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID); err != nil {
+	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen); err != nil {
 		return x, err
 	}
 	x.Memory = mem != 0
@@ -143,8 +146,8 @@ func (s *Store) CreateSession(x Session) error {
 	if x.Memory {
 		mem = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID)
+	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)`,
+		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen)
 	return err
 }
 
@@ -334,4 +337,36 @@ func (s *Store) IdleConversations(before time.Time) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// SetUpstream links a conversation to a parent it keeps getting updates from (empty
+// unlinks). It is kept on the conversation's first session. The count of the parent's
+// turns it has seen starts again.
+func (s *Store) SetUpstream(rootID, upstreamID string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET upstream_id = ?, upstream_seen = 0 WHERE id = ?`, upstreamID, rootID)
+	return err
+}
+
+// SetUpstreamSeen records how many finished turns of its parent a conversation has been told about.
+func (s *Store) SetUpstreamSeen(rootID string, n int) error {
+	_, err := s.db.Exec(`UPDATE sessions SET upstream_seen = ? WHERE id = ?`, n, rootID)
+	return err
+}
+
+// ConversationsLinkedTo lists the first sessions of conversations whose parent is upstreamID.
+func (s *Store) ConversationsLinkedTo(upstreamID string) ([]Session, error) {
+	rows, err := s.db.Query(`SELECT `+sessionCols+` FROM sessions WHERE upstream_id = ? ORDER BY created_at, id`, upstreamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		x, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
 }

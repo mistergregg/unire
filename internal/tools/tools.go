@@ -185,3 +185,11 @@ var Repo = Tool{
 	Usage: `unire repo "<name or words>" - bring another of the owner's repos into /workspace (it is cloned there, on your branch, and pushed when you finish). ` +
 		`Use it when the work needs code that is not here. Unire says where it was cloned, or why not; it may ask the owner first, and it may give a short list to choose from (then run it again with the exact name, like "owner/name").`,
 }
+
+// Parent shows the latest state of the chat this one follows (its parent): what it was
+// asked and answered, where its work is, and its pull requests.
+var Parent = Tool{
+	Name: "parent",
+	Usage: `unire parent - show where the parent chat (the one this chat follows) stands now: what it has done and where its work is. ` +
+		`You are told about its updates when the owner writes to you; use this to check in the middle of your work.`,
+}

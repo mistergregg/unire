@@ -161,13 +161,26 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		mode = s.networkMode()
 	}
+	// A chat that follows a parent hears what the parent has done since it last looked.
+	preamble := replyPreamble(thread, s.lastAnswer)
+	rootSession := thread[0]
+	upSeen := rootSession.UpstreamSeen
+	if rootSession.UpstreamID != "" {
+		if text, n := s.upstreamUpdate(r.Context(), rootSession, false); text != "" {
+			preamble = text + "\n" + preamble
+			upSeen = n
+		}
+	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(thread, s.lastAnswer), Branch: sameAgentBranch(x, req.Agent),
+		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: preamble, Branch: sameAgentBranch(x, req.Agent),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if rootSession.UpstreamID != "" && upSeen != rootSession.UpstreamSeen {
+		_ = s.store.SetUpstreamSeen(rootSession.ID, upSeen)
 	}
 	writeJSON(w, http.StatusCreated, toView(started))
 }
@@ -191,18 +204,16 @@ func clip(s string, n int) string {
 	return s
 }
 
-// replyPreamble tells the agent that this continues earlier work: what was asked,
-// what came of it, and where the work is. It goes before what the owner wrote and
-// is not shown as part of it. A reply is a new conversation for the agent, and the
-// owner may have switched agents, so the whole conversation is boiled down rather
-// than only the last turn. thread is every turn so far, oldest first.
-func replyPreamble(thread []store.Session, answer func(id string) string) string {
+// conversationDigest boils a conversation down for an agent that was not in it: the
+// older turns clipped newest first within a budget (a line says when some are left
+// out), then the latest turn nearly in full. asked and answered introduce the latest
+// turn. thread is every turn so far, oldest first.
+func conversationDigest(thread []store.Session, answer func(id string) string, asked, answered string) string {
 	if len(thread) == 0 {
 		return ""
 	}
 	last := thread[len(thread)-1]
-	b := "This continues earlier work in the same conversation.\n"
-
+	var b string
 	// Older turns, newest first while the budget lasts, then shown oldest first.
 	var older []string
 	used, left := 0, 0
@@ -225,11 +236,26 @@ func replyPreamble(thread []store.Session, answer func(id string) string) string
 	if len(older) > 0 {
 		b += "What happened before the last turn:\n<earlier-turns>\n" + strings.Join(older, "\n") + "</earlier-turns>\n"
 	}
-	b += "In the last turn you were asked:\n<earlier-request>\n" + clip(last.Prompt, lastRequestChars) + "\n</earlier-request>\n"
+	b += asked + "\n<earlier-request>\n" + clip(last.Prompt, lastRequestChars) + "\n</earlier-request>\n"
 	if a := strings.TrimSpace(answer(last.ID)); a != "" {
-		b += "and the answer was:\n<earlier-answer>\n" + clip(a, lastAnswerChars) + "\n</earlier-answer>\n"
+		b += answered + "\n<earlier-answer>\n" + clip(a, lastAnswerChars) + "\n</earlier-answer>\n"
 	}
-	return b + "The work so far is on branch " + last.Branch + " in the repos that changed " +
+	return b
+}
+
+// replyPreamble tells the agent that this continues earlier work: what was asked,
+// what came of it, and where the work is. It goes before what the owner wrote and
+// is not shown as part of it. A reply is a new conversation for the agent, and the
+// owner may have switched agents, so the whole conversation is boiled down rather
+// than only the last turn. thread is every turn so far, oldest first.
+func replyPreamble(thread []store.Session, answer func(id string) string) string {
+	if len(thread) == 0 {
+		return ""
+	}
+	last := thread[len(thread)-1]
+	return "This continues earlier work in the same conversation.\n" +
+		conversationDigest(thread, answer, "In the last turn you were asked:", "and the answer was:") +
+		"The work so far is on branch " + last.Branch + " in the repos that changed " +
 		"(git log and git diff show it). The owner now writes:\n\n"
 }
 

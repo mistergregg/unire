@@ -81,10 +81,11 @@ func (s *Server) sessionConfig() sessions.Config {
 	allow, _ := egress.ParseEntries(s.allowList()) // saved entries were validated when saved
 	return sessions.Config{
 		Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs,
-		Egress: sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
-		Pulls:  s.pulls,
-		Repos:  s,
-		MaxRun: time.Duration(s.limits().MaxRunMinutes) * time.Minute,
+		Egress:   sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
+		Pulls:    s.pulls,
+		Upstream: s,
+		Repos:    s,
+		MaxRun:   time.Duration(s.limits().MaxRunMinutes) * time.Minute,
 	}
 }
 
@@ -412,12 +413,14 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Task    string          `json:"task"`
-		Agent   string          `json:"agent"`
-		Prompt  string          `json:"prompt"`
-		Network string          `json:"network"` // empty means the saved default
-		Memory  *bool           `json:"memory"`  // omitted means on
-		Repos   []store.RepoRef `json:"repos"`
+		Task     string          `json:"task"`
+		Agent    string          `json:"agent"`
+		Prompt   string          `json:"prompt"`
+		Network  string          `json:"network"` // empty means the saved default
+		Memory   *bool           `json:"memory"`  // omitted means on
+		Repos    []store.RepoRef `json:"repos"`
+		ForkFrom string          `json:"forkFrom"` // start from this conversation: it is told what happened there
+		Parent   string          `json:"parent"`   // follow this conversation: it is told what happens there
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -445,6 +448,46 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	if msg := s.requireSignedIn(r, ad); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
+	}
+	// Started from another conversation: it is told what happened there.
+	var preamble string
+	var forkedFrom string
+	if req.ForkFrom != "" {
+		src, ok, err := s.store.Session(req.ForkFrom)
+		if err != nil || !ok {
+			writeErr(w, http.StatusBadRequest, "the chat to start from no longer exists")
+			return
+		}
+		thread, err := s.threadOf(src.ID)
+		if err != nil || len(thread) == 0 {
+			serverError(w)
+			return
+		}
+		forkedFrom = thread[0].ID
+		repos0, where := s.forkState(r.Context(), thread)
+		if len(req.Repos) == 0 {
+			req.Repos = repos0
+		}
+		preamble = handoffPreamble(thread[0].Task, thread, s.lastAnswer, where)
+	}
+	// Following a parent chat: it is told what the parent has done so far.
+	var upstreamID string
+	var upstreamSeen int
+	if req.Parent != "" {
+		pt, err := s.threadOf(req.Parent)
+		if err != nil || len(pt) == 0 {
+			writeErr(w, http.StatusBadRequest, "the parent chat no longer exists")
+			return
+		}
+		upstreamID = pt[0].ID
+		var text string
+		text, upstreamSeen = s.upstreamUpdate(r.Context(), store.Session{UpstreamID: upstreamID}, true)
+		if text != "" {
+			if preamble == "" {
+				preamble = "The owner now writes:\n\n"
+			}
+			preamble = text + "\n" + preamble
+		}
 	}
 	var picked []repopick.Candidate
 	if len(req.Repos) == 0 {
@@ -486,10 +529,13 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked)})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if upstreamID != "" {
+		_ = s.store.SetUpstreamSeen(x.ID, upstreamSeen)
 	}
 	writeJSON(w, http.StatusCreated, toView(x))
 }

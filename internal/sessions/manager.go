@@ -42,6 +42,8 @@ type Config struct {
 	MaxRun time.Duration
 	// Repos finds a repo the agent asks for while it runs. Nil means the repo tool is not offered.
 	Repos RepoFinder
+	// Upstream tells a chat that follows a parent where the parent stands. Nil: no parent tool.
+	Upstream Upstream
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -68,6 +70,8 @@ type Request struct {
 	Branch                    string   // the branch to continue on (a reply, same agent); empty means a new, unused one
 	Preamble                  string   // told to the agent before the prompt; not shown as part of what the owner wrote
 	Notes                     []string // lines for the activity log (for example why repos were picked)
+	ForkedFrom                string   // the conversation this one was started from (information only)
+	UpstreamID                string   // the parent conversation it keeps getting updates from
 }
 
 // Manager runs sessions.
@@ -84,6 +88,7 @@ type Manager struct {
 	saving  map[string]chan struct{}    // sessions whose memory is still being saved; closed when done
 	live    map[string]chan agent.Steer // running sessions whose agent takes messages
 	closing bool
+	abandon time.Duration // how long a stopped run may take to come back (see defaultAbandonAfter)
 }
 
 // New returns a Manager. Sessions left running by a previous process are
@@ -92,7 +97,7 @@ func New(st *store.Store, config func() Config) (*Manager, error) {
 	if _, err := st.InterruptUnfinished(); err != nil {
 		return nil, err
 	}
-	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}, live: map[string]chan agent.Steer{}}, nil
+	return &Manager{st: st, config: config, abandon: defaultAbandonAfter, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}, live: map[string]chan agent.Steer{}}, nil
 }
 
 func newID() string {
@@ -158,7 +163,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 		}
 	}
 	rec := store.Session{ID: spec.ID, Task: req.Task, Agent: req.Agent, Mode: req.Mode, Prompt: req.Prompt, // what the owner wrote, without the preamble
-		Branch: spec.Branch(), Network: string(req.Network), Memory: req.Memory, Repos: refs, ParentID: req.Parent}
+		Branch: spec.Branch(), Network: string(req.Network), Memory: req.Memory, Repos: refs, ParentID: req.Parent, ForkedFrom: req.ForkedFrom, UpstreamID: req.UpstreamID}
 
 	m.mu.Lock()
 	if m.closing {
@@ -308,10 +313,20 @@ func (m *Manager) run(ctx context.Context, j job) {
 			return m.addRepoFor(ctx, &j, query)
 		}
 	}
-	if pulls != nil || j.memory {
+	following := false
+	if cfg.Upstream != nil {
+		if rs, ok, _ := m.st.Session(j.root); ok && rs.UpstreamID != "" {
+			following = true
+			wo.Tools = append(wo.Tools, tools.Parent)
+		}
+	}
+	if pulls != nil || j.memory || following {
 		wo.Call = func(ctx context.Context, tool, args string) string {
 			if tool == tools.Memory.Name {
 				return m.lookUpMemory(j, args)
+			}
+			if tool == tools.Parent.Name && following {
+				return cfg.Upstream.Latest(ctx, j.root)
 			}
 			if pulls != nil {
 				return pulls.Call(ctx, j.root, tool, args)
@@ -356,7 +371,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 		select {
 		case o := <-done:
 			res, err = o.res, o.err
-		case <-time.After(abandonAfter):
+		case <-time.After(m.abandon):
 			out.Flush()
 			info.Flush()
 			_ = m.st.AddEvent(spec.ID, "log", "the run did not stop in time: giving up on it (its sandbox is removed when it ends)")
@@ -789,7 +804,7 @@ func (e errRunLimit) Error() string {
 // abandonAfter is how long a stopped run may take to come back before the manager
 // gives up on it, frees its slot and marks it stopped. The run is ended in the
 // background; Stop must never leave a chat looking busy.
-var abandonAfter = 90 * time.Second
+const defaultAbandonAfter = 90 * time.Second
 
 // Cleanup removes what old conversations no longer need: their activity lines, and
 // the workspace volume of conversations idle for a while (a reply clones again
@@ -814,4 +829,9 @@ func (m *Manager) Cleanup(ctx context.Context, keepLogs, keepWorkspaces time.Dur
 		}
 	}
 	return logs, workspaces
+}
+
+// Upstream answers the parent tool of a conversation that follows another.
+type Upstream interface {
+	Latest(ctx context.Context, childRoot string) string
 }

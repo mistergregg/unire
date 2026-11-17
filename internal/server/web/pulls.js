@@ -48,6 +48,7 @@ async function refreshPulls() {
 async function watchPulls(token) {
   while (pollToken === token && currentView === "session") {
     await refreshPulls();
+    await refreshLinks();
     await new Promise((res) => setTimeout(res, 30000));
   }
 }
@@ -147,6 +148,7 @@ function proposalCard(p) {
       throw e;
     }
     await refreshPulls();
+    await refreshLinks();
   }));
   later.addEventListener("click", () => { dismiss(proposalKey(p)); renderPulls(); });
   return el("div", { class: "pr-card propose" },
@@ -226,3 +228,72 @@ function anotherButton(p, details) {
   });
   return b;
 }
+
+// ---- links to other chats ----
+// A chat can have been started from another (shown as a link), can follow a parent chat
+// (and say how many updates it has not been told), and can be the parent of others.
+let linksData = null;
+
+async function refreshLinks() {
+  if (currentView !== "session" || typeof thread === "undefined" || !thread.length) return;
+  const token = pollToken;
+  const root = selectedRoot;
+  try {
+    const d = await api("GET", "/api/sessions/" + encodeURIComponent(thread[thread.length - 1].s.id) + "/links");
+    if (pollToken !== token || root !== selectedRoot) return;
+    linksData = d;
+    renderLinks();
+  } catch (_) { /* the chat works without it */ }
+}
+
+const chatLink = (v) => {
+  const a = el("a", { href: "#" + v.id, class: "chat-link", title: v.status ? v.status : "" }, v.title);
+  a.addEventListener("click", (e) => { e.preventDefault(); guarded(null, () => openSession(v.id)); });
+  return a;
+};
+
+function renderLinks() {
+  const box = $("s-links");
+  if (!box || !linksData) return;
+  const parts = [];
+  if (linksData.forkedFrom) parts.push(el("span", { class: "pill" }, "started from ", chatLink(linksData.forkedFrom)));
+  if (linksData.parent) {
+    const p = linksData.parent;
+    const unlink = el("button", { type: "button", class: "ghost tiny", title: "Stop following this chat" }, "Unlink");
+    unlink.addEventListener("click", () => guarded(unlink, async () => { await setParentChat(""); }));
+    parts.push(el("span", { class: "pill" + (p.updates ? " alert" : "") }, "parent ", chatLink(p),
+      p.updates ? el("strong", {}, " · " + p.updates + " new") : ""), unlink);
+  } else {
+    const set = el("button", { type: "button", class: "ghost tiny", title: "Follow another chat: this one hears what it does" }, "Set parent…");
+    set.addEventListener("click", () => {
+      const others = sideList.filter((s) => s.id !== selectedRoot && !(linksData.children || []).some((c) => c.id === s.id));
+      const sel = el("select", { "aria-label": "Parent chat" }, el("option", { value: "" }, "Choose a chat…"),
+        ...others.map((s) => el("option", { value: s.id }, s.task)));
+      sel.addEventListener("change", () => { if (sel.value) guarded(sel, () => setParentChat(sel.value)); });
+      set.replaceWith(sel);
+      sel.focus();
+    });
+    parts.push(set);
+  }
+  if ((linksData.children || []).length) {
+    parts.push(el("span", { class: "pill" }, "followed by ", ...linksData.children.flatMap((c, i) => (i ? [", ", chatLink(c)] : [chatLink(c)]))));
+  }
+  box.replaceChildren(...parts);
+}
+
+async function setParentChat(parent) {
+  const tail = thread[thread.length - 1];
+  linksData = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/parent", { parent });
+  renderLinks();
+}
+
+// "New chat from this": the New chat form with this conversation's repos on the branches it
+// pushed, and a note; the new chat is told what happened here.
+$("s-fork").addEventListener("click", () => guarded($("s-fork"), async () => {
+  const tail = thread[thread.length - 1];
+  const f = await api("GET", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/fork");
+  await openNew({
+    task: "", repos: f.repos.map((r) => ({ ...r })), forkFrom: f.id,
+    note: "Starting from “" + f.title + "”: the new chat is told what happened there and starts from the branches it pushed.",
+  });
+}));

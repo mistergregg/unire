@@ -967,12 +967,10 @@ func TestARunThatTakesTooLongIsStoppedAndSaysWhy(t *testing.T) {
 }
 
 func TestStopFreesTheSlotEvenWhenTheRunWillNotEnd(t *testing.T) {
-	old := abandonAfter
-	abandonAfter = 150 * time.Millisecond
-	defer func() { abandonAfter = old }()
 	sb := &fakeSandbox{stuck: make(chan struct{})}
 	defer close(sb.stuck) // let the abandoned run end when the test is done
 	m, st := setup(t, sb)
+	m.abandon = 150 * time.Millisecond
 	x, err := m.Start(req("tok"))
 	if err != nil {
 		t.Fatal(err)

@@ -316,6 +316,7 @@ async function finishTurn(t) {
   t.memoryNote = el("span", {});
   t.foot.append(t.memoryNote);
   refreshPulls(); // the turn may have pushed a branch: offer a pull request
+  refreshLinks();
 }
 
 // Saving to memory goes on after the turn is done. Show that, then the summary.
@@ -377,6 +378,8 @@ async function openSession(id) {
   show("session");
   $("chat").replaceChildren();
   resetPulls();
+  linksData = null;
+  $("s-links").replaceChildren();
   $("reply-text").value = "";
   autoGrow();
   const token = (pollToken = {});

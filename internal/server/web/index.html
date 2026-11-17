@@ -97,6 +97,10 @@
             <input id="n-memory" type="checkbox" checked> Use project memory
           </label>
           <p class="muted">The agent starts with what earlier sessions learned about these repos and writes down what it learned when it finishes.</p>
+          <label class="spaced">Parent chat (optional)
+            <select id="n-parent"></select>
+          </label>
+          <p class="muted">A parent keeps this chat informed: it hears what the parent chat does, at each message and when it asks (<code>unire parent</code>).</p>
           <div class="row">
             <input id="n-ws-name" maxlength="60" placeholder="Save these repos as a workspace">
             <button type="button" id="n-ws-save">Save</button>
@@ -111,8 +115,10 @@
       <button class="ghost back" id="s-back">&larr; Chats</button>
       <h1 id="s-title"></h1>
       <span id="s-status" class="badge"></span>
+      <button id="s-fork" type="button" class="ghost tiny" title="Start a new chat from where this one is now">New chat from this</button>
       <button id="s-delete" type="button" class="ghost tiny" title="Delete this conversation" hidden>Delete</button>
       <div id="s-meta" class="chat-meta"></div>
+      <div id="s-links" class="chat-meta"></div>
     </header>
     <div id="chat" class="chat" aria-live="polite"></div>
     <div id="pulls" class="pulls"></div>

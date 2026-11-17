@@ -75,3 +75,21 @@ func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
 	_ = m.st.AddEvent(sessionID, "steerstate", id+"\n"+agent.MsgQueued)
 	return id, nil
 }
+
+// Promote makes the agent take a message that is still waiting, right away: it
+// is interrupted and given everything that waits, at once.
+func (m *Manager) Promote(sessionID, messageID string) error {
+	m.mu.Lock()
+	ch, ok := m.live[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return errors.New("the agent is not running")
+	}
+	select {
+	case ch <- agent.Steer{ID: messageID, Promote: true, Now: true}:
+	default:
+		return errors.New("too many messages are waiting for the agent")
+	}
+	_ = m.st.AddEvent(sessionID, "steerstate", messageID+"\npromoting")
+	return nil
+}

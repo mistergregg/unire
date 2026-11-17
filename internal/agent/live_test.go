@@ -95,17 +95,17 @@ func TestClaudeSteeringUsesPriorityAndTracksMessages(t *testing.T) {
 	// Its lifecycle events become message states.
 	id1, id2 := msgs[1]["uuid"].(string), msgs[2]["uuid"].(string)
 	ev := d.Line(`{"type":"command_lifecycle","command_uuid":"` + id1 + `","state":"queued"}`)
-	if ev.Msg == nil || ev.Msg.ID != "m1" || ev.Msg.State != MsgQueued {
-		t.Errorf("queued = %+v", ev.Msg)
+	if len(ev.Msgs) != 1 || ev.Msgs[0].ID != "m1" || ev.Msgs[0].State != MsgQueued {
+		t.Errorf("queued = %+v", ev.Msgs)
 	}
 	ev = d.Line(`{"type":"command_lifecycle","command_uuid":"` + id1 + `","state":"started"}`)
-	if ev.Msg == nil || ev.Msg.State != MsgDelivered {
-		t.Errorf("started = %+v", ev.Msg)
+	if len(ev.Msgs) != 1 || ev.Msgs[0].State != MsgDelivered {
+		t.Errorf("started = %+v", ev.Msgs)
 	}
-	if ev := d.Line(`{"type":"command_lifecycle","command_uuid":"` + id2 + `","state":"cancelled"}`); ev.Msg == nil || ev.Msg.State != MsgCancelled {
-		t.Errorf("cancelled = %+v", ev.Msg)
+	if ev := d.Line(`{"type":"command_lifecycle","command_uuid":"` + id2 + `","state":"cancelled"}`); len(ev.Msgs) != 1 || ev.Msgs[0].State != MsgCancelled {
+		t.Errorf("cancelled = %+v", ev.Msgs)
 	}
-	if ev := d.Line(`{"type":"command_lifecycle","command_uuid":"someone-else","state":"started"}`); ev.Msg != nil {
+	if ev := d.Line(`{"type":"command_lifecycle","command_uuid":"someone-else","state":"started"}`); len(ev.Msgs) != 0 {
 		t.Error("a message that is not ours is ignored")
 	}
 
@@ -168,7 +168,7 @@ func TestAntigravityQueuesAMessageUntilTheTurnEnds(t *testing.T) {
 	}
 	// The turn ends: the waiting message goes in and is reported as taken.
 	ev := d.Line(`{"event":"result","result":{"conversation_id":"conv-9","status":"SUCCESS","response":"first answer"}}`)
-	if ev.Answer != "first answer" || ev.Msg == nil || ev.Msg.ID != "m1" || ev.Msg.State != MsgDelivered {
+	if ev.Answer != "first answer" || len(ev.Msgs) != 1 || ev.Msgs[0].ID != "m1" || ev.Msgs[0].State != MsgDelivered {
 		t.Errorf("result = %+v", ev)
 	}
 	if m := sent(&in); len(m) != 2 || m[1]["message"].(map[string]any)["content"] != "and this" {
@@ -186,22 +186,58 @@ func TestAntigravityQueuesAMessageUntilTheTurnEnds(t *testing.T) {
 	}
 }
 
-func TestAntigravitySendNowRestartsFromTheSavedConversation(t *testing.T) {
+func TestAntigravitySendNowHoldsEveryWaitingMessageForARestart(t *testing.T) {
 	_, d := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff})
 	var in bytes.Buffer
 	d.Begin(&in, "task")
 	d.Line(`{"event":"init","conversation_id":"conv-1"}`)
-	err := d.Send(Steer{ID: "now1", Text: "change course", Now: true})
-	if !errors.Is(err, ErrRestart) {
-		t.Fatalf("Send now = %v, want ErrRestart", err)
+	if err := d.Send(Steer{ID: "m1", Text: "first thought"}); err != nil {
+		t.Fatal(err)
 	}
-	if s, ok := d.Pending(); !ok || s.Text != "change course" || s.ID != "now1" {
-		t.Errorf("pending = %+v %v", s, ok)
+	if err := d.Send(Steer{ID: "m2", Text: "change course", Now: true}); !errors.Is(err, ErrInterrupt) {
+		t.Fatalf("Send now = %v, want ErrInterrupt", err)
 	}
-	// The new process continues the conversation.
-	argv, _ := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff, Resume: d.Resume(), Prompt: "change course"})
+	if len(sent(&in)) != 1 {
+		t.Error("nothing is written to a turn that is being interrupted")
+	}
+	// The interrupted turn ends: its result is not a cue to write the messages.
+	ev := d.Line(`{"event":"result","result":{"conversation_id":"conv-1","status":"INTERRUPTED","error":"interrupted","response":""}}`)
+	if len(ev.Msgs) != 0 || ev.Progress != "interrupted" {
+		t.Errorf("interrupted result = %+v (an interruption on purpose is a step, not an error)", ev)
+	}
+	if len(sent(&in)) != 1 {
+		t.Error("the messages wait for the process to be started again")
+	}
+	if d.Done() {
+		t.Error("messages are waiting: not done")
+	}
+	pending := d.Pending()
+	if len(pending) != 2 || JoinSteers(pending) != "first thought\n\nchange course" {
+		t.Errorf("pending = %+v, want both messages, in order, to be sent together", pending)
+	}
+	if d.Resume() != "conv-1" {
+		t.Errorf("conversation = %q", d.Resume())
+	}
+	// The new process carries on the conversation.
+	argv, _ := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff, Resume: d.Resume()})
 	if !strings.Contains(strings.Join(argv, " "), "--conversation conv-1") {
 		t.Errorf("restart argv = %v", argv)
+	}
+}
+
+func TestAntigravityPromoteMakesAWaitingMessageUrgent(t *testing.T) {
+	_, d := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff})
+	var in bytes.Buffer
+	d.Begin(&in, "task")
+	d.Send(Steer{ID: "m1", Text: "wait for me"})
+	if err := d.Promote("nope"); err != nil {
+		t.Errorf("an unknown message is ignored: %v", err)
+	}
+	if err := d.Promote("m1"); !errors.Is(err, ErrInterrupt) {
+		t.Fatalf("Promote = %v, want ErrInterrupt", err)
+	}
+	if p := d.Pending(); len(p) != 1 || p[0].ID != "m1" {
+		t.Errorf("pending = %+v", p)
 	}
 }
 
@@ -284,8 +320,8 @@ func TestCodexSteersTheRunningTurn(t *testing.T) {
 	}
 	id := int(m[0]["id"].(float64))
 	ev := s.feed(`{"id":` + itoaForTest(id) + `,"result":{"turnId":"turn-1"}}`)
-	if ev.Msg == nil || ev.Msg.ID != "m1" || ev.Msg.State != MsgDelivered {
-		t.Errorf("steer accepted = %+v", ev.Msg)
+	if len(ev.Msgs) != 1 || ev.Msgs[0].ID != "m1" || ev.Msgs[0].State != MsgDelivered {
+		t.Errorf("steer accepted = %+v", ev.Msgs)
 	}
 	// Progress and the answer.
 	ev = s.feed(`{"method":"item/started","params":{"item":{"type":"commandExecution","command":"go test ./..."}}}`)
@@ -319,7 +355,7 @@ func TestCodexSendNowInterruptsThenCarriesOn(t *testing.T) {
 	}
 	// The turn ends as interrupted: the message starts the next turn.
 	ev := s.feed(`{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"interrupted"}}}`)
-	if ev.Answer != "" || ev.Msg == nil || ev.Msg.ID != "now1" || ev.Msg.State != MsgDelivered {
+	if ev.Answer != "" || len(ev.Msgs) != 1 || ev.Msgs[0].ID != "now1" || ev.Msgs[0].State != MsgDelivered {
 		t.Errorf("interrupted = %+v", ev)
 	}
 	m = s.next()
@@ -366,3 +402,36 @@ func TestCodexFailuresEndTheRunInsteadOfHanging(t *testing.T) {
 }
 
 func itoaForTest(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+func TestClaudePromoteInterruptsTheRunningTurn(t *testing.T) {
+	_, d := liveOf(t, "claude", LiveOptions{Mode: HandsOff})
+	var in bytes.Buffer
+	d.Begin(&in, "task")
+	d.Send(Steer{ID: "m1", Text: "later"})
+	if err := d.Promote("m1"); err != nil {
+		t.Fatal(err)
+	}
+	m := sent(&in)
+	last := m[len(m)-1]
+	if last["type"] != "control_request" || last["request"].(map[string]any)["subtype"] != "interrupt" {
+		t.Errorf("an interrupt is asked for, and Claude then reads the waiting messages: %v", last)
+	}
+}
+
+func TestCodexSendsEveryWaitingMessageTogetherAfterAnInterrupt(t *testing.T) {
+	s := startCodex(t)
+	s.d.Send(Steer{ID: "a", Text: "first", Now: true})
+	s.d.Send(Steer{ID: "b", Text: "second", Now: true})
+	s.next()
+	ev := s.feed(`{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"interrupted"}}}`)
+	if len(ev.Msgs) != 2 || ev.Msgs[0].ID != "a" || ev.Msgs[1].ID != "b" {
+		t.Errorf("both messages are delivered together: %+v", ev.Msgs)
+	}
+	m := s.next()
+	if len(m) != 1 || m[0]["method"] != "turn/start" {
+		t.Fatalf("one new turn: %v", m)
+	}
+	if text := m[0]["params"].(map[string]any)["input"].([]any)[0].(map[string]any)["text"]; text != "first\n\nsecond" {
+		t.Errorf("the turn carries both: %q", text)
+	}
+}

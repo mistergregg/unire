@@ -95,7 +95,7 @@ func TestAntigravityStreamCommandAndEvents(t *testing.T) {
 	if part.Fragment != "The si" || part.Step != 7 {
 		t.Errorf("fragment = %+v", part)
 	}
-	if st := s.ParseEvent(`{"event":"result","result":{"status":"INTERRUPTED","response":""}}`); st.Progress != "finished with status INTERRUPTED" {
+	if st := s.ParseEvent(`{"event":"result","result":{"status":"INTERRUPTED","response":""}}`); st.Progress != "interrupted" {
 		t.Errorf("interrupted result = %+v", st)
 	}
 	if ev := s.ParseEvent("Authentication required."); ev.Known {

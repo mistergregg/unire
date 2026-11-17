@@ -87,8 +87,10 @@ func (w *streamWriter) line(l string) {
 		fmt.Fprintln(w.log, ev.Progress)
 		w.progress = ev.Progress
 	}
-	if ev.Msg != nil && w.onMessage != nil {
-		w.onMessage(ev.Msg.ID, ev.Msg.State)
+	if w.onMessage != nil {
+		for _, m := range ev.Msgs {
+			w.onMessage(m.ID, m.State)
+		}
 	}
 	if ev.Text != "" {
 		w.last = ev.Text

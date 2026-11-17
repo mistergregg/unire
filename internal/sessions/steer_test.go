@@ -90,3 +90,25 @@ func TestMessagesTheAgentNeverReadAreMarkedFailed(t *testing.T) {
 		t.Errorf("messages that were never read should be marked failed:\n%s", log)
 	}
 }
+
+func TestAWaitingMessageCanBePromoted(t *testing.T) {
+	sb := &fakeSandbox{agentOutput: "x", block: make(chan struct{})}
+	m, st := setup(t, sb)
+	x, _ := m.Start(req(""))
+	waitRunning(t, st, x.ID)
+	id, err := m.Steer(x.ID, "do this sooner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Promote(x.ID, id); err != nil {
+		t.Fatal(err)
+	}
+	if log := logText(st, x.ID); !strings.Contains(log, "steerstate: "+id+"\npromoting") {
+		t.Errorf("the page is told it is being promoted:\n%s", log)
+	}
+	close(sb.block)
+	m.Wait()
+	if err := m.Promote(x.ID, id); err == nil {
+		t.Error("a finished session has no agent to promote a message for")
+	}
+}

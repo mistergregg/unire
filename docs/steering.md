@@ -9,7 +9,9 @@ three actions:
 - **Stop**: end the run.
 
 Your messages appear in the conversation with what became of them: waiting for
-the agent, the agent has it, or not delivered.
+the agent, the agent has it, or not delivered. A message that is still waiting has
+its own **Send now** button: the agent is stopped and given it, together with
+anything else that is waiting, all at once as one message.
 
 ## How each agent does it
 
@@ -21,7 +23,7 @@ its own protocol, so each has a small driver.
 |---|---|---|
 | **Claude Code** | `claude -p --input-format stream-json`: the message goes in with the default priority and is read as soon as the tool calls it is running finish. | The message goes in with `priority: "now"` and a human origin: work that can run in the background moves there and Claude reads it in the same turn; otherwise Claude interrupts the turn. Its lifecycle events (`queued`, `started`) say when it took each message. |
 | **Codex** | `codex app-server` (JSON-RPC over stdin): `turn/steer` adds the message to the running turn. | `turn/interrupt`, then a new turn starts from the message. |
-| **Antigravity** | `agy --input-format stream-json`: its documentation says to wait for a turn's result before the next message, so the message waits and goes in after the current turn. | It documents no way to interrupt a turn, so the process is stopped (SIGINT) and started again from the saved conversation (`--conversation <id>`) with your message. |
+| **Antigravity** | `agy --input-format stream-json`: its documentation says to wait for a turn's result before the next message, so the message waits and goes in after the current turn (everything waiting goes in together). | It documents no way to interrupt a turn, and nothing about what the process does after a SIGINT, so it is not relied on: the turn is interrupted, the process is ended (it gets a few seconds to leave), and it is started again from the saved conversation (`--conversation <id>`) with all the waiting messages as the new prompt. |
 
 Sources: [Claude streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode),
 [Codex app server](https://developers.openai.com/codex/app-server) (the exact

@@ -9,11 +9,14 @@ import (
 // Steering Antigravity. `agy --input-format stream-json` reads one message per
 // line ({"event":"user","message":{"content":"..."}}) and runs a turn for each,
 // in one conversation. Its documentation says to wait for a turn's result
-// before writing the next message and describes no way to interrupt a turn
-// through that channel, so:
+// before writing the next message, and it describes no control message to
+// interrupt a turn, so:
 //   - Send: the message waits and is written after the current turn's result;
-//   - Send now: the process is stopped (SIGINT) and started again from the saved
-//     conversation (--conversation <id>) with the message as its prompt.
+//   - Send now: the process gets SIGINT, which ends the turn ("INTERRUPTED").
+//     Nothing documents what the process does after that, so it is not relied on:
+//     the waiting messages are held (see Pending), the process is ended, and
+//     Unire starts it again from the saved conversation (--conversation <id>)
+//     with all of them at once as the new prompt.
 // See antigravity.google/docs/cli/headless.
 
 // StartLive implements Live.
@@ -36,12 +39,12 @@ type antigravityLive struct {
 	writeMu sync.Mutex
 	in      io.Writer
 
-	mu         sync.Mutex
-	turnActive bool    // a message was written and its result has not come
-	sawResult  bool    // at least one turn has ended
-	queue      []Steer // messages waiting for the current turn to end
-	conv       string  // the agent's conversation id
-	restart    *Steer  // the message a restart was asked for
+	mu          sync.Mutex
+	turnActive  bool    // a message was written and its result has not come
+	sawResult   bool    // at least one turn has ended
+	queue       []Steer // messages the agent has not been given yet
+	interrupted bool    // SIGINT was asked for: the turn's result is not a cue to write the queue
+	conv        string  // the agent's conversation id
 }
 
 func (d *antigravityLive) write(text string) error {
@@ -65,57 +68,86 @@ func (d *antigravityLive) Begin(in io.Writer, prompt string) error {
 
 func (d *antigravityLive) Send(s Steer) error {
 	d.mu.Lock()
-	if s.Now {
-		d.restart = &s
-		d.mu.Unlock()
-		return ErrRestart
-	}
 	if d.turnActive {
 		d.queue = append(d.queue, s)
+		if s.Now {
+			d.interrupted = true
+		}
 		d.mu.Unlock()
+		if s.Now {
+			return ErrInterrupt // the process is signalled, ended, and started again with the queue
+		}
 		return nil
 	}
-	d.turnActive = true // idle: it can go straight in
+	// Idle: it can go straight in, together with anything that is waiting.
+	batch := append(d.queue, s)
+	d.queue, d.turnActive = nil, true
 	d.mu.Unlock()
-	return d.write(s.Text)
+	return d.write(JoinSteers(batch))
+}
+
+func (d *antigravityLive) Promote(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.turnActive {
+		return nil // nothing is running: the waiting messages are written as the turn ends
+	}
+	for _, s := range d.queue {
+		if s.ID == id {
+			d.interrupted = true
+			return ErrInterrupt
+		}
+	}
+	return nil
 }
 
 func (d *antigravityLive) Line(line string) Event {
 	ev := d.a.ParseEvent(line)
-	if m, ok := parseObject(line); ok {
-		// The conversation id appears at the top level of init, and inside the others.
-		id, _ := m["conversation_id"].(string)
-		if id == "" {
-			for _, k := range []string{"step_update", "result"} {
-				if inner, ok := m[k].(map[string]any); ok {
-					if s, _ := inner["conversation_id"].(string); s != "" {
-						id = s
-					}
+	m, ok := parseObject(line)
+	if !ok {
+		return ev
+	}
+	// The conversation id appears at the top level of init, and inside the others.
+	id, _ := m["conversation_id"].(string)
+	if id == "" {
+		for _, k := range []string{"step_update", "result"} {
+			if inner, ok := m[k].(map[string]any); ok {
+				if s, _ := inner["conversation_id"].(string); s != "" {
+					id = s
 				}
 			}
 		}
-		if id != "" {
-			d.mu.Lock()
-			d.conv = id
+	}
+	if id != "" {
+		d.mu.Lock()
+		d.conv = id
+		d.mu.Unlock()
+	}
+	if m["event"] == "result" {
+		d.mu.Lock()
+		d.turnActive, d.sawResult = false, true
+		if d.interrupted {
+			// The turn was cut short on purpose: the messages stay held until the
+			// process has been ended and started again.
+			d.interrupted = false
 			d.mu.Unlock()
+			return ev
 		}
-		if m["event"] == "result" {
-			d.mu.Lock()
-			d.turnActive, d.sawResult = false, true
-			var next *Steer
-			if len(d.queue) > 0 {
-				s := d.queue[0]
-				d.queue = d.queue[1:]
-				next = &s
-				d.turnActive = true
+		batch := d.queue
+		if len(batch) > 0 {
+			d.queue, d.turnActive = nil, true
+		}
+		d.mu.Unlock()
+		if len(batch) > 0 {
+			state := MsgDelivered
+			if err := d.write(JoinSteers(batch)); err != nil {
+				state = MsgFailed
+				d.mu.Lock()
+				d.queue, d.turnActive = append(batch, d.queue...), false
+				d.mu.Unlock()
 			}
-			d.mu.Unlock()
-			if next != nil {
-				if err := d.write(next.Text); err != nil {
-					ev.Msg = &MsgState{ID: next.ID, State: MsgFailed}
-				} else {
-					ev.Msg = &MsgState{ID: next.ID, State: MsgDelivered}
-				}
+			for _, s := range batch {
+				ev.Msgs = append(ev.Msgs, MsgState{ID: s.ID, State: state})
 			}
 		}
 	}
@@ -134,11 +166,8 @@ func (d *antigravityLive) Resume() string {
 	return d.conv
 }
 
-func (d *antigravityLive) Pending() (Steer, bool) {
+func (d *antigravityLive) Pending() []Steer {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.restart == nil {
-		return Steer{}, false
-	}
-	return *d.restart, true
+	return append([]Steer(nil), d.queue...)
 }

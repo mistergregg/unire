@@ -18,61 +18,87 @@ import (
 // be signalled (docker exec's own process does not pass signals on).
 const agentPidFile = "/tmp/unire-agent.pid"
 
-// How long an agent gets to leave after its input is closed, or after it is
-// asked to stop, before it is stopped harder.
-const (
-	exitGrace = 10 * time.Second
-	stopGrace = 4 * time.Second
+// Timings. After its input is closed an agent gets exitGrace to leave. After an
+// interrupt it gets interruptGrace to end its turn and leave, and then it is
+// stopped; either way it is started again with the messages that waited.
+var (
+	exitGrace      = 10 * time.Second
+	interruptGrace = 5 * time.Second
 )
+
+// A process that dies with messages the agent never got is started again, from
+// its saved conversation, at most this many times in a run.
+const maxRestarts = 3
 
 // runLive runs a steerable agent. The agent is a process that stays open and
 // reads messages on its standard input: the first is the task, and while it
 // works the owner can add more (opt.Control). When the agent has finished
 // everything it was given, its input is closed and it leaves.
 //
-// An agent that can only be redirected by starting it again (see
-// agent.ErrRestart) is stopped and started from its saved conversation, with the
-// owner's message as the new prompt.
+// If the process ends while messages are still waiting for it (it was stopped,
+// or it died), it is started again from its saved conversation with those
+// messages, all at once, as the new prompt.
 func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec, prompt, ref string, tailOut io.Writer) error {
 	answers := io.MultiWriter(w.opt.Out, tailOut)
-	var resume, restartID string
-	for {
+	var resume string
+	var deliver []string // ids of messages the new prompt carries
+	for restarts := 0; ; restarts++ {
 		argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Ref: ref, Resume: resume, Dir: workspace})
 		if err != nil {
 			return err
 		}
-		err = w.runLiveProcess(ctx, argv, drv, prompt, answers, restartID)
-		if !errors.Is(err, agent.ErrRestart) {
+		pending, err := w.runLiveProcess(ctx, argv, drv, prompt, answers, deliver)
+		if len(pending) == 0 || ctx.Err() != nil || restarts >= maxRestarts {
+			if w.opt.OnMessage != nil {
+				for _, s := range pending {
+					w.opt.OnMessage(s.ID, agent.MsgFailed)
+				}
+			}
 			return err
 		}
-		s, _ := drv.Pending()
-		resume, prompt, restartID = drv.Resume(), s.Text, s.ID
+		resume, prompt = drv.Resume(), agent.JoinSteers(pending)
+		deliver = nil
+		for _, s := range pending {
+			deliver = append(deliver, s.ID)
+		}
 		if resume == "" {
-			// It never reported a conversation, so there is nothing to carry on from.
-			fmt.Fprintln(w.opt.Err, "the agent had not started a conversation yet: starting it again with your message")
+			fmt.Fprintln(w.opt.Err, "the agent stopped before it had a conversation: starting it again with your message")
 		} else {
-			fmt.Fprintln(w.opt.Err, "stopped the agent to follow your message")
+			fmt.Fprintln(w.opt.Err, "the agent stopped: carrying on its conversation with your message")
 		}
 	}
 }
 
-func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliverID string) error {
+// runLiveProcess runs one process until it ends. It returns the messages the
+// agent was never given, so the caller can start it again with them.
+func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string) ([]agent.Steer, error) {
 	pr, pw := io.Pipe()
 	var closeOnce sync.Once
 	closeInput := func() { closeOnce.Do(func() { _ = pw.Close() }) }
 
-	var exited = make(chan struct{})
-	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage}
-	var timer *time.Timer
+	exited := make(chan struct{})
 	var timerMu sync.Mutex
+	var timers []*time.Timer
+	after := func(d time.Duration, f func()) {
+		timerMu.Lock()
+		timers = append(timers, time.AfterFunc(d, f))
+		timerMu.Unlock()
+	}
+	isExited := func() bool {
+		select {
+		case <-exited:
+			return true
+		default:
+			return false
+		}
+	}
+
+	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage}
+	var leaving sync.Once
 	sw.afterLine = func() {
 		if drv.Done() {
 			closeInput()
-			timerMu.Lock()
-			if timer == nil {
-				timer = time.AfterFunc(exitGrace, func() { w.signalAgent(context.Background(), "TERM") })
-			}
-			timerMu.Unlock()
+			leaving.Do(func() { after(exitGrace, func() { w.signalAgent(context.Background(), "TERM") }) })
 		}
 	}
 
@@ -92,13 +118,26 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		defer close(begun)
 		if err := drv.Begin(pw, prompt); err != nil {
 			closeInput()
-		} else if deliverID != "" && w.opt.OnMessage != nil {
-			w.opt.OnMessage(deliverID, agent.MsgDelivered)
+		} else if w.opt.OnMessage != nil {
+			for _, id := range deliver {
+				w.opt.OnMessage(id, agent.MsgDelivered)
+			}
 		}
 	}()
 
+	// interrupt signals the agent. If its turn has not ended (and the waiting
+	// messages not been taken) after a while, it is stopped, and the caller
+	// starts it again with them.
+	interrupt := func() {
+		w.signalAgent(ctx, "INT")
+		after(interruptGrace, func() {
+			if !isExited() && len(drv.Pending()) > 0 {
+				w.signalAgent(context.Background(), "TERM")
+			}
+		})
+	}
+
 	var control <-chan agent.Steer // nil (never ready) until the first message is in
-	restart := false
 	for loop := true; loop; {
 		select {
 		case <-begun:
@@ -110,18 +149,15 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 			<-exited
 			loop = false
 		case s := <-control:
-			err := drv.Send(s)
+			var err error
+			if s.Promote {
+				err = drv.Promote(s.ID)
+			} else {
+				err = drv.Send(s)
+			}
 			switch {
-			case errors.Is(err, agent.ErrRestart):
-				restart = true
-				w.signalAgent(ctx, "INT")
-				select {
-				case <-exited:
-				case <-time.After(stopGrace):
-					w.signalAgent(context.Background(), "TERM")
-					<-exited
-				}
-				loop = false
+			case errors.Is(err, agent.ErrInterrupt):
+				interrupt()
 			case err != nil:
 				if w.opt.OnMessage != nil {
 					w.opt.OnMessage(s.ID, agent.MsgFailed)
@@ -132,21 +168,18 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	}
 	closeInput()
 	timerMu.Lock()
-	if timer != nil {
-		timer.Stop()
+	for _, t := range timers {
+		t.Stop()
 	}
 	timerMu.Unlock()
 	sw.Close()
 
-	if restart {
-		return agent.ErrRestart
-	}
-	if execErr != nil && ctx.Err() == nil {
+	if execErr != nil && ctx.Err() == nil && len(drv.Pending()) == 0 {
 		if t := lastLines(stderr.buf, 4); t != "" {
 			fmt.Fprintln(w.opt.Err, t)
 		}
 	}
-	return execErr
+	return drv.Pending(), execErr
 }
 
 // signalAgent sends a signal to the agent process inside the sandbox.

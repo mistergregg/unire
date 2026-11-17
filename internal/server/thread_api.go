@@ -247,3 +247,16 @@ func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
+
+// promoteSteer makes the agent take a message that is still waiting, now.
+func (s *Server) promoteSteer(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	if err := s.sessions.Promote(x.ID, r.PathValue("msg")); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

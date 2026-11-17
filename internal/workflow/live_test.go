@@ -125,24 +125,34 @@ func TestASteerableAgentWithNothingToSteerStillEnds(t *testing.T) {
 	}
 }
 
-func TestSendNowRestartsAntigravityFromItsSavedConversation(t *testing.T) {
+// runAgySteered plays Antigravity: its first turn runs until it is interrupted, and
+// then it either leaves (exitOnInterrupt) or stays alive until it is stopped, as
+// nothing documents which it does. The owner sends one message and then one
+// "now". Everything is checked at the end.
+func runAgySteered(t *testing.T, exitOnInterrupt bool) {
+	t.Helper()
+	oldGrace := interruptGrace
+	interruptGrace = 300 * time.Millisecond
+	defer func() { interruptGrace = oldGrace }()
+
 	var mu sync.Mutex
 	var argvs, texts []string
 	starts := 0
-	stop := make(chan struct{})
-	var stopOnce sync.Once
+	intr := make(chan struct{}, 4)
+	term := make(chan struct{})
+	var termOnce sync.Once
 	first := make(chan struct{}, 1)
 
 	sb := &fakeSandbox{}
 	sb.onSignal = func(sig string) {
-		if sig == "INT" {
-			stopOnce.Do(func() { close(stop) })
+		switch sig {
+		case "INT":
+			intr <- struct{}{}
+		case "TERM":
+			termOnce.Do(func() { close(term) })
 		}
 	}
 	sb.live = func(ctx context.Context, inner []string, o runner.ExecOpts) error {
-		if inner[0] != "agy" {
-			t.Errorf("the agent should be agy: %v", inner)
-		}
 		mu.Lock()
 		starts++
 		mine := starts
@@ -165,13 +175,23 @@ func TestSendNowRestartsAntigravityFromItsSavedConversation(t *testing.T) {
 			if mine == 1 {
 				first <- struct{}{}
 				select { // the first process works until it is interrupted
-				case <-stop:
-					return errors.New("exit status 130")
+				case <-intr:
+					fmt.Fprintln(o.Stdout, `{"event":"result","result":{"conversation_id":"conv-1","status":"INTERRUPTED","error":"interrupted","response":""}}`)
+					if exitOnInterrupt {
+						return errors.New("exit status 130")
+					}
+					select { // alive, and silent, until it is stopped
+					case <-term:
+						return errors.New("terminated")
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 			}
-			fmt.Fprintf(o.Stdout, `{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"answer: %s"}}`+"\n", m.Message.Content)
+			resp, _ := json.Marshal(map[string]any{"event": "result", "result": map[string]any{"conversation_id": "conv-1", "status": "SUCCESS", "response": "answer: " + m.Message.Content}})
+			fmt.Fprintln(o.Stdout, string(resp))
 		}
 		return nil
 	}
@@ -185,17 +205,18 @@ func TestSendNowRestartsAntigravityFromItsSavedConversation(t *testing.T) {
 	o.Out, o.Control, o.OnMessage = &buf, ctl, st.add
 	go func() {
 		<-first
-		ctl <- agent.Steer{ID: "now1", Text: "change course", Now: true}
+		ctl <- agent.Steer{ID: "m1", Text: "first thought"}
+		ctl <- agent.Steer{ID: "m2", Text: "change course", Now: true}
 	}()
 	done := make(chan error, 1)
 	go func() { _, err := Run(context.Background(), fakeRunner{sb}, spec, o); done <- err }()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("a restart for a message is not a failure: %v", err)
+			t.Fatalf("an interruption for a message is not a failure: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the run did not finish")
+	case <-time.After(15 * time.Second):
+		t.Fatal("the run did not finish: this is the freeze (the message was never delivered)")
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -205,13 +226,21 @@ func TestSendNowRestartsAntigravityFromItsSavedConversation(t *testing.T) {
 	if strings.Contains(argvs[0], "--conversation") || !strings.Contains(argvs[1], "--conversation conv-1") {
 		t.Errorf("the second start carries on the saved conversation: %v", argvs)
 	}
-	if len(texts) != 2 || texts[0] != "go" || texts[1] != "change course" {
-		t.Errorf("the agent was told %v", texts)
+	if len(texts) != 2 || texts[0] != "go" || texts[1] != "first thought\n\nchange course" {
+		t.Errorf("the agent was told %q: both waiting messages, together, in order", texts)
 	}
-	if got := st.of("now1"); len(got) == 0 || got[len(got)-1] != agent.MsgDelivered {
-		t.Errorf("the message should end up delivered: %v", got)
+	for _, id := range []string{"m1", "m2"} {
+		if got := st.of(id); len(got) == 0 || got[len(got)-1] != agent.MsgDelivered {
+			t.Errorf("%s should end up delivered: %v", id, got)
+		}
 	}
-	if !strings.Contains(buf.String(), "answer: change course") {
+	if !strings.Contains(buf.String(), "answer: first thought") {
 		t.Errorf("output = %q", buf.String())
 	}
 }
+
+func TestSendNowWhenAntigravityLeavesAfterTheInterrupt(t *testing.T) { runAgySteered(t, true) }
+
+// The freeze: the agent ended its turn on the interrupt but kept running, and the
+// waiting messages were never delivered.
+func TestSendNowWhenAntigravityStaysAliveAfterTheInterrupt(t *testing.T) { runAgySteered(t, false) }

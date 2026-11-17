@@ -182,6 +182,7 @@ const STEER_STATES = {
   delivered: "the agent has it",
   failed: "not delivered",
   cancelled: "the agent dropped it",
+  promoting: "stopping the agent to take it",
 };
 
 function steerCard(t, e) {
@@ -190,10 +191,18 @@ function steerCard(t, e) {
   if (t.steers[id]) return;
   const status = el("span", { class: "steer-state" }, STEER_STATES.queued);
   const note = mode === "now" ? "sent now: it stopped the agent" : "sent";
+  // A message that is still waiting can be made urgent: the agent is stopped and
+  // gets it, with anything else that waits, at once.
+  const now = el("button", { type: "button", class: "tiny steer-now-btn", title: "Stop what the agent is doing and give it this now" }, "Send now");
+  now.addEventListener("click", () => guarded(now, async () => {
+    await api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/steer/" + encodeURIComponent(id) + "/now");
+    now.hidden = true;
+  }));
   const card = el("div", { class: "steer" },
     el("div", { class: "bubble user" }, el("div", { class: "said" }, text)),
-    el("div", { class: "time" }, note + " · ", status));
-  t.steers[id] = { card, status };
+    el("div", { class: "time" }, note + " · ", status, " ", now));
+  now.hidden = mode === "now";
+  t.steers[id] = { card, status, now, mode };
   t.steerBox.append(card);
 }
 
@@ -203,6 +212,7 @@ function steerState(t, e) {
   if (!s) return;
   s.status.textContent = STEER_STATES[state] || state;
   s.status.className = "steer-state " + state;
+  s.now.hidden = state !== "queued" || s.mode === "now"; // only a message that is still waiting (and was not sent now) can be sent now
 }
 
 let thread = [];      // one entry per turn: { s, node pieces, text, after }

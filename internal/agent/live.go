@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"io"
+	"strings"
 )
 
 // Steering: telling an agent something while it works.
@@ -21,7 +22,10 @@ import (
 type Steer struct {
 	ID   string // an identifier for showing the message's state
 	Text string
-	Now  bool // interrupt, then carry on from this message
+	Now  bool // interrupt, then carry on from this message (and anything waiting)
+	// Promote: the message with this ID was already sent and is waiting; make the
+	// agent take it now. Text is not used.
+	Promote bool
 }
 
 // Message states, shown next to the message in the conversation.
@@ -38,11 +42,19 @@ type MsgState struct {
 	State string
 }
 
-// ErrRestart is returned by Send when the agent can only be redirected by
-// stopping its process and starting it again from its saved conversation. The
-// driver keeps the message; Unire restarts the agent with LiveOptions.Resume
-// set and Prompt set to the message (see Pending).
-var ErrRestart = errors.New("the agent has to be restarted to take this message")
+// ErrInterrupt is returned by Send and Promote when the agent has to be
+// interrupted with a signal for the message to be taken. The driver holds the
+// waiting messages and writes them, all at once, when the interrupted turn ends.
+var ErrInterrupt = errors.New("the agent has to be interrupted to take this message")
+
+// JoinSteers makes one message of several, in the order they were sent.
+func JoinSteers(list []Steer) string {
+	var parts []string
+	for _, s := range list {
+		parts = append(parts, s.Text)
+	}
+	return strings.Join(parts, "\n\n")
+}
 
 // LiveOptions describe the run to start.
 type LiveOptions struct {
@@ -68,16 +80,20 @@ type LiveDriver interface {
 	Begin(in io.Writer, prompt string) error
 	// Line reads one line of the agent's output.
 	Line(line string) Event
-	// Send gives the agent a message from the owner. It returns ErrRestart when
-	// the agent has to be restarted to take it.
+	// Send gives the agent a message from the owner. It returns ErrInterrupt when
+	// the agent has to be interrupted with a signal to take it.
 	Send(s Steer) error
+	// Promote makes the agent take a message that was already sent and is waiting,
+	// right away. It returns ErrInterrupt when that needs a signal.
+	Promote(id string) error
 	// Done reports that the agent has finished everything it was given, so its
 	// input can be closed.
 	Done() bool
 	// Resume is the agent's own conversation id, once it has reported one.
 	Resume() string
-	// Pending is the message an ErrRestart was returned for.
-	Pending() (Steer, bool)
+	// Pending is every message the driver holds that the agent has not been given
+	// (for example because the process ended first).
+	Pending() []Steer
 }
 
 // CanSteer reports whether an agent can take messages while it works.

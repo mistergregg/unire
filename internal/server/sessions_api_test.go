@@ -664,3 +664,30 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 		t.Errorf("an unknown session = %d, want 404", code)
 	}
 }
+
+func TestPromotingAWaitingMessageThroughTheAPI(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	e.box.mu.Lock()
+	e.box.block = make(chan struct{})
+	e.box.mu.Unlock()
+	_, first := e.launch(base, nil)
+	id := first["id"].(string)
+	e.waitStatus(id, "running")
+	code, body := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "do this sooner"})
+	if code != http.StatusOK {
+		t.Fatalf("steer = %d %s", code, body)
+	}
+	var res map[string]string
+	json.Unmarshal([]byte(body), &res)
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer/"+res["id"]+"/now", nil); code != http.StatusOK {
+		t.Errorf("promote = %d, want 200", code)
+	}
+	e.box.mu.Lock()
+	close(e.box.block)
+	e.box.mu.Unlock()
+	e.waitStatus(id, "done")
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer/"+res["id"]+"/now", nil); code != http.StatusConflict {
+		t.Errorf("promote after the run = %d, want 409", code)
+	}
+}

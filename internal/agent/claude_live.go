@@ -102,11 +102,11 @@ func (d *claudeLive) Line(line string) Event {
 		if owner := d.owner[id]; owner != "" {
 			switch st {
 			case "queued":
-				ev.Msg = &MsgState{ID: owner, State: MsgQueued}
+				ev.Msgs = []MsgState{{ID: owner, State: MsgQueued}}
 			case "cancelled":
-				ev.Msg = &MsgState{ID: owner, State: MsgCancelled}
+				ev.Msgs = []MsgState{{ID: owner, State: MsgCancelled}}
 			default: // started, or anything that means it was taken
-				ev.Msg = &MsgState{ID: owner, State: MsgDelivered}
+				ev.Msgs = []MsgState{{ID: owner, State: MsgDelivered}}
 			}
 		}
 		return ev
@@ -133,5 +133,18 @@ func (d *claudeLive) Done() bool {
 	return true
 }
 
-func (d *claudeLive) Resume() string         { return "" }
-func (d *claudeLive) Pending() (Steer, bool) { return Steer{}, false }
+func (d *claudeLive) Resume() string   { return "" }
+func (d *claudeLive) Pending() []Steer { return nil }
+
+// Promote interrupts the turn that is running. Claude keeps the messages that
+// are waiting and starts them straight after (its interrupt receipt lists them).
+func (d *claudeLive) Promote(string) error {
+	b, _ := json.Marshal(map[string]any{
+		"type": "control_request", "request_id": "unire-" + newUUID(),
+		"request": map[string]any{"subtype": "interrupt"},
+	})
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.in.Write(append(b, '\n'))
+	return err
+}

@@ -133,6 +133,8 @@ func (antigravity) ParseEvent(line string) Event {
 		ev := Event{Known: true, Answer: firstString(res, "response")}
 		status, _ := res["status"].(string)
 		switch e := firstString(res, "error"); {
+		case status == "INTERRUPTED" || status == "CANCELED":
+			ev.Progress = "interrupted" // stopped on purpose (a message sent now), not a failure
 		case e != "":
 			ev.Progress = "agent error: " + clip(e, 300)
 		case ev.Answer == "" && status != "" && status != "SUCCESS":

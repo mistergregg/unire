@@ -43,7 +43,7 @@ type codexLive struct {
 	active      bool    // a turn has been started and has not completed
 	sawTurn     bool    // a turn has completed (or the run failed)
 	queue       []Steer // messages to start as a turn once the current one ends
-	afterStop   *Steer  // the message to start once an interrupt has finished the turn
+	afterStop   []Steer // messages to start, together, once an interrupt has finished the turn
 	wantStop    bool    // interrupt as soon as the turn id is known
 	lastMessage string  // the agent's latest message in this turn: its answer
 }
@@ -103,7 +103,7 @@ func (d *codexLive) Send(s Steer) error {
 	case !d.active:
 		d.startTurn(&o, s.Text) // between turns
 	case s.Now:
-		d.afterStop = &s
+		d.afterStop = append(d.afterStop, s)
 		if d.turnID == "" {
 			d.wantStop = true
 		} else {
@@ -163,9 +163,9 @@ func (d *codexLive) Line(line string) Event {
 		case strings.HasPrefix(kind, "steer:"):
 			id := strings.TrimPrefix(kind, "steer:")
 			if failure == "" {
-				ev.Msg = &MsgState{ID: id, State: MsgDelivered}
+				ev.Msgs = []MsgState{{ID: id, State: MsgDelivered}}
 			} else {
-				ev.Msg = &MsgState{ID: id, State: MsgFailed}
+				ev.Msgs = []MsgState{{ID: id, State: MsgFailed}}
 				ev.Progress = "codex could not take the message: " + failure
 			}
 		}
@@ -202,18 +202,13 @@ func (d *codexLive) Line(line string) Event {
 				}
 				ev.Progress = "the turn failed: " + clip(msg, 300)
 			}
-			// What to do next: carry on from a message, if there is one.
-			switch {
-			case d.afterStop != nil:
-				s := *d.afterStop
-				d.afterStop = nil
-				d.startTurn(&o, s.Text)
-				ev.Msg = &MsgState{ID: s.ID, State: MsgDelivered}
-			case len(d.queue) > 0:
-				s := d.queue[0]
-				d.queue = d.queue[1:]
-				d.startTurn(&o, s.Text)
-				ev.Msg = &MsgState{ID: s.ID, State: MsgDelivered}
+			// What to do next: carry on from the messages that wait, as one turn.
+			if batch := append(d.afterStop, d.queue...); len(batch) > 0 {
+				d.afterStop, d.queue = nil, nil
+				d.startTurn(&o, JoinSteers(batch))
+				for _, m := range batch {
+					ev.Msgs = append(ev.Msgs, MsgState{ID: m.ID, State: MsgDelivered})
+				}
 			}
 		case "error":
 			if e, ok := p["error"].(map[string]any); ok {
@@ -269,7 +264,7 @@ func (d *codexLive) describeItem(done bool, item map[string]any) (progress, text
 func (d *codexLive) Done() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.sawTurn && !d.active && len(d.queue) == 0 && d.afterStop == nil
+	return d.sawTurn && !d.active && len(d.queue) == 0 && len(d.afterStop) == 0
 }
 
 func (d *codexLive) Resume() string {
@@ -278,4 +273,30 @@ func (d *codexLive) Resume() string {
 	return d.threadID
 }
 
-func (d *codexLive) Pending() (Steer, bool) { return Steer{}, false }
+func (d *codexLive) Pending() []Steer { return nil }
+
+// Promote takes a message that is waiting and interrupts the turn so it is read
+// now (together with anything else that waits).
+func (d *codexLive) Promote(id string) error {
+	d.mu.Lock()
+	var o out
+	for i, s := range d.queue {
+		if s.ID != id {
+			continue
+		}
+		d.queue = append(d.queue[:i], d.queue[i+1:]...)
+		switch {
+		case !d.active:
+			d.startTurn(&o, JoinSteers(append([]Steer{s}, d.queue...)))
+			d.queue = nil
+		case d.turnID == "":
+			d.afterStop, d.wantStop = append(d.afterStop, s), true
+		default:
+			d.afterStop = append(d.afterStop, s)
+			d.request(&o, "turn/interrupt", "interrupt", map[string]any{"threadId": d.threadID, "turnId": d.turnID})
+		}
+		break
+	}
+	d.mu.Unlock()
+	return d.flush(o)
+}

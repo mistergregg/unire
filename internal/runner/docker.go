@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Docker runs each session in one container. Every container for an agent
@@ -113,6 +114,10 @@ func (b dockerSandbox) Exec(ctx context.Context, o ExecOpts) error {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
+	// When the command ends (or is cancelled), Run waits for the copies to and from
+	// the process to finish. A copy of an input nobody closes would wait for ever,
+	// so give up on them a little after the process has gone.
+	cmd.WaitDelay = 5 * time.Second
 	return cmd.Run()
 }
 

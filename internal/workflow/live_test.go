@@ -265,3 +265,29 @@ func TestSendNowWhenAntigravityIgnoresTerminate(t *testing.T) { runAgySteered(t,
 // helpers holding its output) does not end however it is signalled. The run must
 // give up on it, start the agent again and deliver the messages.
 func TestSendNowWhenAntigravityCannotBeStopped(t *testing.T) { runAgySteered(t, "stuck") }
+
+// Stop must not freeze either: the run's context is cancelled while the agent is
+// working, and the run has to come back.
+func TestStoppingASteerableAgentDoesNotFreeze(t *testing.T) {
+	sb := &fakeSandbox{}
+	started := make(chan struct{}, 1)
+	sb.live = func(ctx context.Context, inner []string, o runner.ExecOpts) error {
+		return agenttest.Claude(ctx, o.Stdin, o.Stdout, func(agenttest.User) string { return "x" },
+			func(ctx context.Context, _ agenttest.User) { // a long turn
+				started <- struct{}{}
+				<-ctx.Done()
+			}, nil)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	o := opts(nil)
+	o.Control = make(chan agent.Steer, 1)
+	done := make(chan struct{})
+	go func() { Run(ctx, fakeRunner{sb}, baseSpec(), o); close(done) }()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopping the run froze: the agent's input was never closed")
+	}
+}

@@ -38,6 +38,10 @@ type streamWriter struct {
 	immediate bool
 	onMessage func(id, state string)
 	afterLine func()
+	// exitMarker starts a line that says the process has ended; onExit is called
+	// when it is seen and the line is not shown.
+	exitMarker string
+	onExit     func()
 
 	mu       sync.Mutex
 	buf      []byte
@@ -74,6 +78,12 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 func (w *streamWriter) line(l string) {
 	l = strings.TrimRight(l, "\r")
 	if strings.TrimSpace(l) == "" {
+		return
+	}
+	if w.exitMarker != "" && strings.HasPrefix(l, w.exitMarker) {
+		if w.onExit != nil {
+			w.onExit()
+		}
 		return
 	}
 	ev := w.s.ParseEvent(l)

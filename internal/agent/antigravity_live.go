@@ -44,6 +44,7 @@ type antigravityLive struct {
 	sawResult   bool    // at least one turn has ended
 	queue       []Steer // messages the agent has not been given yet
 	interrupted bool    // SIGINT was asked for: the turn's result is not a cue to write the queue
+	held        bool    // the interrupted turn has ended: the messages wait for a restart
 	conv        string  // the agent's conversation id
 }
 
@@ -88,17 +89,41 @@ func (d *antigravityLive) Send(s Steer) error {
 
 func (d *antigravityLive) Promote(id string) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if !d.turnActive {
-		return nil // nothing is running: the waiting messages are written as the turn ends
-	}
+	waiting := false
 	for _, s := range d.queue {
-		if s.ID == id {
-			d.interrupted = true
-			return ErrInterrupt
-		}
+		waiting = waiting || s.ID == id
+	}
+	switch {
+	case !waiting:
+		d.mu.Unlock()
+		return nil // it was already taken
+	case d.turnActive:
+		d.interrupted = true
+		d.mu.Unlock()
+		return ErrInterrupt
+	case d.held:
+		d.mu.Unlock()
+		return ErrInterrupt // the agent is already being ended: ask again so it is
+	}
+	// Idle: nothing is running, so everything that waits goes in now.
+	batch := d.queue
+	d.queue, d.turnActive = nil, true
+	d.mu.Unlock()
+	if err := d.write(JoinSteers(batch)); err != nil {
+		d.mu.Lock()
+		d.queue, d.turnActive = append(batch, d.queue...), false
+		d.mu.Unlock()
+		return err
 	}
 	return nil
+}
+
+// Held reports that an interrupted turn has ended and messages wait for the
+// process to be ended and started again.
+func (d *antigravityLive) Held() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.held && len(d.queue) > 0
 }
 
 func (d *antigravityLive) Line(line string) Event {
@@ -129,7 +154,7 @@ func (d *antigravityLive) Line(line string) Event {
 		if d.interrupted {
 			// The turn was cut short on purpose: the messages stay held until the
 			// process has been ended and started again.
-			d.interrupted = false
+			d.interrupted, d.held = false, true
 			d.mu.Unlock()
 			return ev
 		}

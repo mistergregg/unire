@@ -58,11 +58,21 @@ when a message really arrives in the middle of a long turn.
 
 ## Ending an agent for good
 
-An agent starts helper processes of its own, and they keep its output open:
-`docker exec` does not return until they are gone, so stopping only the agent
-process leaves the run waiting forever (this froze the first real Send now). When
-Unire has to end an agent (after an interrupt that did not end its turn, or when
-a finished agent does not leave) it signals the agent and every process it
-started (the sandbox has no `ps` or `pkill`, so the tree is read from `/proc`),
-kills it if it will not go, and finally stops waiting for it, so the run always
-carries on.
+`docker exec` does not return while its input is still open, even after the
+process in it has ended, and it also waits for helper processes that keep the
+agent's output open. Either one left the run waiting forever (this froze Send
+now on Antigravity twice).
+
+So the agent runs under a small wrapper (`agentWrapper`): a shell that records
+the agent's process id, runs the agent with the input passed on, and prints
+`unire-agent-exited:<code>` when it ends (it does not `exec` the agent, so it
+outlives it to say so). When Unire sees that line, or has to end the agent, it
+closes the agent's input first. To end an agent (after an interrupt that did not
+end its turn, or when a finished agent does not leave) it signals the agent and
+every process it started (the sandbox has no `ps` or `pkill`, so the tree is read
+from `/proc`), kills it if it will not go, and finally stops waiting for it, so
+the run always carries on. Antigravity messages sent now are kept while this
+happens and go to the restarted agent together.
+
+`internal/workflow/wrapper_docker_test.go` checks all of this in a real sandbox
+(`UNIRE_DOCKER_TESTS=1`, needs the `unire-sandbox` image).

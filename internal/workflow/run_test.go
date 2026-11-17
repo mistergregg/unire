@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path"
 	"strings"
@@ -65,10 +66,20 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	} else if isAgent {
 		live, out := f.live, f.agentOut
 		f.mu.Unlock()
+		var err error
 		if live != nil {
-			return live(ctx, inner, o)
+			err = live(ctx, inner, o)
+		} else {
+			err = agenttest.Claude(ctx, o.Stdin, o.Stdout, func(agenttest.User) string { return out }, nil, nil)
 		}
-		return agenttest.Claude(ctx, o.Stdin, o.Stdout, func(agenttest.User) string { return out }, nil, nil)
+		fmt.Fprintf(o.Stdout, "\n%s0\n", agent.ExitMarker) // what the real wrapper says when the agent ends
+		// Like docker exec, finish only once the copy of the process's input has
+		// ended, which is when whoever holds the other end closes it. The real thing
+		// froze here when the input was left open after the agent was killed.
+		if o.Stdin != nil {
+			io.Copy(io.Discard, o.Stdin)
+		}
+		return err
 	}
 	if len(o.Argv) > 0 && o.Argv[0] == "claude" && !contains(o.Argv, "--resume") {
 		hook, out, err := f.agentHook, f.agentOut, f.mainErr

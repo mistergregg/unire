@@ -102,32 +102,49 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	// stopHard ends the agent and everything it started. The agent starts helper
 	// processes that keep its output open, so docker exec does not return until
 	// they are gone: ask politely, then kill, and finally stop waiting for it.
+	//
+	// The agent's input is closed first: docker exec also waits for the copy of its
+	// input to finish, so with the input left open the run would wait for ever
+	// even after every process was gone.
 	stopHard := func() {
+		closeInput()
+		fmt.Fprintln(w.opt.Err, "ending the agent")
 		w.signalAgent(context.Background(), "TERM")
 		after(stopGrace, func() {
 			if isExited() {
 				return
 			}
+			fmt.Fprintln(w.opt.Err, "the agent did not end: killing it")
 			w.signalAgent(context.Background(), "KILL")
 			after(stopGrace, func() {
 				if !isExited() {
+					fmt.Fprintln(w.opt.Err, "the agent could not be stopped: carrying on without it")
 					cancelExec()
 				}
 			})
 		})
 	}
 
-	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage}
+	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage, exitMarker: agent.ExitMarker, onExit: closeInput}
 	var leaving sync.Once
+	var held sync.Once
 	sw.afterLine = func() {
 		if drv.Done() {
 			closeInput()
 			leaving.Do(func() { after(exitGrace, stopHard) })
 		}
+		// The agent's turn was cut short for a message: it has nothing more to do,
+		// so end it now and start it again with the message.
+		if h, ok := drv.(interface{ Held() bool }); ok && h.Held() {
+			held.Do(func() {
+				fmt.Fprintln(w.opt.Err, "the agent stopped its turn: ending it to carry on with your message")
+				after(500*time.Millisecond, stopHard)
+			})
+		}
 	}
 
 	var stderr tail
-	wrapped := append([]string{"sh", "-c", `echo $$ > ` + agentPidFile + `; exec "$@"`, "sh"}, argv...)
+	wrapped := agentWrapper(argv)
 	var execErr error
 	go func() {
 		defer close(exited)
@@ -153,6 +170,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	// messages not been taken) after a while, it is stopped, and the caller
 	// starts it again with them.
 	interrupt := func() {
+		fmt.Fprintln(w.opt.Err, "interrupting the agent to take your message")
 		w.signalAgent(ctx, "INT")
 		after(interruptGrace, func() {
 			if !isExited() && len(drv.Pending()) > 0 {
@@ -170,6 +188,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		case <-exited:
 			loop = false
 		case <-ctx.Done():
+			closeInput() // see stopHard: the exec waits for its input to end
 			<-exited
 			loop = false
 		case s := <-control:
@@ -191,6 +210,9 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		}
 	}
 	closeInput()
+	if begun != nil {
+		<-begun // Begin ends once the input is closed; its "delivered" notices must not be lost
+	}
 	timerMu.Lock()
 	for _, t := range timers {
 		t.Stop()
@@ -204,6 +226,16 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		}
 	}
 	return drv.Pending(), execErr
+}
+
+// agentWrapper is the command a steerable agent is run with: a small shell that
+// records the agent's process id (so it can be signalled) and says when the agent
+// has ended. It does not exec the agent, so the shell outlives it to say so, and
+// it passes its input on explicitly (a background command would otherwise get
+// none).
+func agentWrapper(argv []string) []string {
+	script := `exec 3<&0; "$@" <&3 & p=$!; echo $p > ` + agentPidFile + `; wait $p; c=$?; printf '\n%s%s\n' ` + agent.ExitMarker + ` $c; exit $c`
+	return append([]string{"sh", "-c", script, "sh"}, argv...)
 }
 
 // signalAgent sends a signal to the agent process inside the sandbox. INT goes

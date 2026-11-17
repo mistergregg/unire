@@ -96,6 +96,11 @@ type LiveDriver interface {
 	Pending() []Steer
 }
 
+// ExitMarker starts the line the sandbox prints when a steerable agent's process
+// ends (followed by its exit status). docker exec does not return while its input
+// is open, so seeing this, Unire closes the input.
+const ExitMarker = "unire-agent-exited:"
+
 // CanSteer reports whether an agent can take messages while it works.
 func CanSteer(name string) bool {
 	a, err := Get(name)

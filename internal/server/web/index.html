@@ -44,7 +44,10 @@
   <!-- Chats: every conversation in a list on the left, the open one on the right -->
   <div id="workspace" class="workspace" hidden>
   <aside id="side" class="side" aria-label="Conversations">
-    <button id="new-session" class="primary">+ New chat</button>
+    <button id="new-session" class="new-chat" type="button">
+      <span class="plus" aria-hidden="true">+</span>
+      <span>New chat</span>
+    </button>
     <input id="side-search" class="side-search" type="search" placeholder="Search chats" aria-label="Search chats" autocomplete="off">
     <div id="session-list" class="side-list"></div>
   </aside>

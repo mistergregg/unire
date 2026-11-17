@@ -93,10 +93,18 @@ function show(name) {
   $("workspace").hidden = !chats;
   $("workspace").classList.toggle("chat-open", name === "new" || name === "session"); // on a phone: the chat, not the list
   document.querySelector("main").classList.toggle("wide", chats);
+  $("new-session").classList.toggle("selected", name === "new"); // lit while the new-chat screen is open
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
   if (!chats || name === "sessions") window.scrollTo(0, 0);
 }
+
+// The chat list sticks just under the header, whatever height the header has
+// (it grows when the tabs wrap on a narrow screen).
+const topBar = document.querySelector(".top");
+function measureTop() { document.documentElement.style.setProperty("--top-h", topBar.offsetHeight + "px"); }
+measureTop();
+if (window.ResizeObserver) new ResizeObserver(measureTop).observe(topBar);
 
 let setupMode = false;
 function showAuth(needsLogin) {

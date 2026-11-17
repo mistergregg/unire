@@ -355,6 +355,7 @@ type sessionView struct {
 	Network      string          `json:"network"`
 	Memory       bool            `json:"memory"`
 	Parent       string          `json:"parent,omitempty"`
+	CanSteer     bool            `json:"canSteer"`               // the agent takes messages while it works
 	Latest       string          `json:"latest,omitempty"`       // list only: the newest turn of this conversation
 	LatestStatus string          `json:"latestStatus,omitempty"` // list only
 	Waiting      int             `json:"waiting,omitempty"`      // list only: questions the agent is waiting on you for
@@ -367,7 +368,8 @@ type sessionView struct {
 
 func toView(x store.Session) sessionView {
 	v := sessionView{ID: x.ID, Task: x.Task, Agent: x.Agent, Mode: x.Mode, Prompt: x.Prompt, Branch: x.Branch, Status: x.Status, Error: x.Error,
-		Network: x.Network, Memory: x.Memory, Parent: x.ParentID, Repos: x.Repos, CreatedAt: x.CreatedAt.Unix()}
+		Network: x.Network, Memory: x.Memory, Parent: x.ParentID, Repos: x.Repos, CreatedAt: x.CreatedAt.Unix(),
+		CanSteer: x.Mode == agent.HandsOff && agent.CanSteer(x.Agent)}
 	if !x.StartedAt.IsZero() {
 		v.StartedAt = x.StartedAt.Unix()
 	}

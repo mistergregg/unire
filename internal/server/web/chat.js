@@ -174,6 +174,37 @@ function closeOpenAsks(t) {
   }
 }
 
+// ---- what you said to the agent while it worked ----
+// A "steer" event is "<id>\n<next|now>\n<text>": shown as your message in the
+// conversation. A "steerstate" event ("<id>\n<state>") says what became of it.
+const STEER_STATES = {
+  queued: "waiting for the agent",
+  delivered: "the agent has it",
+  failed: "not delivered",
+  cancelled: "the agent dropped it",
+};
+
+function steerCard(t, e) {
+  const [id, rest] = splitEvent(e.text);
+  const [mode, text] = splitEvent(rest);
+  if (t.steers[id]) return;
+  const status = el("span", { class: "steer-state" }, STEER_STATES.queued);
+  const note = mode === "now" ? "sent now: it stopped the agent" : "sent";
+  const card = el("div", { class: "steer" },
+    el("div", { class: "bubble user" }, el("div", { class: "said" }, text)),
+    el("div", { class: "time" }, note + " · ", status));
+  t.steers[id] = { card, status };
+  t.steerBox.append(card);
+}
+
+function steerState(t, e) {
+  const [id, state] = splitEvent(e.text);
+  const s = t.steers[id];
+  if (!s) return;
+  s.status.textContent = STEER_STATES[state] || state;
+  s.status.className = "steer-state " + state;
+}
+
 let thread = [];      // one entry per turn: { s, node pieces, text, after }
 let agentChoices = [];
 
@@ -191,14 +222,15 @@ function makeTurn(s) {
   const activity = el("details", { class: "activity" }, summary, steps);
   activity.open = !isFinished(s.status);
   const askBox = el("div", { class: "asks" });
+  const steerBox = el("div", { class: "steers" });
   const answer = el("div", { class: "agent-text" });
   const foot = el("div", { class: "turn-foot muted" });
   const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
   const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)), el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
   const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt)), el("div", { class: "time" }, ago(s.createdAt)));
-  const body = el("div", { class: "msg-body" }, head, activity, askBox, answer, foot);
+  const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, foot);
   const root = el("div", { class: "turn" }, user, el("div", { class: "msg agent" }, avatar, body));
-  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, answer, foot, avatar, asks: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
+  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, answer, foot, avatar, asks: {}, steers: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
   renderSummary(t);
   renderAnswer(t);
   return t;
@@ -234,6 +266,8 @@ function addEvents(t, events) {
     if (e.kind === "out") { t.text += (t.text ? "\n" : "") + e.text; textChanged = true; continue; }
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
+    if (e.kind === "steer") { steerCard(t, e); continue; }
+    if (e.kind === "steerstate") { steerState(t, e); continue; }
     t.steps.append(logLine(e));
     t.count++;
     if (e.kind === "log") t.lastStep = e.text;
@@ -289,9 +323,16 @@ const pill = (text, title) => el("span", { class: "pill", title: title || "" }, 
 function setComposer() {
   const tail = thread[thread.length - 1];
   const running = !isFinished(tail.s.status);
-  $("reply-text").disabled = running;
-  $("reply-text").placeholder = running ? "The agent is working…" : "Reply to the agent";
-  $("reply-send").hidden = running;
+  const steerable = running && tail.s.canSteer; // it takes messages while it works
+  $("reply-text").disabled = running && !steerable;
+  $("reply-text").placeholder = steerable ? "Tell the agent something while it works…"
+    : running ? "The agent is working…" : "Reply to the agent";
+  $("reply-send").hidden = running && !steerable;
+  $("reply-send").title = steerable ? "Send: the agent reads it at its next step" : "Send";
+  $("steer-now").hidden = !steerable;
+  $("composer-hint").textContent = steerable
+    ? "Enter: for its next step · Ctrl+Enter: send now"
+    : "Enter to send · Shift+Enter for a new line";
   $("s-stop").hidden = !running;
   $("s-delete").hidden = running;
   $("reply-agent").disabled = running;
@@ -380,7 +421,8 @@ $("reply-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("reply-text").value.trim();
   const tail = thread[thread.length - 1];
-  if (!text || !tail || !isFinished(tail.s.status)) return;
+  if (!text || !tail) return;
+  if (!isFinished(tail.s.status)) { if (tail.s.canSteer) steer(text, false); return; }
   guarded($("reply-send"), async () => {
     const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent: $("reply-agent").value });
     $("reply-text").value = "";
@@ -394,9 +436,32 @@ $("reply-form").addEventListener("submit", (e) => {
   });
 });
 
-// Enter sends; Shift+Enter makes a new line.
+// Say something to the agent while it works. now=true stops what it is doing and
+// carries on from the message. The message appears in the conversation when the
+// server logs it (see steerCard).
+function steer(text, now) {
+  const tail = thread[thread.length - 1];
+  const btn = now ? $("steer-now") : $("reply-send");
+  guarded(btn, async () => {
+    await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now });
+    $("reply-text").value = "";
+    autoGrow();
+  });
+}
+
+// Enter sends; Shift+Enter makes a new line; Ctrl+Enter (or the Send now button)
+// steers a working agent right away.
 $("reply-text").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("reply-form").requestSubmit(); }
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  const tail = thread[thread.length - 1];
+  const text = $("reply-text").value.trim();
+  if ((e.ctrlKey || e.metaKey) && text && tail && !isFinished(tail.s.status) && tail.s.canSteer) steer(text, true);
+  else $("reply-form").requestSubmit();
+});
+$("steer-now").addEventListener("click", () => {
+  const text = $("reply-text").value.trim();
+  if (text) steer(text, true);
 });
 
 $("s-stop").addEventListener("click", () => guarded($("s-stop"), async () => {

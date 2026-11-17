@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
@@ -70,8 +71,9 @@ type Manager struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
-	asks    map[string]chan string   // questions waiting for the owner, by session id + "/" + question id
-	saving  map[string]chan struct{} // sessions whose memory is still being saved; closed when done
+	asks    map[string]chan string      // questions waiting for the owner, by session id + "/" + question id
+	saving  map[string]chan struct{}    // sessions whose memory is still being saved; closed when done
+	live    map[string]chan agent.Steer // running sessions whose agent takes messages
 	closing bool
 }
 
@@ -81,7 +83,7 @@ func New(st *store.Store, config func() Config) (*Manager, error) {
 	if _, err := st.InterruptUnfinished(); err != nil {
 		return nil, err
 	}
-	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}}, nil
+	return &Manager{st: st, config: config, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}, live: map[string]chan agent.Steer{}}, nil
 }
 
 func newID() string {
@@ -214,6 +216,11 @@ func (m *Manager) run(ctx context.Context, j job) {
 		delete(m.cancels, spec.ID)
 		m.mu.Unlock()
 	}()
+	// The owner can talk to a steerable agent while it works.
+	control := m.registerLive(spec.ID, spec.Agent, spec.Mode)
+	if control != nil {
+		defer m.finishLive(spec.ID, control)
+	}
 	if j.memory {
 		// The memory step runs after the turn is marked finished; Saving reports it.
 		saved := make(chan struct{})
@@ -261,6 +268,10 @@ func (m *Manager) run(ctx context.Context, j job) {
 		wo.Mem = m.memoryPlan(j)
 	}
 	wo.Ask = m.askFunc(spec.ID)
+	if control != nil {
+		wo.Control = control
+		wo.OnMessage = func(id, state string) { _ = m.st.AddEvent(spec.ID, "steerstate", id+"\n"+state) }
+	}
 	wo.Tools = tools.ForReply()
 	if j.parent == "" {
 		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name

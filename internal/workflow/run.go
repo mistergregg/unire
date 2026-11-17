@@ -45,6 +45,11 @@ type Options struct {
 	// often the sandbox is checked for new ones; zero means two seconds.
 	Ask     AskFunc
 	AskPoll time.Duration
+	// Control carries what the owner says to the agent while it works. nil means
+	// the agent is run once and cannot be steered. OnMessage reports what became of
+	// each message (delivered, failed).
+	Control   <-chan agent.Steer
+	OnMessage func(id, state string)
 	// OnWorkDone is called once the agent has finished and its work is pushed,
 	// before the memory step. It is not called when the session fails earlier.
 	OnWorkDone func(res Result, err error)
@@ -212,10 +217,14 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		Argv: argv, Dir: workspace, TTY: opt.Interactive,
 		Stdout: io.MultiWriter(opt.Out, out), Stderr: opt.Err,
 	}
+	// An agent that can be steered runs as a process that stays open, so the owner
+	// can talk to it while it works (see runLive). The others run once.
+	live, canLive := adapter.(agent.Live)
+	useLive := canLive && opt.Control != nil && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != ""
 	// An agent that can stream its events lets the owner see what it is doing
 	// while it works, instead of nothing until the answer arrives.
 	var stream *streamWriter
-	if s, ok := adapter.(agent.Streamer); ok && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != "" {
+	if s, ok := adapter.(agent.Streamer); ok && !useLive && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != "" {
 		if sargv, err := s.StreamCommand(prompt, spec.Mode, ref); err == nil {
 			agentOpts.Argv = sargv
 			stream = &streamWriter{s: s, out: io.MultiWriter(opt.Out, out), log: opt.Err}
@@ -234,9 +243,14 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 			w.serveQuestions(askCtx)
 		}
 	}()
-	agentErr := sb.Exec(ctx, agentOpts)
-	if stream != nil {
-		stream.Close()
+	var agentErr error
+	if useLive {
+		agentErr = w.runLive(ctx, live, spec, prompt, ref, out)
+	} else {
+		agentErr = sb.Exec(ctx, agentOpts)
+		if stream != nil {
+			stream.Close()
+		}
 	}
 	stopAsks()
 	<-asksDone

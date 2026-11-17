@@ -138,3 +138,21 @@ a.button.primary {
   border-color: transparent; color: var(--accent-text); font-weight: 600; box-shadow: 0 8px 22px -10px var(--glow);
 }
 a.button.primary:hover { filter: brightness(1.08); }
+
+/* what you said to an agent while it worked */
+.steers { display: flex; flex-direction: column; gap: 10px; }
+.steers:empty { display: none; }
+.steer { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; animation: rise .3s cubic-bezier(.2, .7, .2, 1) both; }
+.steer .bubble.user { max-width: 92%; padding: 8px 14px; }
+.steer .time { font-size: 11px; color: var(--muted); padding: 0 6px; }
+.steer-state { font-weight: 600; color: var(--accent); }
+.steer-state.delivered { color: var(--ok); }
+.steer-state.failed, .steer-state.cancelled { color: var(--danger); }
+
+/* "Send now": a small pill beside the send button */
+.pill-btn {
+  padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.pill-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); }

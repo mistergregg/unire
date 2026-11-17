@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistergregg/unire/internal/agent/agenttest"
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 )
@@ -24,6 +25,7 @@ type fakeBox struct {
 	out      string
 	block    chan struct{}
 	outFiles map[string]string // files the agent "writes" in the memory step
+	prompts  []string          // what a steerable agent was told (its first message and later ones)
 
 	status      map[string]statusResult // answers to sign-in questions, by command name
 	statusAsked []string
@@ -36,6 +38,36 @@ func (r fakeRunner) Start(context.Context, runner.StartSpec) (runner.Sandbox, er
 }
 
 func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
+	if inner, isAgent, isSignal := agenttest.Unwrap(o.Argv); isSignal {
+		return nil
+	} else if isAgent {
+		b.mu.Lock()
+		b.calls = append(b.calls, o)
+		out, block := b.out, b.block
+		b.mu.Unlock()
+		if inner[0] != "claude" { // another agent: it prints its output and ignores its input
+			io.WriteString(o.Stdout, out)
+			if block != nil {
+				select {
+				case <-block:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}
+		return agenttest.Claude(ctx, o.Stdin, o.Stdout,
+			func(agenttest.User) string { return out },
+			func(ctx context.Context, _ agenttest.User) {
+				if block != nil {
+					select {
+					case <-block:
+					case <-ctx.Done():
+					}
+				}
+			},
+			func(u agenttest.User) { b.mu.Lock(); b.prompts = append(b.prompts, u.Text); b.mu.Unlock() })
+	}
 	b.mu.Lock()
 	b.calls = append(b.calls, o)
 	out, block := b.out, b.block
@@ -561,12 +593,10 @@ func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
 	_, second := replyTo(e, id1, map[string]any{"prompt": "And the question?"})
 	e.waitStatus(second["id"].(string), "done")
 
-	var prompts []string
-	for _, c := range e.box.snapshot() {
-		if len(c.Argv) > 0 && c.Argv[0] == "claude" && !contains(c.Argv, "--resume") {
-			prompts = append(prompts, c.Argv[len(c.Argv)-1])
-		}
-	}
+	// A steerable agent is told its task as its first message (not on its command line).
+	e.box.mu.Lock()
+	prompts := append([]string(nil), e.box.prompts...)
+	e.box.mu.Unlock()
 	if len(prompts) != 2 {
 		t.Fatalf("expected two agent runs, got %d", len(prompts))
 	}
@@ -587,4 +617,50 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	e.box.mu.Lock()
+	e.box.block = make(chan struct{})
+	e.box.mu.Unlock()
+	code, first := e.launch(base, nil)
+	if code != http.StatusCreated || first["canSteer"] != true {
+		t.Fatalf("launch = %d, canSteer = %v (a Claude session can be steered)", code, first["canSteer"])
+	}
+	id := first["id"].(string)
+	e.waitStatus(id, "running")
+
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "  "}); code != http.StatusBadRequest {
+		t.Errorf("an empty message = %d, want 400", code)
+	}
+	code, body := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "also add tests", "now": true})
+	if code != http.StatusOK || !strings.Contains(body, `"id"`) {
+		t.Fatalf("steer = %d %s", code, body)
+	}
+	e.box.mu.Lock()
+	close(e.box.block)
+	e.box.mu.Unlock()
+	e.waitStatus(id, "done")
+
+	_, logs := e.do("GET", "/api/sessions/"+id+"/logs", nil)
+	for _, want := range []string{`"kind":"steer"`, "also add tests", `"kind":"steerstate"`} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs are missing %s: %s", want, logs)
+		}
+	}
+	e.box.mu.Lock()
+	told := append([]string(nil), e.box.prompts...)
+	e.box.mu.Unlock()
+	if len(told) != 2 || told[1] != "also add tests" {
+		t.Errorf("the agent was told %v", told)
+	}
+	// Once it has finished, a message has to be a reply.
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "late"}); code != http.StatusConflict {
+		t.Errorf("a message to a finished session = %d, want 409", code)
+	}
+	if code, _ := e.do("POST", "/api/sessions/nope/steer", map[string]any{"text": "x"}); code != http.StatusNotFound {
+		t.Errorf("an unknown session = %d, want 404", code)
+	}
 }

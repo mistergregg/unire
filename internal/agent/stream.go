@@ -28,6 +28,8 @@ type Event struct {
 	// (it is the step number), so a new Step starts a new reply.
 	Fragment string
 	Step     int
+	// Msg reports what happened to a message the owner sent (live agents only).
+	Msg *MsgState
 }
 
 // clip makes s a single short line.

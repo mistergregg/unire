@@ -120,7 +120,8 @@
         <textarea id="reply-text" rows="1" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
         <div class="composer-bar">
           <select id="reply-agent" class="pill-select" aria-label="Agent for the next message"></select>
-          <span class="hint muted">Enter to send · Shift+Enter for a new line</span>
+          <span class="hint muted" id="composer-hint">Enter to send · Shift+Enter for a new line</span>
+          <button id="steer-now" type="button" class="pill-btn" hidden title="Stop what the agent is doing and carry on from this message">Send now</button>
           <button id="s-stop" type="button" class="icon-btn stop" title="Stop the agent" aria-label="Stop" hidden>
             <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
           </button>

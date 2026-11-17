@@ -221,3 +221,29 @@ func sameAgentBranch(prev store.Session, agentID string) string {
 	}
 	return ""
 }
+
+// steerSession gives a running agent a message (see sessions.Manager.Steer).
+func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+		Now  bool   `json:"now"` // interrupt and carry on from the message
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	req.Text = strings.TrimSpace(req.Text)
+	if req.Text == "" || len(req.Text) > 20000 {
+		writeErr(w, http.StatusBadRequest, "write a message (20,000 characters max)")
+		return
+	}
+	id, err := s.sessions.Steer(x.ID, req.Text, req.Now)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}

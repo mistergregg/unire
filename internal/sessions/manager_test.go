@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistergregg/unire/internal/agent/agenttest"
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
@@ -31,6 +32,35 @@ type fakeSandbox struct {
 }
 
 func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
+	if inner, isAgent, isSignal := agenttest.Unwrap(o.Argv); isSignal {
+		return nil
+	} else if isAgent {
+		if inner[0] != "claude" { // another agent: it prints its output and ignores its input
+			io.WriteString(o.Stdout, f.agentOutput)
+			if f.block != nil {
+				select {
+				case <-f.block:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return f.agentErr
+		}
+		err := agenttest.Claude(ctx, o.Stdin, o.Stdout,
+			func(agenttest.User) string { return f.agentOutput },
+			func(ctx context.Context, _ agenttest.User) {
+				if f.block != nil {
+					select {
+					case <-f.block:
+					case <-ctx.Done():
+					}
+				}
+			}, nil)
+		if err != nil {
+			return err
+		}
+		return f.agentErr
+	}
 	if len(o.Argv) > 0 {
 		switch o.Argv[0] {
 		case "git":

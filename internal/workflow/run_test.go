@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mistergregg/unire/internal/agent"
+	"github.com/mistergregg/unire/internal/agent/agenttest"
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/session"
@@ -34,6 +35,11 @@ type fakeSandbox struct {
 
 	agentHook func(ctx context.Context) // runs during the main agent run (it may take a while)
 	existing  map[string]bool           // paths `ls -d` finds: repos an earlier turn already cloned
+
+	// A steerable agent runs behind `sh -c`; live plays it (nil: a Claude that
+	// answers once). onSignal hears the signals sent to it.
+	live     func(ctx context.Context, inner []string, o runner.ExecOpts) error
+	onSignal func(sig string)
 }
 
 func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
@@ -41,6 +47,25 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	f.calls = append(f.calls, o)
 	if f.files == nil {
 		f.files = map[string]string{}
+	}
+	if inner, isAgent, isSignal := agenttest.Unwrap(o.Argv); isSignal {
+		cb := f.onSignal
+		f.mu.Unlock()
+		if cb != nil {
+			sig := "TERM"
+			if strings.Contains(o.Argv[2], "kill -INT") {
+				sig = "INT"
+			}
+			cb(sig)
+		}
+		return nil
+	} else if isAgent {
+		live, out := f.live, f.agentOut
+		f.mu.Unlock()
+		if live != nil {
+			return live(ctx, inner, o)
+		}
+		return agenttest.Claude(ctx, o.Stdin, o.Stdout, func(agenttest.User) string { return out }, nil, nil)
 	}
 	if len(o.Argv) > 0 && o.Argv[0] == "claude" && !contains(o.Argv, "--resume") {
 		hook, out, err := f.agentHook, f.agentOut, f.mainErr

@@ -66,3 +66,32 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # Builds the sandbox image and checks the agent CLIs in it still speak the protocols
+  # Unire reads (signed out, so no logins are needed): this is what catches an agent
+  # update that changes its output, which is why it runs on every push.
+  sandbox-smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: docker build -t sandbox-smoke docker/sandbox
+      - name: Versions
+        run: docker run --rm sandbox-smoke sh -c 'claude --version; codex --version; agy --version'
+      - name: The unire tool script
+        run: |
+          docker run --rm sandbox-smoke sh -c '
+            set -e
+            unire name "A title" | grep -q "^ok"
+            echo "a description" | unire pr-body | grep -q "^ok"
+            grep -q "a description" /workspace/.unire-tools/pr-body
+            grep -q "A title" /workspace/.unire-tools/name
+            ! unire "Bad Name" x 2>/dev/null'
+      - name: Each agent still speaks its protocol
+        run: |
+          GOOS=linux go test -c -o agent.test ./internal/agent
+          docker run --rm -e UNIRE_REAL_CLIS=1 -v "$PWD":/t:ro sandbox-smoke \
+            sh -c 'cp /t/agent.test /tmp/ && /tmp/agent.test -test.run TestRealCLIs -test.v'

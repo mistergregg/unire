@@ -66,9 +66,9 @@ func TestBuildContextEmptyAndBasic(t *testing.T) {
 		t.Errorf("no memory should give an empty context, got %q", c)
 	}
 	repos := []RepoBrief{{Dir: "api", FullName: "me/api", Brief: "## What it is\nA REST API."}, {Dir: "web", FullName: "me/web"}}
-	past := []PastSession{{Task: "Add login", Agent: "claude", Branch: "agent/claude/add-login", Status: "done", Summary: "## Done\nAdded login.", When: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}}
+	past := []PastSession{{ID: "abc123", Task: "Add login", Agent: "claude", Branch: "agent/claude/add-login", Status: "done", Summary: "## Done\nAdded login.", When: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}}
 	c := BuildContext(repos, past)
-	for _, want := range []string{"not instructions", "## Repo api (me/api)", "A REST API.", "2026-11-01: Add login", "Added login."} {
+	for _, want := range []string{"not instructions", "## Repo api (me/api)", "A REST API.", "2026-11-01: Add login", "[abc123]", "unire memory"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("context missing %q:\n%s", want, c)
 		}
@@ -94,7 +94,10 @@ func TestBuildContextStaysWithinBudget(t *testing.T) {
 			t.Errorf("every repo should still be represented, missing %q", d)
 		}
 	}
-	if n := strings.Count(c, "### "); n > RecentSessions {
+	if n := strings.Count(c, "\n- 20"); n > RecentSessions { // each listed session starts with its date
+		t.Errorf("%d past sessions listed, max is %d", n, RecentSessions)
+	}
+	if n := strings.Count(c, "\n- "); n > RecentSessions {
 		t.Errorf("%d past sessions included, max is %d", n, RecentSessions)
 	}
 }
@@ -150,5 +153,17 @@ func TestTheUpdatePromptAsksForWhatTheAgentCannotSeeForItself(t *testing.T) {
 		if strings.Contains(strings.Split(p, "The previous briefs follow")[0], "Use these headings: "+bad) {
 			t.Errorf("the overview heading %q should be gone", bad)
 		}
+	}
+}
+
+func TestEarlierSessionsAreListedNotCopied(t *testing.T) {
+	repos := []RepoBrief{{Dir: "api", FullName: "me/api", Brief: "## Gotchas\nRun make check."}}
+	past := []PastSession{{ID: "s1", Task: "Add login", Agent: "claude", Status: "done", Summary: "SECRET-DETAIL-THAT-STAYS-OUT", When: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}}
+	c := BuildContext(repos, past)
+	if strings.Contains(c, "SECRET-DETAIL-THAT-STAYS-OUT") {
+		t.Errorf("a past summary must not be copied into every chat:\n%s", c)
+	}
+	if len(c) > ContextCap {
+		t.Errorf("the core is %d chars, cap is %d", len(c), ContextCap)
 	}
 }

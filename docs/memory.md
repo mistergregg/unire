@@ -11,7 +11,7 @@ For each repo (a repo is identified by its git server and full name):
 
 ## How it works
 
-1. **At the start** of a session, Unire writes the briefs of the session's repos, plus the three most recent summaries touching them, into a file in `/workspace` named after the agent's own convention (`CLAUDE.md` for Claude Code). It sits above the repos, not inside any of them, so it is never committed. The file is at most 16,000 characters (about 4,000 tokens): older summaries are dropped first, then briefs are shortened.
+1. **At the start** of a session, Unire writes a small core into a file in `/workspace` named after the agent's own convention (`CLAUDE.md` for Claude Code): the briefs of the session's repos, and a one-line list (date, task, agent, id) of the five latest sessions touching them. It sits above the repos, not inside any of them, so it is never committed. The file is at most 7,000 characters (about 1,750 tokens); briefs are shortened if needed. Earlier sessions are not copied in.
 2. **The agent works** as normal and finishes. Unire commits and pushes its changes.
 3. **At the end,** Unire resumes the same agent conversation and asks it to write a summary and an updated brief for each repo, into a folder outside the repos. This costs one short extra request to the agent. It reads those files back, cleans them, removes secrets, enforces the size limits, and saves them.
 4. **If the agent cannot do that** (it failed, timed out after five minutes, or wrote nothing), Unire saves a plain summary built from what it knows: the task, which repos changed and the file statistics, the session's status, and the end of the agent's output. A plain summary never replaces a brief.
@@ -42,3 +42,11 @@ On a finished session, **Continue with a new session** opens the New session pag
 Studies of context files for coding agents (for example the ETH Zurich evaluation of `AGENTS.md`/`CLAUDE.md`) found that files written by an LLM that restate what the repo is, or list its folders, made agents slower and a little less successful, while short notes on what the agent cannot find out itself (tooling choices, quirks, non-default conventions) helped. So the update prompt asks for the gap, not the overview: no "what it is" or "structure" sections, nothing the README, `CLAUDE.md`, `AGENTS.md` or `docs/` already say (Unire tells the agent which of those exist in each repo), and one short line per fact with the file it comes from, so it can be checked later.
 
 A session that changed nothing is not asked to update the briefs: that costs a request each time and has little to record. A plain summary of it is still kept and is searchable.
+
+## Looking things up (`unire memory`)
+
+The core is small on purpose. When the agent needs something an earlier session may have settled, it runs `unire memory "<words>"` in the sandbox, which searches the notes of the repos in this chat and prints a few matches with an excerpt and an id, or `unire memory <id>` to read one in full. Unire answers it while the agent runs (the same live channel as the pull request tools) and only ever gives notes from the repos of the current chat, marked as background data that may be out of date. A chat therefore pays for old notes only when it uses them.
+
+## Switching agents, and long conversations
+
+Every reply is a new run for the agent, so Unire tells it what happened before. The latest turn is given nearly in full (what was asked and the answer); older turns are boiled down to what was asked and how each ended, newest first, within a budget of about 5,000 characters, and a line says when earlier turns were left out. Each turn names the agent that did it, so switching agents mid-conversation keeps the thread. The code is on the branch, which the preamble names.

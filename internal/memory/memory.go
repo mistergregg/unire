@@ -18,12 +18,11 @@ import (
 
 // Size budget, in characters (about four characters per token).
 const (
-	BriefCap         = 6000  // one repo's brief, the most it may be
-	BriefTarget      = 2500  // what the agent is asked to aim for: short, and only what it cannot see for itself
-	SummaryCap       = 6000  // one session's summary
-	ContextCap       = 16000 // everything given to an agent at the start
-	RecentSessions   = 3     // past summaries included in the context
-	summaryInContext = 1800  // each past summary, trimmed, in the context
+	BriefCap       = 6000 // one repo's brief, the most it may be
+	BriefTarget    = 2500 // what the agent is asked to aim for: short, and only what it cannot see for itself
+	SummaryCap     = 6000 // one session's summary
+	ContextCap     = 7000 // everything given to an agent at the start (about 1,750 tokens)
+	RecentSessions = 5    // earlier sessions listed by one line each, not copied in full
 )
 
 // Where the agent writes its memory files inside the sandbox. It is outside
@@ -46,8 +45,8 @@ type RepoBrief struct {
 
 // PastSession is an earlier session's summary, newest first when listed.
 type PastSession struct {
-	Task, Agent, Branch, Status, Summary string
-	When                                 time.Time
+	ID, Task, Agent, Branch, Status, Summary string
+	When                                     time.Time
 }
 
 // ---- cleaning, capping, redacting ----
@@ -128,8 +127,10 @@ func Redact(text string, secrets []string) (string, bool) {
 
 // BuildContext writes the memory an agent is given before it starts, as
 // markdown. It returns "" when there is nothing to say. The result is at most
-// ContextCap characters: past sessions are dropped first, oldest first, then
-// briefs are shortened.
+// ContextCap characters. It is only a core: each repo's brief, and a one-line
+// index of the latest sessions. Earlier sessions are not copied in; the agent
+// looks them up with `unire memory` when it needs them, so a chat does not pay
+// for what it does not use.
 func BuildContext(repos []RepoBrief, past []PastSession) string {
 	hasBrief := false
 	for _, r := range repos {
@@ -143,18 +144,13 @@ func BuildContext(repos []RepoBrief, past []PastSession) string {
 	if len(past) > RecentSessions {
 		past = past[:RecentSessions]
 	}
-	for keep := len(past); ; keep-- {
-		briefCap := BriefCap
-		for {
-			ctx := render(repos, past[:keep], briefCap)
-			if len(ctx) <= ContextCap || (keep == 0 && briefCap <= 500) {
-				return Cap(ctx, ContextCap)
-			}
-			if keep > 0 {
-				break // try fewer past sessions first
-			}
-			briefCap = briefCap * 3 / 4
+	briefCap := BriefCap
+	for {
+		ctx := render(repos, past, briefCap)
+		if len(ctx) <= ContextCap || briefCap <= 500 {
+			return Cap(ctx, ContextCap)
 		}
+		briefCap = briefCap * 3 / 4
 	}
 }
 
@@ -171,11 +167,15 @@ func render(repos []RepoBrief, past []PastSession, briefCap int) string {
 		fmt.Fprintf(&b, "\n## Repo %s (%s)\n\n%s\n", r.Dir, r.FullName, Cap(strings.TrimSpace(r.Brief), briefCap))
 	}
 	if len(past) > 0 {
-		b.WriteString("\n## Recent sessions\n")
+		b.WriteString("\n## Earlier sessions\n\n")
 		for _, p := range past {
-			fmt.Fprintf(&b, "\n### %s: %s (%s, branch %s, %s)\n\n%s\n",
-				p.When.Format("2006-01-02"), oneLine(p.Task), p.Agent, p.Branch, p.Status, Cap(strings.TrimSpace(p.Summary), summaryInContext))
+			fmt.Fprintf(&b, "- %s: %s (%s, %s)", p.When.Format("2006-01-02"), Cap(oneLine(p.Task), 100), p.Agent, p.Status)
+			if p.ID != "" {
+				fmt.Fprintf(&b, " [%s]", p.ID)
+			}
+			b.WriteString("\n")
 		}
+		b.WriteString("\nThese are not copied here. To look something up in them, run `unire memory \"<words>\"` to search, or `unire memory <id>` to read one in full.\n")
 	}
 	return b.String()
 }

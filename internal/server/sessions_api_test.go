@@ -15,6 +15,7 @@ import (
 	"github.com/mistergregg/unire/internal/agent/agenttest"
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/store"
 )
 
 // fakeBox stands in for Docker. It records every command and lets a test
@@ -662,6 +663,14 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	e.box.mu.Lock()
 	told := append([]string(nil), e.box.prompts...)
 	e.box.mu.Unlock()
+	// The step that saves memory also talks to the agent, after the turn is done.
+	var said []string
+	for _, p := range told {
+		if !strings.HasPrefix(p, "Your task is finished") {
+			said = append(said, p)
+		}
+	}
+	told = said
 	if len(told) != 2 || told[1] != "also add tests" {
 		t.Errorf("the agent was told %v", told)
 	}
@@ -698,5 +707,46 @@ func TestPromotingAWaitingMessageThroughTheAPI(t *testing.T) {
 	e.waitStatus(id, "done")
 	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer/"+res["id"]+"/now", nil); code != http.StatusConflict {
 		t.Errorf("promote after the run = %d, want 409", code)
+	}
+}
+
+func TestAReplyBoilsTheWholeConversationDown(t *testing.T) {
+	mk := func(i int, agent, prompt string) store.Session {
+		return store.Session{ID: fmt.Sprint("t", i), Agent: agent, Prompt: prompt, Branch: "agent/x"}
+	}
+	var thread []store.Session
+	for i := 1; i <= 30; i++ {
+		agentID := "claude"
+		if i%2 == 0 {
+			agentID = "antigravity"
+		}
+		thread = append(thread, mk(i, agentID, fmt.Sprintf("request number %d %s", i, strings.Repeat("x", 800))))
+	}
+	answer := func(id string) string { return "answer of " + id + " " + strings.Repeat("y", 1500) }
+	p := replyPreamble(thread, answer)
+
+	if !strings.Contains(p, "request number 30") || !strings.Contains(p, "answer of t30") {
+		t.Error("the last turn is given")
+	}
+	if !strings.Contains(p, "request number 29") {
+		t.Error("the turn before is boiled down, not dropped")
+	}
+	if !strings.Contains(p, "earlier turns are left out") {
+		t.Error("when old turns do not fit, it says so")
+	}
+	if strings.Contains(p, "request number 1 ") {
+		t.Error("the oldest turns are the ones left out")
+	}
+	if strings.Contains(p, "request number 29 "+strings.Repeat("x", 600)) {
+		t.Error("an older request is clipped")
+	}
+	if len(p) > 14000 {
+		t.Errorf("the preamble is %d characters, it should stay near its budget", len(p))
+	}
+	if !strings.Contains(p, "(antigravity)") || !strings.Contains(p, "branch agent/x") {
+		t.Errorf("who did each turn and where the work is: %q", p[:300])
+	}
+	if replyPreamble(nil, answer) != "" {
+		t.Error("no conversation, no preamble")
 	}
 }

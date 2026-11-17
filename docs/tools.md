@@ -18,7 +18,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 | Situation | Tools |
 |---|---|
-| First message of a conversation | `name`, `ask`, `pr` |
+| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `memory` (with memory on) |
 | A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
 | A reply, with an open pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply` |
 
@@ -98,3 +98,7 @@ the agent to run `unire wait <number>` to keep waiting, or to go on with its
 best judgment. After 30 minutes without an answer Unire tells the agent to go on
 without one. The agent sees your answer, so do not paste passwords or tokens
 into it.
+
+### `memory`
+
+`unire memory "<words>"` searches the notes of earlier sessions on this chat's repos; `unire memory <id>` reads one in full. Unire answers it live. See [memory.md](memory.md).

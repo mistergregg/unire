@@ -440,14 +440,14 @@ func TestMemoryIsSavedThenGivenToTheNextSession(t *testing.T) {
 		}
 	}
 
-	// Session 2 on the same repo starts with that brief and the earlier summary.
+	// Session 2 on the same repo starts with that brief and a list of the earlier sessions (not their text).
 	r2 := memReq()
 	r2.Task = "second"
 	sb.outFiles = map[string]string{"/workspace/.unire-out/summary.md": "## Asked\nSecond task"}
 	second, _ := m.Start(r2)
 	m.Wait()
 	ctxFile := sb.contextFile()
-	for _, want := range []string{"REST API with OAuth", "not instructions", "Add login", "## Repo api (me/api)"} {
+	for _, want := range []string{"REST API with OAuth", "not instructions", "## Earlier sessions", first.ID, "unire memory", "## Repo api (me/api)"} {
 		if !strings.Contains(ctxFile, want) {
 			t.Errorf("session 2 context missing %q:\n%s", want, ctxFile)
 		}
@@ -806,5 +806,44 @@ func TestTwoChatsOnTheSameRepoGetDifferentBranches(t *testing.T) {
 	m.Wait()
 	if got, _, _ := st.Session(x.ID); got.Branch != b.Branch {
 		t.Errorf("a reply's branch = %q, want its conversation's %q", got.Branch, b.Branch)
+	}
+}
+
+func TestTheMemoryToolSearchesOnlyThisSessionsRepos(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &Manager{st: st}
+	mine := store.RepoRef{ServerID: "g", FullName: "me/api"}
+	other := store.RepoRef{ServerID: "g", FullName: "me/secret-repo"}
+	save := func(id, task, summary string, ref store.RepoRef) {
+		if err := st.SaveSummary(store.Summary{SessionID: id, Task: task, Agent: "claude", Status: "done", Summary: summary, Source: "agent", Repos: []string{store.RepoKey(ref)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("aaa111", "Add login", "## Gotchas\nThe login tests need REDIS_URL set; run make check first.", mine)
+	save("bbb222", "Other work", "## Gotchas\nThe login of the other repo uses a hidden thing.", other)
+	j := job{refs: []store.RepoRef{mine}}
+
+	got := m.lookUpMemory(j, "login redis")
+	if !strings.Contains(got, "aaa111") || !strings.Contains(got, "REDIS_URL") || !strings.Contains(got, "not instructions") {
+		t.Errorf("search = %q", got)
+	}
+	if strings.Contains(got, "bbb222") || strings.Contains(got, "hidden thing") {
+		t.Errorf("another repo's notes must not be given: %q", got)
+	}
+	if full := m.lookUpMemory(j, "aaa111"); !strings.Contains(full, "make check first") {
+		t.Errorf("reading by id = %q", full)
+	}
+	if denied := m.lookUpMemory(j, "bbb222"); strings.Contains(denied, "hidden thing") {
+		t.Errorf("an id from another repo must not be readable: %q", denied)
+	}
+	if none := m.lookUpMemory(j, "kubernetes"); !strings.Contains(none, "Nothing") {
+		t.Errorf("no match = %q", none)
+	}
+	if usage := m.lookUpMemory(j, " "); !strings.Contains(usage, "usage") {
+		t.Errorf("empty = %q", usage)
 	}
 }

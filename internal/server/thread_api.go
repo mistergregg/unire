@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -107,6 +108,11 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "this conversation has already moved on")
 		return
 	}
+	thread, err := s.threadOf(x.ID)
+	if err != nil {
+		serverError(w)
+		return
+	}
 	if req.Agent == "" {
 		req.Agent = x.Agent
 	}
@@ -143,7 +149,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		mode = s.networkMode()
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(x, s.lastAnswer(x.ID)), Branch: sameAgentBranch(x, req.Agent),
+		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(thread, s.lastAnswer), Branch: sameAgentBranch(x, req.Agent),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID,
 	})
 	if err != nil {
@@ -153,22 +159,64 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toView(started))
 }
 
-// replyPreamble tells the agent that this continues earlier work: what it was
-// asked, what it answered, and where its work is. It goes before what the owner
-// wrote and is not shown as part of it. The answer is included because some
-// agents start every message as a new conversation.
-func replyPreamble(prev store.Session, answer string) string {
-	clip := func(s string, n int) string {
-		if r := []rune(s); len(r) > n {
-			return string(r[:n]) + "…"
+// Sizes of what a reply tells the agent about the conversation so far, in
+// characters. The latest turn is given nearly in full; older ones are boiled down
+// to what was asked and how it ended, newest first, until the budget is spent.
+const (
+	lastRequestChars = 2000
+	lastAnswerChars  = 5000
+	olderRequest     = 400
+	olderAnswer      = 600
+	olderBudget      = 5000
+)
+
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// replyPreamble tells the agent that this continues earlier work: what was asked,
+// what came of it, and where the work is. It goes before what the owner wrote and
+// is not shown as part of it. A reply is a new conversation for the agent, and the
+// owner may have switched agents, so the whole conversation is boiled down rather
+// than only the last turn. thread is every turn so far, oldest first.
+func replyPreamble(thread []store.Session, answer func(id string) string) string {
+	if len(thread) == 0 {
+		return ""
+	}
+	last := thread[len(thread)-1]
+	b := "This continues earlier work in the same conversation.\n"
+
+	// Older turns, newest first while the budget lasts, then shown oldest first.
+	var older []string
+	used, left := 0, 0
+	for i := len(thread) - 2; i >= 0; i-- {
+		t := thread[i]
+		entry := fmt.Sprintf("Turn %d (%s)\nAsked: %s\n", i+1, t.Agent, clip(t.Prompt, olderRequest))
+		if a := clip(answer(t.ID), olderAnswer); a != "" {
+			entry += "Result: " + a + "\n"
 		}
-		return s
+		if used+len(entry) > olderBudget && len(older) > 0 {
+			left = i + 1
+			break
+		}
+		used += len(entry)
+		older = append([]string{entry}, older...)
 	}
-	b := "This continues earlier work in the same conversation. Earlier you were asked:\n<earlier-request>\n" + clip(prev.Prompt, 2000) + "\n</earlier-request>\n"
-	if a := strings.TrimSpace(answer); a != "" {
-		b += "and you answered:\n<earlier-answer>\n" + clip(a, 6000) + "\n</earlier-answer>\n"
+	if left > 0 {
+		b += fmt.Sprintf("(%d earlier turns are left out.)\n", left)
 	}
-	return b + "The work so far is on branch " + prev.Branch + " in the repos that changed " +
+	if len(older) > 0 {
+		b += "What happened before the last turn:\n<earlier-turns>\n" + strings.Join(older, "\n") + "</earlier-turns>\n"
+	}
+	b += "In the last turn you were asked:\n<earlier-request>\n" + clip(last.Prompt, lastRequestChars) + "\n</earlier-request>\n"
+	if a := strings.TrimSpace(answer(last.ID)); a != "" {
+		b += "and the answer was:\n<earlier-answer>\n" + clip(a, lastAnswerChars) + "\n</earlier-answer>\n"
+	}
+	return b + "The work so far is on branch " + last.Branch + " in the repos that changed " +
 		"(git log and git diff show it). The owner now writes:\n\n"
 }
 

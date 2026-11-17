@@ -184,6 +184,7 @@ function serverCard(s) {
   const testBtn = el("button", {}, "Test");
   const prBtn = el("button", { title: "Check that the token can open and follow pull requests (changes nothing)" }, "Check pull requests");
   const prResult = el("ul", { class: "pr-perms" });
+  const prRepo = el("input", { type: "text", placeholder: "Check one repo: owner/name (optional)", spellcheck: "false", "aria-label": "Repo to check pull request access on" });
   const replaceBtn = el("button", {}, "Replace token");
   const removeBtn = el("button", { class: "danger" }, "Remove");
 
@@ -194,7 +195,7 @@ function serverCard(s) {
   prBtn.addEventListener("click", () => guarded(prBtn, async () => {
     prResult.replaceChildren(el("li", { class: "muted" }, "Checking…"));
     try {
-      const r = await api("POST", "/api/servers/" + encodeURIComponent(s.id) + "/test-pulls");
+      const r = await api("POST", "/api/servers/" + encodeURIComponent(s.id) + "/test-pulls", { repo: prRepo.value.trim() });
       prResult.replaceChildren(el("li", { class: "muted" }, "Checked on " + r.repo),
         ...r.capabilities.map((c) => el("li", { class: c.ok ? "ok" : "bad" }, (c.ok ? "✓ " : "✗ ") + c.name + (c.note ? " (" + c.note + ")" : ""))));
     } catch (e) { prResult.replaceChildren(); throw e; }
@@ -222,7 +223,7 @@ function serverCard(s) {
     el("div", { class: "tile-body" }, s.tokenSet ? "Token saved and encrypted." : "No token saved yet."),
     el("div", { class: "item-actions" }, tokenInput, replaceBtn),
     el("div", { class: "item-actions" }, testBtn, prBtn, removeBtn, status),
-    prResult);
+    prRepo, prResult);
 }
 
 $("add-form").addEventListener("submit", (e) => {

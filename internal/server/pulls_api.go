@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -97,20 +98,45 @@ func (s *Server) testPullRequestAccess(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 	defer cancel()
 	repo := strings.TrimSpace(req.Repo)
-	if repo == "" {
-		repos, err := p.ListRepos(ctx, "")
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
+	var caps []gitprovider.Capability
+	if repo != "" {
+		caps, err = checker.CheckPullRequestAccess(ctx, repo)
+	} else {
+		// No repo named: try a few and report the first one the account can write to,
+		// since a read-only repo or one with pull requests turned off says nothing
+		// about the token.
+		repos, lerr := p.ListRepos(ctx, "")
+		if lerr != nil {
+			writeErr(w, http.StatusBadRequest, lerr.Error())
 			return
 		}
 		if len(repos) == 0 {
 			writeErr(w, http.StatusBadRequest, "the token can see no repos to check against")
 			return
 		}
-		repo = repos[0].FullName
+		for i, r := range repos {
+			if i >= 6 {
+				break
+			}
+			c, cerr := checker.CheckPullRequestAccess(ctx, r.FullName)
+			if cerr != nil {
+				if err == nil && caps == nil {
+					err = cerr
+				}
+				continue
+			}
+			if caps == nil || (c[len(c)-1].OK && !caps[len(caps)-1].OK) {
+				repo, caps, err = r.FullName, c, nil
+			}
+			if c[len(c)-1].OK && c[0].OK {
+				break // writable, with pull requests on: a fair test
+			}
+		}
 	}
-	caps, err := checker.CheckPullRequestAccess(ctx, repo)
-	if err != nil {
+	if err != nil || caps == nil {
+		if err == nil {
+			err = errors.New("could not check any repo")
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

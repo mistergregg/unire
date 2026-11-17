@@ -42,7 +42,7 @@ func probe(name string, err error) Capability {
 		return Capability{Name: name, Note: "the token is not allowed to"}
 	case errors.As(err, &he) && he.Status == http.StatusNotFound:
 		// Servers answer 404 for what a token may not see.
-		return Capability{Name: name, Note: "not found: the repo, or the token's permission for it"}
+		return Capability{Name: name, Note: "not found: pull requests or issues may be turned off for this repo, or the token cannot see it"}
 	}
 	return Capability{Name: name, Note: err.Error()}
 }

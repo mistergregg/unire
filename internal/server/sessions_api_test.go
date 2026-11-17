@@ -26,6 +26,7 @@ type fakeBox struct {
 	block    chan struct{}
 	outFiles map[string]string // files the agent "writes" in the memory step
 	prompts  []string          // what a steerable agent was told (its first message and later ones)
+	heads    int               // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
 	status      map[string]statusResult // answers to sign-in questions, by command name
 	statusAsked []string
@@ -77,7 +78,15 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		case "git":
 			for _, a := range o.Argv {
 				if a == "rev-parse" {
-					io.WriteString(o.Stdout, "abc\n")
+					b.mu.Lock()
+					b.heads++
+					n := b.heads
+					b.mu.Unlock()
+					if n%2 == 1 {
+						io.WriteString(o.Stdout, "aaa\n")
+					} else {
+						io.WriteString(o.Stdout, "bbb\n")
+					}
 				}
 			}
 			return nil

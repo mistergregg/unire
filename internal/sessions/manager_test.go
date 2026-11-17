@@ -25,6 +25,7 @@ type fakeSandbox struct {
 	agentErr    error
 	block       chan struct{} // if set, the agent waits on it or on ctx
 	memoryGate  chan struct{} // if set, the memory step waits on it (or on ctx)
+	heads       int           // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
 	mu       sync.Mutex
 	files    map[string]string // files the workflow wrote into the sandbox, by path
@@ -66,7 +67,15 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		case "git":
 			for _, a := range o.Argv {
 				if a == "rev-parse" {
-					io.WriteString(o.Stdout, "abc\n")
+					f.mu.Lock()
+					f.heads++
+					n := f.heads
+					f.mu.Unlock()
+					if n%2 == 1 {
+						io.WriteString(o.Stdout, "aaa\n")
+					} else {
+						io.WriteString(o.Stdout, "bbb\n")
+					}
 				}
 			}
 			return nil

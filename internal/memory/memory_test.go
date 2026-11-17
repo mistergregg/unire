@@ -138,3 +138,17 @@ func TestFallbackSummary(t *testing.T) {
 		t.Error("an empty result should say so")
 	}
 }
+
+func TestTheUpdatePromptAsksForWhatTheAgentCannotSeeForItself(t *testing.T) {
+	p := UpdatePrompt([]RepoBrief{{Dir: "api", FullName: "me/api", Brief: "old", Docs: []string{"README.md", "docs"}}}, "agent/x")
+	for _, want := range []string{"## Commands and checks", "## Conventions and quirks", "## Gotchas", "for the gap, not as an overview", "name the file in parentheses", "README.md, docs"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the prompt should contain %q", want)
+		}
+	}
+	for _, bad := range []string{"## What it is", "## Structure"} {
+		if strings.Contains(strings.Split(p, "The previous briefs follow")[0], "Use these headings: "+bad) {
+			t.Errorf("the overview heading %q should be gone", bad)
+		}
+	}
+}

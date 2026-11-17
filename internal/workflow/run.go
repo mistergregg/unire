@@ -410,7 +410,16 @@ func (w *worker) rememberSession(ctx context.Context, ad agent.Adapter, spec ses
 	}
 	res := Result{Briefs: map[string]string{}}
 
-	if agentErr == nil {
+	// A session that changed nothing has little to record, and asking the agent costs
+	// a request (and tokens) every time. Keep a plain summary and leave the briefs alone.
+	anyChanged := false
+	for _, o := range outcomes {
+		anyChanged = anyChanged || o.changed
+	}
+	if agentErr == nil && !anyChanged {
+		fmt.Fprintln(w.opt.Err, "memory: nothing changed, so the agent was not asked to update the briefs (a plain summary is kept)")
+	}
+	if agentErr == nil && anyChanged {
 		timeout := w.opt.MemoryTimeout
 		if timeout == 0 {
 			timeout = 5 * time.Minute
@@ -467,7 +476,7 @@ func (w *worker) askAgentToRemember(ctx context.Context, ad agent.Adapter, spec 
 	if err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"mkdir", "-p", memory.OutDir}}); err != nil {
 		return "", nil, fmt.Errorf("cannot create %s: %v", memory.OutDir, err)
 	}
-	prompt := memory.UpdatePrompt(w.opt.Mem.Repos, spec.Branch())
+	prompt := memory.UpdatePrompt(w.withDocs(ctx, w.opt.Mem.Repos), spec.Branch())
 	argv, resumed := ad.FollowUp(prompt, spec.Mode, ref)
 	if !resumed {
 		// This agent cannot resume its conversation, so a fresh one is told what happened.
@@ -539,4 +548,19 @@ func (w *worker) requestedBody(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(content)
+}
+
+// withDocs says, for each repo, which of its own documentation files exist, so the
+// agent leaves out of memory what they already say.
+func (w *worker) withDocs(ctx context.Context, repos []memory.RepoBrief) []memory.RepoBrief {
+	out := make([]memory.RepoBrief, len(repos))
+	for i, r := range repos {
+		out[i] = r
+		var names bytes.Buffer
+		script := `cd "$1" 2>/dev/null && ls -1d README* readme* CLAUDE.md AGENTS.md GEMINI.md CONTRIBUTING* ARCHITECTURE* docs 2>/dev/null`
+		if err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"sh", "-c", script, "sh", workspace + "/" + r.Dir}, Stdout: &names}); err == nil || names.Len() > 0 {
+			out[i].Docs = strings.Fields(names.String())
+		}
+	}
+	return out
 }

@@ -6,7 +6,7 @@ Unire remembers what happened in earlier sessions so a new session, run by the s
 
 For each repo (a repo is identified by its git server and full name):
 
-- **A brief:** a short markdown document, at most 6000 characters, covering what the repo is, its structure, conventions, commands, decisions and open items. It is rewritten after each session, merging the old brief with what was learned.
+- **A brief:** a short markdown document (the agent is asked to aim for under 2,500 characters; 6,000 is the hard limit) with only what an agent cannot see for itself: non-obvious commands and how to check a change, conventions and quirks, decisions with the reason, gotchas and open items, each fact naming the file it comes from. It is rewritten after each session, merging the old brief with what was learned.
 - **Session summaries:** one per finished session: what was asked, what was done, decisions, gotchas, what is still open, and how to run and test. Searchable in the Memory tab.
 
 ## How it works
@@ -36,3 +36,9 @@ On a finished session, **Continue with a new session** opens the New session pag
 - **No on-demand search for the agent yet.** The agent gets the brief and recent summaries up front. A tool it could call to search older summaries is planned.
 - **No workspace-level memory yet,** only per repo. A session that touches several repos gets each one's brief and the shared summaries.
 - **Only unattended sessions** write memory so far.
+
+## What goes in a brief, and why
+
+Studies of context files for coding agents (for example the ETH Zurich evaluation of `AGENTS.md`/`CLAUDE.md`) found that files written by an LLM that restate what the repo is, or list its folders, made agents slower and a little less successful, while short notes on what the agent cannot find out itself (tooling choices, quirks, non-default conventions) helped. So the update prompt asks for the gap, not the overview: no "what it is" or "structure" sections, nothing the README, `CLAUDE.md`, `AGENTS.md` or `docs/` already say (Unire tells the agent which of those exist in each repo), and one short line per fact with the file it comes from, so it can be checked later.
+
+A session that changed nothing is not asked to update the briefs: that costs a request each time and has little to record. A plain summary of it is still kept and is searchable.

@@ -23,9 +23,10 @@ import (
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
 // and "claude" behaves as the test configures.
 type fakeSandbox struct {
-	mu    sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
-	calls []runner.ExecOpts
-	heads int
+	mu       sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
+	calls    []runner.ExecOpts
+	heads    int
+	noChange bool // the agent changes nothing: HEAD stays where it was
 
 	files     map[string]string // files the workflow wrote
 	outFiles  map[string]string // files the follow-up agent "writes"
@@ -119,7 +120,7 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			f.heads++
 			// First call per repo is the start HEAD; later calls differ, so the
 			// workflow sees the agent's commit.
-			if f.heads%2 == 1 {
+			if f.heads%2 == 1 || f.noChange {
 				io.WriteString(o.Stdout, "aaa\n")
 			} else {
 				io.WriteString(o.Stdout, "bbb\n")
@@ -833,5 +834,34 @@ func TestTheAgentCanWriteAPullRequestDescription(t *testing.T) {
 	o.Tools = nil
 	if res, _ := run(t, sb, baseSpec(), o); res.PRBody != "" {
 		t.Errorf("a session without the tool ignores it: %q", res.PRBody)
+	}
+}
+
+func TestASessionThatChangedNothingDoesNotAskTheAgentToUpdateMemory(t *testing.T) {
+	asked := func(sb *fakeSandbox) bool {
+		for _, c := range sb.calls {
+			if len(c.Argv) > 0 && c.Argv[0] == "claude" && strings.Contains(strings.Join(c.Argv, " "), "Your task is finished") {
+				return true
+			}
+		}
+		return false
+	}
+	sb := &fakeSandbox{noChange: true, outFiles: agentWrites("## Asked\nx", "## Gotchas\nnew")}
+	res, err := run(t, sb, baseSpec(), memOpts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked(sb) {
+		t.Error("nothing changed, so the agent should not be asked to update memory")
+	}
+	if res.SummarySource != "fallback" || len(res.Briefs) != 0 {
+		t.Errorf("a plain summary is kept and the briefs are left alone: %+v", res)
+	}
+	sb = &fakeSandbox{outFiles: agentWrites("## Asked\nx", "## Gotchas\nnew")}
+	if _, err := run(t, sb, baseSpec(), memOpts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !asked(sb) {
+		t.Error("a session that changed something is asked to update memory")
 	}
 }

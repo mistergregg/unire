@@ -24,6 +24,7 @@ const agentPidFile = "/tmp/unire-agent.pid"
 var (
 	exitGrace      = 10 * time.Second
 	interruptGrace = 5 * time.Second
+	stopGrace      = 3 * time.Second // between asking a process to end, killing it, and giving up on it
 )
 
 // A process that dies with messages the agent never got is started again, from
@@ -93,12 +94,35 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		}
 	}
 
+	// The exec runs under its own context, so a process that cannot be ended can
+	// be given up on.
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
+	// stopHard ends the agent and everything it started. The agent starts helper
+	// processes that keep its output open, so docker exec does not return until
+	// they are gone: ask politely, then kill, and finally stop waiting for it.
+	stopHard := func() {
+		w.signalAgent(context.Background(), "TERM")
+		after(stopGrace, func() {
+			if isExited() {
+				return
+			}
+			w.signalAgent(context.Background(), "KILL")
+			after(stopGrace, func() {
+				if !isExited() {
+					cancelExec()
+				}
+			})
+		})
+	}
+
 	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage}
 	var leaving sync.Once
 	sw.afterLine = func() {
 		if drv.Done() {
 			closeInput()
-			leaving.Do(func() { after(exitGrace, func() { w.signalAgent(context.Background(), "TERM") }) })
+			leaving.Do(func() { after(exitGrace, stopHard) })
 		}
 	}
 
@@ -107,7 +131,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	var execErr error
 	go func() {
 		defer close(exited)
-		execErr = w.sb.Exec(ctx, runner.ExecOpts{Argv: wrapped, Dir: workspace, Stdin: pr, Stdout: sw, Stderr: &stderr})
+		execErr = w.sb.Exec(execCtx, runner.ExecOpts{Argv: wrapped, Dir: workspace, Stdin: pr, Stdout: sw, Stderr: &stderr})
 		_ = pr.Close() // anything still writing to the agent's input stops waiting
 	}()
 
@@ -132,7 +156,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		w.signalAgent(ctx, "INT")
 		after(interruptGrace, func() {
 			if !isExited() && len(drv.Pending()) > 0 {
-				w.signalAgent(context.Background(), "TERM")
+				stopHard()
 			}
 		})
 	}
@@ -182,11 +206,26 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	return drv.Pending(), execErr
 }
 
-// signalAgent sends a signal to the agent process inside the sandbox.
+// signalAgent sends a signal to the agent process inside the sandbox. INT goes
+// to the agent itself, which ends its turn. TERM and KILL go to it and to every
+// process it started.
 func (w *worker) signalAgent(ctx context.Context, sig string) {
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_ = w.sb.Exec(cctx, runner.ExecOpts{Argv: []string{"sh", "-c", "kill -" + sig + " $(cat " + agentPidFile + ") 2>/dev/null; true"}})
+	script := "kill -INT $(cat " + agentPidFile + ") 2>/dev/null; true"
+	if sig != "INT" {
+		script = treeKill(sig)
+	}
+	_ = w.sb.Exec(cctx, runner.ExecOpts{Argv: []string{"sh", "-c", script}})
+}
+
+// treeKill is a shell script that sends sig to the agent and all its
+// descendants. The sandbox has no ps or pkill, so the tree is read from /proc.
+func treeKill(sig string) string {
+	return `root=$(cat ` + agentPidFile + `) || exit 0; ` +
+		`for f in /proc/[0-9]*/stat; do sed -n 's/^\([0-9]*\) (.*) [A-Za-z] \([0-9]*\) .*/\1 \2/p' "$f" 2>/dev/null; done | ` +
+		`awk -v root="$root" '{p[$1]=$2} END {for (i in p) {x=i; while ((x in p) && x!=root && x>1) x=p[x]; if (x==root) print i} print root}' | sort -u | ` +
+		`while read pid; do kill -` + sig + ` "$pid" 2>/dev/null; done; true`
 }
 
 // lastLines returns the last n non-empty lines of what the agent wrote to stderr.

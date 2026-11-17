@@ -55,3 +55,14 @@ docker run --rm -e UNIRE_REAL_CLIS=1 -v "$PWD":/t:ro unire-sandbox sh -c 'cp /t/
 
 A signed-in run is the one thing this does not cover: how each agent behaves
 when a message really arrives in the middle of a long turn.
+
+## Ending an agent for good
+
+An agent starts helper processes of its own, and they keep its output open:
+`docker exec` does not return until they are gone, so stopping only the agent
+process leaves the run waiting forever (this froze the first real Send now). When
+Unire has to end an agent (after an interrupt that did not end its turn, or when
+a finished agent does not leave) it signals the agent and every process it
+started (the sandbox has no `ps` or `pkill`, so the tree is read from `/proc`),
+kills it if it will not go, and finally stops waiting for it, so the run always
+carries on.

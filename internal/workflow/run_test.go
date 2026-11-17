@@ -53,8 +53,11 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		f.mu.Unlock()
 		if cb != nil {
 			sig := "TERM"
-			if strings.Contains(o.Argv[2], "kill -INT") {
+			switch {
+			case strings.Contains(o.Argv[2], "kill -INT"):
 				sig = "INT"
+			case strings.Contains(o.Argv[2], "kill -KILL"):
+				sig = "KILL"
 			}
 			cb(sig)
 		}

@@ -129,18 +129,18 @@ func TestASteerableAgentWithNothingToSteerStillEnds(t *testing.T) {
 // then it either leaves (exitOnInterrupt) or stays alive until it is stopped, as
 // nothing documents which it does. The owner sends one message and then one
 // "now". Everything is checked at the end.
-func runAgySteered(t *testing.T, exitOnInterrupt bool) {
+func runAgySteered(t *testing.T, after string) {
 	t.Helper()
-	oldGrace := interruptGrace
-	interruptGrace = 300 * time.Millisecond
-	defer func() { interruptGrace = oldGrace }()
+	oldGrace, oldStop := interruptGrace, stopGrace
+	interruptGrace, stopGrace = 300*time.Millisecond, 150*time.Millisecond
+	defer func() { interruptGrace, stopGrace = oldGrace, oldStop }()
 
 	var mu sync.Mutex
 	var argvs, texts []string
 	starts := 0
 	intr := make(chan struct{}, 4)
-	term := make(chan struct{})
-	var termOnce sync.Once
+	term, kill := make(chan struct{}), make(chan struct{})
+	var termOnce, killOnce sync.Once
 	first := make(chan struct{}, 1)
 
 	sb := &fakeSandbox{}
@@ -150,6 +150,8 @@ func runAgySteered(t *testing.T, exitOnInterrupt bool) {
 			intr <- struct{}{}
 		case "TERM":
 			termOnce.Do(func() { close(term) })
+		case "KILL":
+			killOnce.Do(func() { close(kill) })
 		}
 	}
 	sb.live = func(ctx context.Context, inner []string, o runner.ExecOpts) error {
@@ -177,13 +179,25 @@ func runAgySteered(t *testing.T, exitOnInterrupt bool) {
 				select { // the first process works until it is interrupted
 				case <-intr:
 					fmt.Fprintln(o.Stdout, `{"event":"result","result":{"conversation_id":"conv-1","status":"INTERRUPTED","error":"interrupted","response":""}}`)
-					if exitOnInterrupt {
+					switch after {
+					case "exit":
 						return errors.New("exit status 130")
-					}
-					select { // alive, and silent, until it is stopped
-					case <-term:
-						return errors.New("terminated")
-					case <-ctx.Done():
+					case "alive": // silent until it is asked to end
+						select {
+						case <-term:
+							return errors.New("terminated")
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					case "ignores-term": // only a kill ends it
+						select {
+						case <-kill:
+							return errors.New("killed")
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					default: // "stuck": it ignores every signal; only giving up on it frees the run
+						<-ctx.Done()
 						return ctx.Err()
 					}
 				case <-ctx.Done():
@@ -239,8 +253,15 @@ func runAgySteered(t *testing.T, exitOnInterrupt bool) {
 	}
 }
 
-func TestSendNowWhenAntigravityLeavesAfterTheInterrupt(t *testing.T) { runAgySteered(t, true) }
+func TestSendNowWhenAntigravityLeavesAfterTheInterrupt(t *testing.T) { runAgySteered(t, "exit") }
 
 // The freeze: the agent ended its turn on the interrupt but kept running, and the
 // waiting messages were never delivered.
-func TestSendNowWhenAntigravityStaysAliveAfterTheInterrupt(t *testing.T) { runAgySteered(t, false) }
+func TestSendNowWhenAntigravityStaysAliveAfterTheInterrupt(t *testing.T) { runAgySteered(t, "alive") }
+
+func TestSendNowWhenAntigravityIgnoresTerminate(t *testing.T) { runAgySteered(t, "ignores-term") }
+
+// The worst case, and what happened on the first real run: the process (with
+// helpers holding its output) does not end however it is signalled. The run must
+// give up on it, start the agent again and deliver the messages.
+func TestSendNowWhenAntigravityCannotBeStopped(t *testing.T) { runAgySteered(t, "stuck") }

@@ -10,6 +10,7 @@ type PullRequest struct {
 	Repo      string // full name on that server
 	Number    int
 	Branch    string
+	Base      string // the branch it was asked to go into; empty means the repo's default
 	Title     string
 	URL       string
 	CreatedAt time.Time
@@ -17,14 +18,14 @@ type PullRequest struct {
 
 // AddPullRequest records a pull request a conversation opened.
 func (s *Store) AddPullRequest(p PullRequest) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO pull_requests (root_id, server_id, repo, number, branch, title, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.RootID, p.ServerID, p.Repo, p.Number, p.Branch, p.Title, p.URL, s.now().Unix())
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO pull_requests (root_id, server_id, repo, number, branch, base, title, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.RootID, p.ServerID, p.Repo, p.Number, p.Branch, p.Base, p.Title, p.URL, s.now().Unix())
 	return err
 }
 
 // PullRequests lists a conversation's pull requests, oldest first.
 func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
-	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, title, url, created_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +34,7 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 	for rows.Next() {
 		var p PullRequest
 		var at int64
-		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Title, &p.URL, &at); err != nil {
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.Unix(at, 0)

@@ -65,14 +65,24 @@ type View struct {
 
 const maxComments = 40
 
-// pushed is a branch some turn of the conversation pushed.
-type pushed struct{ serverID, repo, branch string }
+// pushed is a branch some turn of the conversation pushed, and the branch it was
+// made to go into when the agent said (an extra branch made for another target);
+// empty base means the conversation's own base for that repo.
+type pushed struct{ serverID, repo, branch, base string }
 
 // pushes lists every (repo, branch) the conversation pushed, oldest first, and
-// the last turn that pushed each.
+// the last turn that pushed each. A turn's own branch is logged as "<dir>: pushed
+// <branch>"; extra branches it made for other targets as "<dir>: also pushed
+// <branch> (into <base>)".
 func (s *Service) pushes(thread []store.Session) ([]pushed, map[pushed]store.Session) {
 	var order []pushed
 	last := map[pushed]store.Session{}
+	add := func(p pushed, t store.Session) {
+		if _, seen := last[p]; !seen {
+			order = append(order, p)
+		}
+		last[p] = t
+	}
 	for _, t := range thread {
 		events, err := s.Store.Events(t.ID, 0, 5000)
 		if err != nil {
@@ -88,12 +98,17 @@ func (s *Service) pushes(thread []store.Session) ([]pushed, map[pushed]store.Ses
 				continue
 			}
 			for i, d := range dirs {
-				if strings.HasPrefix(e.Text, d+": pushed ") {
-					p := pushed{t.Repos[i].ServerID, t.Repos[i].FullName, t.Branch}
-					if _, seen := last[p]; !seen {
-						order = append(order, p)
+				ref := t.Repos[i]
+				switch {
+				case strings.HasPrefix(e.Text, d+": pushed "):
+					add(pushed{ref.ServerID, ref.FullName, t.Branch, ""}, t)
+				case strings.HasPrefix(e.Text, d+": also pushed "):
+					rest := strings.TrimPrefix(e.Text, d+": also pushed ")
+					branch, base := rest, ""
+					if i := strings.Index(rest, " (into "); i >= 0 && strings.HasSuffix(rest, ")") {
+						branch, base = rest[:i], strings.TrimSuffix(rest[i+len(" (into "):], ")")
 					}
-					last[p] = t
+					add(pushed{ref.ServerID, ref.FullName, strings.TrimSpace(branch), base}, t)
 				}
 			}
 		}
@@ -101,7 +116,8 @@ func (s *Service) pushes(thread []store.Session) ([]pushed, map[pushed]store.Ses
 	return order, last
 }
 
-// Proposals lists the branches of a conversation that could become a pull request.
+// Proposals lists the pushed branches of a conversation that have no pull request
+// yet (into the branch they are meant for).
 func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 	if len(thread) == 0 {
 		return nil, nil
@@ -110,18 +126,27 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	opened := map[pushed]bool{}
+	type target struct{ serverID, repo, branch, base string }
+	opened := map[target]bool{}
 	for _, p := range have {
-		opened[pushed{p.ServerID, p.Repo, p.Branch}] = true
+		opened[target{p.ServerID, p.Repo, p.Branch, p.Base}] = true
 	}
 	title := suggestedTitle(s.Store, thread)
 	order, last := s.pushes(thread)
 	var out []Proposal
 	for _, p := range order {
-		if opened[p] {
+		base := p.base
+		if base == "" {
+			base = baseOf(thread[0], p)
+		}
+		if opened[target{p.serverID, p.repo, p.branch, base}] {
 			continue
 		}
-		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: baseOf(thread[0], p), Title: title, Body: bodyOf(s.Store, thread, last[p], thread[0].Task)})
+		t := title
+		if p.base != "" {
+			t = title + " (into " + p.base + ")" // an extra branch is told apart from the main one
+		}
+		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: base, Title: t, Body: bodyOf(s.Store, thread, last[p], thread[0].Task)})
 	}
 	return out, nil
 }
@@ -199,37 +224,59 @@ func bodyOf(st *store.Store, thread []store.Session, t store.Session, task strin
 // Open opens a pull request for one of the conversation's proposals. The branch
 // must be one the conversation pushed, so a request cannot name anything else.
 func (s *Service) Open(ctx context.Context, thread []store.Session, want Proposal) (View, error) {
-	props, err := s.Proposals(thread)
+	if len(thread) == 0 {
+		return View{}, errors.New("no such conversation")
+	}
+	order, last := s.pushes(thread)
+	var found *pushed
+	for i := range order {
+		if order[i].serverID == want.ServerID && order[i].repo == want.Repo && order[i].branch == want.Branch {
+			found = &order[i]
+			break
+		}
+	}
+	if found == nil {
+		return View{}, errors.New("that branch was not pushed by this conversation")
+	}
+	// The branch to go into: the one the owner typed, else the one the branch was
+	// made for (an extra branch), else where the conversation started.
+	base := strings.TrimSpace(want.Base)
+	if base == "" {
+		base = found.base
+	}
+	if base == "" {
+		base = baseOf(thread[0], *found)
+	}
+	have, err := s.Store.PullRequests(thread[0].ID)
 	if err != nil {
 		return View{}, err
 	}
-	var p *Proposal
-	for i := range props {
-		if props[i].ServerID == want.ServerID && props[i].Repo == want.Repo && props[i].Branch == want.Branch {
-			p = &props[i]
+	for _, p := range have {
+		if p.ServerID == found.serverID && p.Repo == found.repo && p.Branch == found.branch && p.Base == base {
+			return View{}, errors.New("this branch already has a pull request into that branch")
 		}
-	}
-	if p == nil {
-		return View{}, errors.New("that branch was not pushed by this conversation, or it already has a pull request")
 	}
 	title, body := strings.TrimSpace(want.Title), want.Body
 	if title == "" {
-		title = p.Title
+		title = suggestedTitle(s.Store, thread)
+		if found.base != "" {
+			title += " (into " + found.base + ")"
+		}
 	}
 	if body == "" {
-		body = p.Body
+		body = bodyOf(s.Store, thread, last[*found], thread[0].Task)
 	}
-	prs, _, err := s.prsFor(p.ServerID)
+	prs, _, err := s.prsFor(found.serverID)
 	if err != nil {
 		return View{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	pr, err := prs.CreatePR(ctx, p.Repo, p.Branch, p.Base, title, body)
+	pr, err := prs.CreatePR(ctx, found.repo, found.branch, base, title, body)
 	if err != nil {
 		return View{}, err
 	}
-	rec := store.PullRequest{RootID: thread[0].ID, ServerID: p.ServerID, Repo: p.Repo, Number: pr.Number, Branch: p.Branch, Title: title, URL: pr.URL}
+	rec := store.PullRequest{RootID: thread[0].ID, ServerID: found.serverID, Repo: found.repo, Number: pr.Number, Branch: found.branch, Base: base, Title: title, URL: pr.URL}
 	if err := s.Store.AddPullRequest(rec); err != nil {
 		return View{}, err
 	}
@@ -354,20 +401,15 @@ const (
 	ToolStatus   = "pr-status"
 	ToolComments = "pr-comments"
 	ToolReply    = "pr-reply"
+	ToolClose    = "pr-close"
+	ToolReopen   = "pr-reopen"
 )
 
-// HasOpen reports whether the conversation has a pull request that is still open.
-func (s *Service) HasOpen(ctx context.Context, rootID string) bool {
-	views, err := s.List(ctx, rootID)
-	if err != nil {
-		return false
-	}
-	for _, v := range views {
-		if v.State == gitprovider.PROpen {
-			return true
-		}
-	}
-	return false
+// HasAny reports whether the conversation has opened a pull request (open or
+// closed: an agent that closed one may be asked to reopen it). It asks no server.
+func (s *Service) HasAny(ctx context.Context, rootID string) bool {
+	recs, err := s.Store.PullRequests(rootID)
+	return err == nil && len(recs) > 0
 }
 
 var replyTarget = regexp.MustCompile(`^(\S+)#(\d+):\s*`)
@@ -414,6 +456,41 @@ func (s *Service) Call(ctx context.Context, rootID, tool, args string) string {
 			}
 		}
 		return strings.TrimSpace(b.String())
+	case ToolClose, ToolReopen:
+		want := tool == ToolReopen // reopening acts on closed ones, closing on open ones
+		var cands []store.PullRequest
+		for i, rec := range recs {
+			isOpen := views[i].State == gitprovider.PROpen || views[i].State == ""
+			if isOpen != want {
+				cands = append(cands, rec)
+			}
+		}
+		text := strings.Trim(strings.TrimSpace(args), `"'`)
+		if m := regexp.MustCompile(`^(\S+)#(\d+)$`).FindStringSubmatch(text); m != nil {
+			n, _ := strconv.Atoi(m[2])
+			var named []store.PullRequest
+			for _, rec := range cands {
+				if rec.Repo == m[1] && rec.Number == n {
+					named = append(named, rec)
+				}
+			}
+			cands = named
+		}
+		verb := "close"
+		if want {
+			verb = "reopen"
+		}
+		switch {
+		case len(cands) == 0:
+			return "There is no pull request to " + verb + "."
+		case len(cands) > 1:
+			return fmt.Sprintf("There is more than one pull request to %s. Name it, like: unire pr-%s \"owner/repo#12\"", verb, verb)
+		}
+		rec := cands[0]
+		if _, err := s.SetOpen(ctx, rootID, rec.ServerID, rec.Repo, rec.Number, want); err != nil {
+			return "Could not " + verb + " it: " + err.Error()
+		}
+		return fmt.Sprintf("Done: %s#%d is now %s. Nothing was merged or deleted.", rec.Repo, rec.Number, map[bool]string{true: "open", false: "closed"}[want])
 	case ToolReply:
 		text := strings.TrimSpace(args)
 		target := open
@@ -456,4 +533,30 @@ func orUnknown(s string) string {
 		return "unknown"
 	}
 	return s
+}
+
+// SetOpen closes one of the conversation's pull requests, or reopens it. Only a
+// pull request this conversation opened can be changed. Nothing is merged.
+func (s *Service) SetOpen(ctx context.Context, rootID, serverID, repo string, number int, open bool) (View, error) {
+	recs, err := s.Store.PullRequests(rootID)
+	if err != nil {
+		return View{}, err
+	}
+	for _, rec := range recs {
+		if rec.ServerID != serverID || rec.Repo != repo || rec.Number != number {
+			continue
+		}
+		prs, _, err := s.prsFor(serverID)
+		if err != nil {
+			return View{}, err
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if err := prs.SetPROpen(cctx, repo, number, open); err != nil {
+			return View{}, err
+		}
+		s.forget(rec)
+		return s.view(ctx, rec), nil
+	}
+	return View{}, errors.New("this conversation did not open that pull request")
 }

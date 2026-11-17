@@ -374,14 +374,21 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 				return outcomes, err
 			}
 		}
+		// The agent may have put the same change on other branches (for example one
+		// for each release branch). They are named after the session branch with a
+		// suffix, and each started from the branch it is meant for.
+		extras := w.pushExtraBranches(ctx, dir, &repo, spec)
 		head, err := w.git(ctx, dir, &repo, "rev-parse", "HEAD")
 		if err != nil {
 			return outcomes, err
 		}
 		if strings.TrimSpace(head) == startHeads[repo.Name] {
+			if extras > 0 {
+				outcomes[repo.Name] = outcome{changed: true, pushed: true}
+			}
 			continue
 		}
-		o := outcome{changed: true}
+		o := outcome{changed: true, pushed: extras > 0}
 		if spec.NoPush {
 			fmt.Fprintf(w.opt.Err, "%s: changes committed, not pushing (--no-push)\n", repo.Name)
 			outcomes[repo.Name] = o
@@ -563,4 +570,46 @@ func (w *worker) withDocs(ctx context.Context, repos []memory.RepoBrief) []memor
 		}
 	}
 	return out
+}
+
+// pushExtraBranches pushes the branches the agent made for other targets: local
+// branches named <session branch>-<suffix>. The branch each started from (the one
+// a pull request should go into) is remembered in the repo's config, because
+// pushing replaces it. It returns how many were pushed.
+func (w *worker) pushExtraBranches(ctx context.Context, dir string, repo *session.Repo, spec session.Spec) int {
+	if spec.NoPush {
+		return 0
+	}
+	out, err := w.git(ctx, dir, repo, "for-each-ref", "--format=%(refname:short)|%(upstream:short)", "refs/heads/")
+	if err != nil {
+		return 0
+	}
+	prefix := spec.Branch() + "-"
+	pushed := 0
+	for _, line := range strings.Split(out, "\n") {
+		name, up, _ := strings.Cut(strings.TrimSpace(line), "|")
+		if !strings.HasPrefix(name, prefix) || name == prefix {
+			continue
+		}
+		base := ""
+		if strings.HasPrefix(up, "origin/") && up != "origin/"+name {
+			base = strings.TrimPrefix(up, "origin/")
+		}
+		if base != "" {
+			_, _ = w.git(ctx, dir, repo, "config", "branch."+name+".unire-base", base)
+		} else if b, err := w.git(ctx, dir, repo, "config", "--get", "branch."+name+".unire-base"); err == nil {
+			base = strings.TrimSpace(b)
+		}
+		if _, err := w.git(ctx, dir, repo, "push", "-u", "origin", name); err != nil {
+			fmt.Fprintf(w.opt.Err, "%s: could not push %s: %v\n", repo.Name, name, err)
+			continue
+		}
+		pushed++
+		if base != "" {
+			fmt.Fprintf(w.opt.Err, "%s: also pushed %s (into %s)\n", repo.Name, name, base)
+		} else {
+			fmt.Fprintf(w.opt.Err, "%s: also pushed %s\n", repo.Name, name)
+		}
+	}
+	return pushed
 }

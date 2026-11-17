@@ -278,7 +278,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 	var pulls Pulls
 	if j.parent == "" {
 		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name
-	} else if cfg.Pulls != nil && cfg.Pulls.HasOpen(ctx, j.root) {
+	} else if cfg.Pulls != nil && cfg.Pulls.HasAny(ctx, j.root) {
 		// Once a pull request is open the agent can read its checks and comments.
 		wo.Tools = tools.ForReplyWithPR()
 		pulls = cfg.Pulls
@@ -545,8 +545,8 @@ func (m *Manager) freeBranch(spec session.Spec) string {
 
 // Pulls is what the manager needs to know about pull requests (internal/pulls).
 type Pulls interface {
-	// HasOpen reports whether the conversation has a pull request that is open.
-	HasOpen(ctx context.Context, rootID string) bool
+	// HasAny reports whether the conversation has opened a pull request.
+	HasAny(ctx context.Context, rootID string) bool
 	// Call answers one of the agent's pull request tools.
 	Call(ctx context.Context, rootID, tool, args string) string
 }

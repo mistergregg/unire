@@ -156,3 +156,28 @@ func TestAServerRefusingAPullRequestSaysWhy(t *testing.T) {
 		t.Errorf("err = %v, want the server's reason", err)
 	}
 }
+
+func TestClosingAndReopeningAPullRequestOnEveryProvider(t *testing.T) {
+	cases := []struct {
+		typ, route, closeBody, openBody string
+	}{
+		{"github", "PATCH /api/v3/repos/o/r/pulls/7", `"state":"closed"`, `"state":"open"`},
+		{"gitea", "PATCH /api/v1/repos/o/r/pulls/7", `"state":"closed"`, `"state":"open"`},
+		{"gitlab", "PUT /api/v4/projects/o%2Fr/merge_requests/7", `"state_event":"close"`, `"state_event":"reopen"`},
+	}
+	for _, c := range cases {
+		t.Run(c.typ, func(t *testing.T) {
+			api := &fakeAPI{routes: map[string]string{c.route: `{}`}, sent: map[string]string{}}
+			srv := httptest.NewServer(api)
+			defer srv.Close()
+			p, _ := New(Config{Type: c.typ, BaseURL: srv.URL, Token: "t"})
+			prs, _ := AsPullRequests(p)
+			if err := prs.SetPROpen(context.Background(), "o/r", 7, false); err != nil || !strings.Contains(api.sent[c.route], c.closeBody) {
+				t.Errorf("close: err=%v sent=%q", err, api.sent[c.route])
+			}
+			if err := prs.SetPROpen(context.Background(), "o/r", 7, true); err != nil || !strings.Contains(api.sent[c.route], c.openBody) {
+				t.Errorf("reopen: err=%v sent=%q", err, api.sent[c.route])
+			}
+		})
+	}
+}

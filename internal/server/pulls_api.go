@@ -142,3 +142,32 @@ func (s *Server) testPullRequestAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "capabilities": caps})
 }
+
+// setPullOpen closes or reopens a pull request the conversation opened, on the
+// git server, so the owner does not need the agent (or the server's own page) for it.
+func (s *Server) setPullOpen(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ServerID string `json:"serverId"`
+		Repo     string `json:"repo"`
+		Number   int    `json:"number"`
+		Open     bool   `json:"open"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	thread, err := s.threadOf(x.ID)
+	if err != nil || len(thread) == 0 {
+		serverError(w)
+		return
+	}
+	v, err := s.pulls.SetOpen(r.Context(), thread[0].ID, req.ServerID, req.Repo, req.Number, req.Open)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}

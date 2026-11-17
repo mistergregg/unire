@@ -116,6 +116,8 @@ var migrations = []string{
 		PRIMARY KEY (server_id, repo, number)
 	);
 	CREATE INDEX pull_requests_by_root ON pull_requests (root_id);`,
+	// 7: the branch a pull request was asked to go into (empty: the repo's default), so one branch can have several
+	`ALTER TABLE pull_requests ADD COLUMN base TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

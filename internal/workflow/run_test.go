@@ -26,7 +26,8 @@ type fakeSandbox struct {
 	mu       sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
 	calls    []runner.ExecOpts
 	heads    int
-	noChange bool // the agent changes nothing: HEAD stays where it was
+	noChange bool   // the agent changes nothing: HEAD stays where it was
+	refs     string // what `git for-each-ref` prints: local branches and their upstreams
 
 	files     map[string]string // files the workflow wrote
 	outFiles  map[string]string // files the follow-up agent "writes"
@@ -125,6 +126,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			} else {
 				io.WriteString(o.Stdout, "bbb\n")
 			}
+		}
+		if contains(o.Argv, "for-each-ref") {
+			io.WriteString(o.Stdout, f.refs)
 		}
 		if contains(o.Argv, "--stat") {
 			io.WriteString(o.Stdout, " file.go | 3 +++\n")
@@ -863,5 +867,41 @@ func TestASessionThatChangedNothingDoesNotAskTheAgentToUpdateMemory(t *testing.T
 	}
 	if !asked(sb) {
 		t.Error("a session that changed something is asked to update memory")
+	}
+}
+
+func TestBranchesTheAgentMadeForOtherTargetsArePushedWithTheirBase(t *testing.T) {
+	spec := baseSpec()
+	main := spec.Branch()
+	sb := &fakeSandbox{refs: main + "|\n" + main + "-release|origin/release/1.2\nsomething-else|origin/main\n" + main + "-|\n"}
+	var log strings.Builder
+	o := opts(nil)
+	o.Err = &log
+	if _, err := run(t, sb, spec, o); err != nil {
+		t.Fatal(err)
+	}
+	pushed := map[string]bool{}
+	for _, c := range sb.calls {
+		if contains(c.Argv, "push") {
+			pushed[c.Argv[len(c.Argv)-1]] = true
+		}
+	}
+	if !pushed[main] || !pushed[main+"-release"] {
+		t.Errorf("both the session branch and the extra branch are pushed: %v", pushed)
+	}
+	if pushed["something-else"] || pushed[main+"-"] {
+		t.Errorf("only branches named after the session branch with a suffix are pushed: %v", pushed)
+	}
+	if !strings.Contains(log.String(), "api: also pushed "+main+"-release (into release/1.2)") {
+		t.Errorf("the log should say where it goes: %q", log.String())
+	}
+	var remembered bool
+	for _, c := range sb.calls {
+		if contains(c.Argv, "config") && contains(c.Argv, "branch."+main+"-release.unire-base") && contains(c.Argv, "release/1.2") {
+			remembered = true
+		}
+	}
+	if !remembered {
+		t.Error("the branch it was made for is remembered, because pushing replaces its upstream")
 	}
 }

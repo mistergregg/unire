@@ -672,7 +672,11 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	}
 	told = said
 	if len(told) != 2 || told[1] != "also add tests" {
-		t.Errorf("the agent was told %v", told)
+		short := make([]string, len(told))
+		for i, p := range told {
+			short[i] = fmt.Sprintf("%.60q", p)
+		}
+		t.Errorf("the agent was told %d messages: %v", len(told), short)
 	}
 	// Once it has finished, a message has to be a reply.
 	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "late"}); code != http.StatusConflict {

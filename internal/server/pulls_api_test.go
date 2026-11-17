@@ -16,7 +16,7 @@ func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 
-	var opened string
+	var opened, closedWith string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		pr := `{"number":9,"title":"Fix it","html_url":"http://git/pr/9","state":"open","head":{"ref":"agent/b","sha":"abc"},"base":{"ref":"main"}}`
@@ -26,6 +26,9 @@ func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
 		case "POST /api/v1/repos/greg/api/pulls":
 			opened = string(b)
 			w.Write([]byte(pr))
+		case "PATCH /api/v1/repos/greg/api/pulls/9":
+			closedWith = string(b)
+			w.Write([]byte(`{}`))
 		case "GET /api/v1/repos/greg/api/pulls/9":
 			w.Write([]byte(pr))
 		case "GET /api/v1/repos/greg/api/commits/abc/status":
@@ -86,6 +89,13 @@ func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
 	}
 	if code, _ := e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "main"}); code != 400 {
 		t.Errorf("a branch that was not pushed = %d, want 400", code)
+	}
+	code, body = e.do("POST", "/api/sessions/c1/pulls/state", map[string]any{"serverId": g.ID, "repo": "greg/api", "number": 9, "open": false})
+	if code != 200 || !strings.Contains(closedWith, `"state":"closed"`) {
+		t.Errorf("close = %d %s (sent %q)", code, body, closedWith)
+	}
+	if code, _ := e.do("POST", "/api/sessions/c1/pulls/state", map[string]any{"serverId": g.ID, "repo": "greg/api", "number": 77, "open": false}); code != 400 {
+		t.Errorf("closing a pull request the chat did not open = %d, want 400", code)
 	}
 	if code, _ := e.do("GET", "/api/sessions/nope/pulls", nil); code != 404 {
 		t.Errorf("unknown chat = %d, want 404", code)

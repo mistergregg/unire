@@ -89,7 +89,7 @@ function pullCard(p) {
   const details = el("details", { class: "pr-details" });
   details.open = openPulls.has(key);
   details.addEventListener("toggle", () => { if (details.open) openPulls.add(key); else openPulls.delete(key); });
-  details.append(el("summary", {}, el("span", { class: "muted" }, p.repo + " · "), checks));
+  details.append(el("summary", {}, el("span", { class: "muted" }, p.repo + " · " + p.branch + (p.base ? " → " + p.base : "") + " · "), checks));
   if (p.error) details.append(el("p", { class: "err" }, "Could not read it from the server: " + p.error));
   if (p.checks.length) {
     details.append(el("ul", { class: "pr-list" }, ...p.checks.map((c) =>
@@ -111,6 +111,10 @@ function pullCard(p) {
     if (p.summary === "failure") actions.append(handButton("Ask the agent to fix the checks", failingChecksMessage(p), free));
     if (p.comments.length) actions.append(handButton("Ask the agent to address the comments", commentsMessage(p), free));
   }
+  // Closing or reopening is done on the git server, not by the agent. Nothing is merged.
+  actions.append(anotherButton(p, details));
+  if (p.state === "open") actions.append(stateButton(p, false, "Close pull request"));
+  else if (p.state === "closed") actions.append(stateButton(p, true, "Reopen pull request"));
   if (actions.children.length) details.append(actions);
   return el("div", { class: "pr-card" }, head, details);
 }
@@ -126,6 +130,7 @@ function proposalCard(p) {
   const title = el("input", { type: "text", value: p.title, maxlength: "250", "aria-label": "Pull request title" });
   const body = el("textarea", { rows: "6", maxlength: "20000", "aria-label": "Pull request description" });
   body.value = p.body;
+  const base = el("input", { type: "text", value: p.base || "", maxlength: "250", placeholder: "the repo's default branch", spellcheck: "false", "aria-label": "Branch the pull request goes into" });
   const more = el("details", { class: "pr-more" }, el("summary", {}, "Edit the description"), body);
   const open = el("button", { type: "button", class: "primary" }, "Open pull request");
   const later = el("button", { type: "button", class: "ghost" }, "Not now");
@@ -133,7 +138,7 @@ function proposalCard(p) {
     const tail = thread[thread.length - 1];
     try {
       await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls",
-        { serverId: p.serverId, repo: p.repo, branch: p.branch, title: title.value, body: body.value });
+        { serverId: p.serverId, repo: p.repo, branch: p.branch, base: base.value.trim(), title: title.value, body: body.value });
     } catch (e) {
       // A refused token is the usual reason: say where to check it.
       if (/token|permission|rejected|not found/i.test(e.message)) {
@@ -147,7 +152,7 @@ function proposalCard(p) {
   return el("div", { class: "pr-card propose" },
     el("div", { class: "pr-ask" }, "Open a pull request for ", el("strong", {}, p.repo), "? ",
       el("span", { class: "muted" }, "Branch "), el("code", {}, p.branch), el("span", { class: "muted" }, " into " + (p.base || "its default branch") + ".")),
-    title, more, el("div", { class: "pr-actions" }, open, later));
+    title, el("label", { class: "pr-base muted" }, "Into branch", base), more, el("div", { class: "pr-actions" }, open, later));
 }
 
 // A branch you said "not now" to stays one click away.
@@ -181,4 +186,43 @@ function renderPulls() {
   }
   if (later.length) cards.push(el("div", { class: "pr-later" }, ...later));
   box.replaceChildren(...cards);
+}
+
+function stateButton(p, open, label) {
+  const b = el("button", { type: "button", class: "small" + (open ? "" : " danger"), title: open ? "Open it again" : "Close it without merging" }, label);
+  b.addEventListener("click", () => {
+    if (!open && !confirm("Close #" + p.number + " on " + p.repo + "? Nothing is merged or deleted, and you can reopen it.")) return;
+    guarded(b, async () => {
+      const tail = thread[thread.length - 1];
+      await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls/state",
+        { serverId: p.serverId, repo: p.repo, number: p.number, open });
+      await refreshPulls();
+    });
+  });
+  return b;
+}
+
+// The same branch can go into more than one branch (a release branch, say): this
+// opens another pull request for it with a different target.
+function anotherButton(p, details) {
+  const b = el("button", { type: "button", class: "small", title: "Open a pull request from this branch into another branch" }, "Open another into…");
+  b.addEventListener("click", () => {
+    const base = el("input", { type: "text", maxlength: "250", placeholder: "branch, for example release/1.2", spellcheck: "false", "aria-label": "Branch to go into" });
+    const go = el("button", { type: "submit", class: "primary small" }, "Open");
+    const form = el("form", { class: "pr-another", autocomplete: "off" }, base, go);
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const target = base.value.trim();
+      if (!target) return;
+      guarded(go, async () => {
+        const tail = thread[thread.length - 1];
+        await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls",
+          { serverId: p.serverId, repo: p.repo, branch: p.branch, base: target, title: p.title + " (into " + target + ")" });
+        await refreshPulls();
+      });
+    });
+    b.replaceWith(form);
+    base.focus();
+  });
+  return b;
 }

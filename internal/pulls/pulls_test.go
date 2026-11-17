@@ -2,9 +2,11 @@ package pulls
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 type fakeGitea struct {
 	mu   sync.Mutex
 	sent map[string]string
+	made int // pull requests created so far: each gets the next number, from 4
 }
 
 func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +27,18 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.sent[key] = string(b)
 	f.mu.Unlock()
-	pr := `{"number":4,"title":"Fix it","html_url":"http://git/pr/4","state":"open","head":{"ref":"agent/x","sha":"abc"},"base":{"ref":"main"}}`
+	prJSON := func(n int) string {
+		return fmt.Sprintf(`{"number":%d,"title":"Fix it","html_url":"http://git/pr/%d","state":"open","head":{"ref":"agent/x","sha":"abc"},"base":{"ref":"main"}}`, n, n)
+	}
+	pr := prJSON(4)
+	if key == "POST /api/v1/repos/o/r/pulls" {
+		f.mu.Lock()
+		pr = prJSON(4 + f.made)
+		f.made++
+		f.mu.Unlock()
+	}
+	// Every pull request answers like number 4.
+	lookup := regexp.MustCompile(`/(pulls|issues)/d+`).ReplaceAllString(key, "/$1/4")
 	routes := map[string]string{
 		"GET /api/v1/repos/o/r":                    `{"default_branch":"main"}`,
 		"POST /api/v1/repos/o/r/pulls":             pr,
@@ -33,8 +47,9 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"GET /api/v1/repos/o/r/issues/4/comments":  `[{"id":1,"body":"please add a test","user":{"login":"amy"},"created_at":"2026-01-02T00:00:00Z"}]`,
 		"GET /api/v1/repos/o/r/pulls/4/reviews":    `[]`,
 		"POST /api/v1/repos/o/r/issues/4/comments": `{}`,
+		"PATCH /api/v1/repos/o/r/pulls/4":          `{}`,
 	}
-	reply, ok := routes[key]
+	reply, ok := routes[lookup]
 	if !ok {
 		http.Error(w, `{"message":"no route"}`, 404)
 		return
@@ -117,15 +132,15 @@ func TestTheAgentToolsReadTheStatusAndComment(t *testing.T) {
 	if got := svc.Call(ctx, "s1", ToolStatus, ""); !strings.Contains(got, "no pull request") {
 		t.Errorf("before a pull request: %q", got)
 	}
-	if svc.HasOpen(ctx, "s1") {
+	if svc.HasAny(ctx, "s1") { // none opened yet
 		t.Error("no pull request is open yet")
 	}
 	props, _ := svc.Proposals(thread)
 	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
 		t.Fatal(err)
 	}
-	if !svc.HasOpen(ctx, "s1") {
-		t.Error("the pull request is open")
+	if !svc.HasAny(ctx, "s1") {
+		t.Error("a pull request was opened")
 	}
 	if got := svc.Call(ctx, "s1", ToolStatus, ""); !strings.Contains(got, "o/r#4") || !strings.Contains(got, "build: failure") {
 		t.Errorf("status = %q", got)
@@ -158,5 +173,94 @@ func TestTheAgentsOwnDescriptionIsUsedAndTheAnswerLinesKeepTheirBreaks(t *testin
 	}
 	if !strings.Contains(props[0].Body, "Opened from a Unire conversation") {
 		t.Errorf("the description says where it came from: %q", props[0].Body)
+	}
+}
+
+func TestAPullRequestCanBeClosedOnlyByTheConversationThatOpenedIt(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	props, _ := svc.Proposals(thread)
+	v, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetOpen(ctx, "s1", v.ServerID, "o/r", 4, false); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if !strings.Contains(api.sent["PATCH /api/v1/repos/o/r/pulls/4"], `"state":"closed"`) {
+		t.Errorf("close was not sent: %v", api.sent)
+	}
+	if _, err := svc.SetOpen(ctx, "s1", v.ServerID, "o/r", 99, false); err == nil {
+		t.Error("a pull request this conversation did not open must not be changed")
+	}
+	if _, err := svc.SetOpen(ctx, "other-conversation", v.ServerID, "o/r", 4, false); err == nil {
+		t.Error("another conversation must not be able to close it")
+	}
+}
+
+func TestTheSameChangeCanGoIntoSeveralBranches(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	// The agent also made a branch for a release branch.
+	svc.Store.AddEvent("s1", "log", "r: also pushed agent/x-release (into release/1.2)")
+
+	props, _ := svc.Proposals(thread)
+	if len(props) != 2 {
+		t.Fatalf("the session branch and the extra branch are both offered: %+v", props)
+	}
+	byBranch := map[string]Proposal{}
+	for _, p := range props {
+		byBranch[p.Branch] = p
+	}
+	extra := byBranch["agent/x-release"]
+	if extra.Base != "release/1.2" || !strings.HasSuffix(extra.Title, "(into release/1.2)") {
+		t.Errorf("the extra branch goes into the branch it was made for, and says so: %+v", extra)
+	}
+
+	first, err := svc.Open(ctx, thread, Proposal{ServerID: extra.ServerID, Repo: "o/r", Branch: "agent/x"})
+	if err != nil || first.Number != 4 {
+		t.Fatalf("open the session branch: %+v %v", first, err)
+	}
+	second, err := svc.Open(ctx, thread, Proposal{ServerID: extra.ServerID, Repo: "o/r", Branch: "agent/x-release"})
+	if err != nil || second.Number != 5 {
+		t.Fatalf("open the extra branch: %+v %v", second, err)
+	}
+	if !strings.Contains(api.sent["POST /api/v1/repos/o/r/pulls"], "release/1.2") {
+		t.Errorf("the extra pull request goes into release/1.2: %q", api.sent["POST /api/v1/repos/o/r/pulls"])
+	}
+	// The same branch into one more branch.
+	third, err := svc.Open(ctx, thread, Proposal{ServerID: extra.ServerID, Repo: "o/r", Branch: "agent/x", Base: "develop", Title: "Fix it (into develop)"})
+	if err != nil || third.Number != 6 {
+		t.Fatalf("open the same branch into another: %+v %v", third, err)
+	}
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: extra.ServerID, Repo: "o/r", Branch: "agent/x", Base: "develop"}); err == nil {
+		t.Error("the same branch into the same branch twice must be refused")
+	}
+	if left, _ := svc.Proposals(thread); len(left) != 0 {
+		t.Errorf("nothing is left to offer: %+v", left)
+	}
+	if list, _ := svc.List(ctx, "s1"); len(list) != 3 {
+		t.Errorf("three pull requests: %+v", list)
+	}
+}
+
+func TestTheAgentCanCloseAndReopenItsPullRequest(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.Call(ctx, "s1", ToolReopen, ""); !strings.Contains(got, "no pull request to reopen") {
+		t.Errorf("nothing is closed yet: %q", got)
+	}
+	if got := svc.Call(ctx, "s1", ToolClose, ""); !strings.Contains(got, "now closed") || !strings.Contains(got, "Nothing was merged") {
+		t.Errorf("close = %q", got)
+	}
+	if !strings.Contains(api.sent["PATCH /api/v1/repos/o/r/pulls/4"], `"state":"closed"`) {
+		t.Errorf("the server was told to close it: %v", api.sent)
+	}
+	if !svc.HasAny(ctx, "s1") {
+		t.Error("a closed pull request keeps the tools, so it can be reopened")
 	}
 }

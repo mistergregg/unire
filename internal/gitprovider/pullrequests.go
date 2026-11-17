@@ -66,6 +66,9 @@ type PullRequests interface {
 	Comments(ctx context.Context, repo string, number int) ([]Comment, error)
 	// AddComment writes a conversation comment on the pull request.
 	AddComment(ctx context.Context, repo string, number int, body string) error
+	// SetPROpen closes a pull request (open false) or reopens it. Nothing is merged
+	// or deleted.
+	SetPROpen(ctx context.Context, repo string, number int, open bool) error
 }
 
 // ErrNoPullRequests is returned by AsPullRequests for a provider without them.
@@ -430,4 +433,29 @@ func (g gitlab) AddComment(ctx context.Context, repo string, number int, body st
 func sortByTime(c []Comment) []Comment {
 	sort.SliceStable(c, func(i, j int) bool { return c[i].At < c[j].At })
 	return c
+}
+
+// ---- closing and reopening ----
+
+func (g github) SetPROpen(ctx context.Context, repo string, number int, open bool) error {
+	return g.c.doJSON(ctx, "PATCH", fmt.Sprintf("/repos/%s/pulls/%d", repo, number), map[string]string{"state": openWord(open)}, nil)
+}
+
+func (g gitea) SetPROpen(ctx context.Context, repo string, number int, open bool) error {
+	return g.c.doJSON(ctx, "PATCH", fmt.Sprintf("/repos/%s/pulls/%d", repo, number), map[string]string{"state": openWord(open)}, nil)
+}
+
+func (g gitlab) SetPROpen(ctx context.Context, repo string, number int, open bool) error {
+	event := "close"
+	if open {
+		event = "reopen"
+	}
+	return g.c.doJSON(ctx, "PUT", fmt.Sprintf("%s/merge_requests/%d", g.project(repo), number), map[string]string{"state_event": event}, nil)
+}
+
+func openWord(open bool) string {
+	if open {
+		return "open"
+	}
+	return "closed"
 }

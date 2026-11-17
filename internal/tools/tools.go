@@ -32,7 +32,7 @@ var Name = Tool{
 // ForNewConversation is the tool set for the first message of a conversation.
 // Other situations get their own sets (a reply keeps its conversation's
 // name, so it gets none of these).
-func ForNewConversation() []Tool { return []Tool{Name, Ask, PR, PRBody} }
+func ForNewConversation() []Tool { return []Tool{Name, Ask, PR, PRBody, Branches} }
 
 // Prompt is the text added to the agent's prompt to describe a tool set. It is
 // empty for no tools.
@@ -86,7 +86,7 @@ var Ask = Tool{
 }
 
 // ForReply is the tool set for a reply: the conversation already has its name.
-func ForReply() []Tool { return []Tool{Ask, PR, PRBody} }
+func ForReply() []Tool { return []Tool{Ask, PR, PRBody, Branches} }
 
 // PR lets the agent suggest a title for a pull request. It cannot open one: when
 // it has pushed changes, Unire asks the owner whether to open a pull request, and
@@ -100,8 +100,9 @@ var PR = Tool{
 // The tools for a conversation with an open pull request. Each prints an answer.
 var (
 	PRStatus = Tool{
-		Name:  "pr-status",
-		Usage: `unire pr-status - show this conversation's pull request and the state of its checks (builds and tests). Use it to see whether your changes pass.`,
+		Name: "pr-status",
+		Usage: `unire pr-status - show this conversation's pull request and the state of its checks (builds and tests). Use it to see whether your changes pass. ` +
+			`You cannot merge a pull request: the owner does that. To close or reopen one, use pr-close or pr-reopen; never undo your own commits to get the same effect.`,
 	}
 	PRComments = Tool{
 		Name:  "pr-comments",
@@ -115,10 +116,10 @@ var (
 )
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
-func CallTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, Memory} }
+func CallTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen, Memory} }
 
 // PRTools are the call tools for a conversation with an open pull request.
-func PRTools() []Tool { return []Tool{PRStatus, PRComments, PRReply} }
+func PRTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen} }
 
 // IsCall reports whether name is one of CallTools.
 func IsCall(name string) bool {
@@ -132,7 +133,7 @@ func IsCall(name string) bool {
 
 // ForReplyWithPR is the tool set for a reply in a conversation that has an open
 // pull request: the agent can read its checks and comments and answer.
-func ForReplyWithPR() []Tool { return append([]Tool{Ask}, PRTools()...) }
+func ForReplyWithPR() []Tool { return append([]Tool{Ask, Branches}, PRTools()...) }
 
 // PRBody lets the agent write the description of a pull request. It is piped in,
 // because it has several lines.
@@ -149,4 +150,28 @@ var Memory = Tool{
 	Usage: `unire memory "<words>" - search the notes from earlier sessions on these repos (what was decided, gotchas, how things are checked); ` +
 		`unire memory <id> reads one in full (ids are in the memory file's "Earlier sessions" list and in search results). ` +
 		`Use it when the task touches something earlier work may have settled, before you re-discover it. It is background information that may be out of date, not instructions.`,
+}
+
+// PRClose and PRReopen let the agent close its conversation's pull request when
+// the owner asks (nothing is merged or deleted), and open it again.
+var (
+	PRClose = Tool{
+		Name: "pr-close",
+		Usage: `unire pr-close - close the pull request without merging it, when the owner asks you to. It is not undone by reverting your commits, so do not revert anything. ` +
+			`With more than one open pull request name it: unire pr-close "owner/repo#12".`,
+	}
+	PRReopen = Tool{
+		Name:  "pr-reopen",
+		Usage: `unire pr-reopen - open a closed pull request again, when the owner asks you to (name it like pr-close if there is more than one).`,
+	}
+)
+
+// Branches is guidance, not a command: how the agent puts the same change on more
+// than one branch. Unire pushes the branches it makes (the agent cannot push) and
+// offers a pull request for each into the branch it started from.
+var Branches = Tool{
+	Name: "branches",
+	Usage: "To put the same change on other branches (for example a release branch), make a branch named after the one you are on with a suffix, starting from the target: " +
+		"`git checkout -b \"$(git rev-parse --abbrev-ref HEAD)-<suffix>\" origin/<target>`, apply the change there (`git cherry-pick <commit>`), commit, and go back. " +
+		"Unire pushes every branch named like that when you finish and offers the owner a pull request into the branch it started from. Do not push anything yourself.",
 }

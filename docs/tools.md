@@ -20,7 +20,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 |---|---|
 | First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `memory` (with memory on) |
 | A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
-| A reply, with an open pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply` |
+| A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
 ## `name`
 
@@ -54,6 +54,29 @@ cannot open the pull request; the last suggestion wins.
 several lines, so it is piped in). It is meant for the reviewer: what changed,
 why, how it was checked. Without one, Unire uses the end of the agent's final
 answer. You can edit both the title and the description before opening.
+
+### `pr-close`, `pr-reopen`
+
+When you ask the agent to close the pull request, it runs `unire pr-close`
+(`unire pr-reopen` opens it again). Unire closes it on the git server; nothing is
+merged or deleted, so the agent has no reason to revert its commits to get the same
+effect. With several pull requests, it names one: `unire pr-close "owner/repo#12"`.
+The agent cannot merge. You can do the same with the **Close pull request** and
+**Reopen pull request** buttons on the card.
+
+### Several pull requests, several branches
+
+- **One branch, more than one target.** On a pull request card, **Open another
+  into…** opens a pull request from the same branch into a different branch (a
+  release branch, say). The first card also has an **Into branch** box.
+- **The same change on other branches.** The agent makes a branch named after its own
+  with a suffix, starting from the target (`git checkout -b <branch>-release
+  origin/release/1.2`), applies the change (`git cherry-pick`), and commits. When it
+  finishes, Unire pushes every branch named like that (the agent cannot push) and
+  offers a pull request for each, into the branch it started from. Unire remembers
+  that branch in the repo's git config (`branch.<name>.unire-base`), because pushing
+  replaces the upstream.
+- **Several repos** already work: each repo the chat pushed has its own card.
 
 ### `pr-status`, `pr-comments`, `pr-reply`
 

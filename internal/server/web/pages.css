@@ -205,3 +205,8 @@ a.button.primary:hover { filter: brightness(1.08); }
 .pr-perms:empty { display: none; }
 .pr-perms .ok { color: var(--ok); }
 .pr-perms .bad { color: var(--danger); }
+
+.pr-base { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; font-size: 13px; }
+.pr-base input { margin: 0; flex: 1; }
+.pr-another { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 200px; }
+.pr-another input { margin: 0; flex: 1; }

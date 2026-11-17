@@ -42,3 +42,11 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 	}
 	return out, rows.Err()
 }
+
+// SetPullRequestState remembers the last state seen of a pull request (open,
+// merged or closed), so how conversations turned out can be counted without asking
+// the git servers.
+func (s *Store) SetPullRequestState(serverID, repo string, number int, state string) error {
+	_, err := s.db.Exec(`UPDATE pull_requests SET state = ? WHERE server_id = ? AND repo = ? AND number = ?`, state, serverID, repo, number)
+	return err
+}

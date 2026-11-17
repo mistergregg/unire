@@ -50,3 +50,7 @@ The core is small on purpose. When the agent needs something an earlier session 
 ## Switching agents, and long conversations
 
 Every reply is a new run for the agent, so Unire tells it what happened before. The latest turn is given nearly in full (what was asked and the answer); older turns are boiled down to what was asked and how each ended, newest first, within a budget of about 5,000 characters, and a line says when earlier turns were left out. Each turn names the agent that did it, so switching agents mid-conversation keeps the thread. The code is on the branch, which the preamble names.
+
+## Is it helping?
+
+Each run records how much memory it was given and how long saving memory took, and Unire remembers the last state seen of each pull request (open, merged, closed). The Memory page's **Is it helping?** card compares runs with memory on and off over the last 90 days: failures, stops, run time, tokens given at the start, time saving, and how many pull requests were opened and merged. The groups are not matched (you choose which chats have memory off), so differences are a hint, not proof; to learn something, turn memory off for some comparable chats (Options on the New chat page). Pull request states are as last seen, which is when a chat was opened.

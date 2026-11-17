@@ -9,6 +9,7 @@ async function openMemory() {
   stopPolling();
   show("memory");
   $("mem-results").replaceChildren();
+  renderMemoryStats();
   const list = await api("GET", "/api/memory");
   $("mem-list").replaceChildren(...(list.length ? list.map((r) => {
     const row = el("div", { class: "item tile click", role: "button", tabindex: "0" },
@@ -113,3 +114,34 @@ $("rm-clear").addEventListener("click", () => {
     banner("Brief cleared.");
   });
 });
+
+// How runs with memory compare with runs without it, over the last 90 days. The groups
+// are not matched (you chose which chats had memory off), so this is a hint, not proof.
+async function renderMemoryStats() {
+  const box = $("mem-stats");
+  let res;
+  try { res = await api("GET", "/api/memory/stats"); } catch (_) { box.replaceChildren(); return; }
+  const on = res.groups.find((g) => g.memory) || { runs: 0 };
+  const off = res.groups.find((g) => !g.memory) || { runs: 0 };
+  const pct = (n, d) => (d ? Math.round((100 * n) / d) + "%" : "–");
+  const num = (x, unit) => (x ? Math.round(x * 10) / 10 + unit : "–");
+  const row = (label, a, b) => el("tr", {}, el("td", {}, label), el("td", {}, a), el("td", {}, b));
+  const table = el("table", { class: "stats" },
+    el("thead", {}, el("tr", {}, el("th", {}), el("th", {}, "Memory on"), el("th", {}, "Memory off"))),
+    el("tbody", {},
+      row("Runs finished", String(on.runs), String(off.runs)),
+      row("Failed", pct(on.failed, on.runs), pct(off.failed, off.runs)),
+      row("Stopped by you", pct(on.stopped, on.runs), pct(off.stopped, off.runs)),
+      row("Average run time", num(on.avgMinutes, " min"), num(off.avgMinutes, " min")),
+      row("Memory given at the start", num(on.avgInjectedChars / 4, " tokens"), "–"),
+      row("Time saving memory", num(on.avgSaveSeconds, " s"), "–"),
+      row("Pull requests opened", String(on.prs), String(off.prs)),
+      row("…of those merged", pct(on.merged, on.prs), pct(off.merged, off.prs)),
+      row("…closed without merging", pct(on.closed, on.prs), pct(off.closed, off.prs))));
+  const few = Math.min(on.runs, off.runs) < 20;
+  box.replaceChildren(table, el("p", { class: "muted small" },
+    "The last " + res.days + " days. " + (few
+      ? "Too few runs with memory off to compare (turn memory off for some chats, under Options on the New chat page, to see a difference). "
+      : "") +
+    "The groups are not matched, so treat differences as a hint. Pull request states are as last seen when you opened the chat."));
+}

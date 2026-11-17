@@ -162,3 +162,12 @@ func TestLimitsHaveSaneDefaultsAndAreValidated(t *testing.T) {
 		t.Errorf("too many days = %d, want 400", code)
 	}
 }
+
+func TestMemoryStatsEndpoint(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	code, body := e.do("GET", "/api/memory/stats", nil)
+	if code != 200 || !strings.Contains(body, `"days":90`) || strings.Count(body, `"memory":`) != 2 {
+		t.Errorf("stats = %d %s", code, body)
+	}
+}

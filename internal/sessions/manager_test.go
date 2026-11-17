@@ -464,6 +464,10 @@ func TestMemoryIsSavedThenGivenToTheNextSession(t *testing.T) {
 	if s2, ok, _ := st.Summary(second.ID); !ok || !strings.Contains(s2.Summary, "Second task") {
 		t.Errorf("second summary = %+v", s2)
 	}
+	// The run records how much memory it was given, so the Memory page can show what it cost.
+	if stats, err := st.MemoryStats(time.Now().AddDate(0, 0, -1)); err != nil || stats[0].AvgInjectedChars <= 0 {
+		t.Errorf("memory given was not recorded: %+v %v", stats, err)
+	}
 }
 
 func TestMemoryOffSavesAndInjectsNothing(t *testing.T) {

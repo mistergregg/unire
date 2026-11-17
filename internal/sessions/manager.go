@@ -283,6 +283,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 	wo := workflow.Options{Out: out, Err: info, GitTokens: tokens, Memory: cfg.Memory, CPUs: cfg.CPUs, Workspace: workspaceName(j.root)}
 	if j.memory {
 		wo.Mem = m.memoryPlan(j)
+		_ = m.st.SetMemoryStats(spec.ID, len(wo.Mem.Context), 0)
 	}
 	wo.Ask = m.askFunc(spec.ID)
 	if control != nil {
@@ -321,8 +322,10 @@ func (m *Manager) run(ctx context.Context, j job) {
 	// The turn is finished as soon as the work is pushed. Saving to memory goes
 	// on in the background, so the owner can read the answer and reply at once.
 	var finished atomic.Bool
+	var workDone atomic.Int64 // when the work was done (unix nanoseconds); saving memory is timed from then
 	wo.OnWorkDone = func(res workflow.Result, werr error) {
 		finished.Store(true)
+		workDone.Store(time.Now().UnixNano())
 		out.Flush()
 		info.Flush()
 		if res.PRBody != "" {
@@ -367,6 +370,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 	info.Flush()
 	if j.memory && ctx.Err() == nil {
 		m.saveMemory(j, res, err)
+		if t := workDone.Load(); t > 0 && time.Since(time.Unix(0, t)) >= time.Second { // a step that did nothing is not a cost
+			_ = m.st.SetMemoryStats(spec.ID, len(wo.Mem.Context), time.Since(time.Unix(0, t)))
+		}
 	}
 	if !finished.Load() { // it failed before the work was done
 		m.applyName(j, res.Name)

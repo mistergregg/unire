@@ -118,6 +118,11 @@ var migrations = []string{
 	CREATE INDEX pull_requests_by_root ON pull_requests (root_id);`,
 	// 7: the branch a pull request was asked to go into (empty: the repo's default), so one branch can have several
 	`ALTER TABLE pull_requests ADD COLUMN base TEXT NOT NULL DEFAULT '';`,
+	// 8: what memory cost and whether it helped: characters of memory a run was given, how long saving it took,
+	// and the last state seen of each pull request
+	`ALTER TABLE sessions ADD COLUMN memory_chars INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE sessions ADD COLUMN memory_ms INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE pull_requests ADD COLUMN state TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

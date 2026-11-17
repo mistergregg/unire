@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/store"
@@ -228,4 +229,16 @@ func (s *Server) deleteSummary(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+// memoryStats compares runs with memory on and off over the last 90 days: how they
+// went, what memory cost, and what became of their pull requests. It is for the
+// owner to judge, not a verdict: the groups are not matched, so small numbers say little.
+func (s *Server) memoryStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.store.MemoryStats(time.Now().AddDate(0, 0, -90))
+	if err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"days": 90, "groups": stats})
 }

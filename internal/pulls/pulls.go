@@ -343,6 +343,7 @@ func (s *Service) view(ctx context.Context, rec store.PullRequest) View {
 		return v
 	}
 	v.State, v.Base, v.Draft = pr.State, pr.Base, pr.Draft
+	_ = s.Store.SetPullRequestState(rec.ServerID, rec.Repo, rec.Number, pr.State)
 	if pr.Title != "" {
 		v.Title = pr.Title
 	}

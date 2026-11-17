@@ -173,6 +173,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspaces", s.auth(s.saveWorkspace))
 	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))
 	mux.HandleFunc("POST /api/repos/suggest", s.auth(s.suggestRepos))
+	mux.HandleFunc("GET /api/memory/stats", s.auth(s.memoryStats))
 	mux.HandleFunc("GET /api/limits", s.auth(s.getLimits))
 	mux.HandleFunc("PUT /api/limits", s.auth(s.putLimits))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))

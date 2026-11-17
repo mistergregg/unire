@@ -234,3 +234,66 @@ func (s *Store) DeleteSummary(sessionID string) (bool, error) {
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+// SetMemoryStats records how much memory a run was given and how long saving
+// memory took afterwards.
+func (s *Store) SetMemoryStats(sessionID string, chars int, took time.Duration) error {
+	_, err := s.db.Exec(`UPDATE sessions SET memory_chars = ?, memory_ms = ? WHERE id = ?`, chars, took.Milliseconds(), sessionID)
+	return err
+}
+
+// MemoryStat compares runs that used memory with runs that did not.
+type MemoryStat struct {
+	Memory           bool    `json:"memory"`
+	Runs             int     `json:"runs"`
+	Failed           int     `json:"failed"`
+	Stopped          int     `json:"stopped"`
+	AvgMinutes       float64 `json:"avgMinutes"`       // how long a finished run took
+	AvgInjectedChars float64 `json:"avgInjectedChars"` // memory given at the start (runs with memory)
+	AvgSaveSeconds   float64 `json:"avgSaveSeconds"`   // how long saving memory took
+	PRs              int     `json:"prs"`              // pull requests opened by conversations that started with this setting
+	Merged           int     `json:"merged"`
+	Closed           int     `json:"closed"` // closed without merging
+	Open             int     `json:"open"`
+}
+
+// MemoryStats counts, for finished runs since the date, how they went with memory on
+// and off, and what became of the pull requests of the conversations they started.
+func (s *Store) MemoryStats(since time.Time) ([]MemoryStat, error) {
+	by := map[bool]*MemoryStat{false: {Memory: false}, true: {Memory: true}}
+	rows, err := s.db.Query(`SELECT memory, COUNT(*),
+			COALESCE(SUM(status = 'failed'), 0), COALESCE(SUM(status = 'stopped'), 0),
+			COALESCE(AVG(CASE WHEN finished_at > started_at AND started_at > 0 THEN finished_at - started_at END), 0) / 60.0,
+			COALESCE(AVG(CASE WHEN memory_chars > 0 THEN memory_chars END), 0),
+			COALESCE(AVG(CASE WHEN memory_ms > 0 THEN memory_ms END), 0) / 1000.0
+		FROM sessions WHERE created_at >= ? AND status NOT IN ('queued', 'running') GROUP BY memory`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var on int
+		var st MemoryStat
+		if err := rows.Scan(&on, &st.Runs, &st.Failed, &st.Stopped, &st.AvgMinutes, &st.AvgInjectedChars, &st.AvgSaveSeconds); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		st.Memory = on != 0
+		by[st.Memory] = &st
+	}
+	rows.Close()
+	prs, err := s.db.Query(`SELECT s.memory, COUNT(*), COALESCE(SUM(p.state = 'merged'), 0), COALESCE(SUM(p.state = 'closed'), 0), COALESCE(SUM(p.state = 'open'), 0)
+		FROM pull_requests p JOIN sessions s ON s.id = p.root_id WHERE p.created_at >= ? GROUP BY s.memory`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer prs.Close()
+	for prs.Next() {
+		var on, n, merged, closed, open int
+		if err := prs.Scan(&on, &n, &merged, &closed, &open); err != nil {
+			return nil, err
+		}
+		st := by[on != 0]
+		st.PRs, st.Merged, st.Closed, st.Open = n, merged, closed, open
+	}
+	return []MemoryStat{*by[true], *by[false]}, prs.Err()
+}

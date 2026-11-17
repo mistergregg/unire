@@ -215,3 +215,7 @@ a.button.primary:hover { filter: brightness(1.08); }
 .suggest { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; font-size: 13px; }
 .suggest .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .suggest .chip { cursor: pointer; }
+
+table.stats { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.stats th, table.stats td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.stats th { color: var(--muted); font-weight: 600; }

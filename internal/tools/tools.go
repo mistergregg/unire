@@ -116,7 +116,9 @@ var (
 )
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
-func CallTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen, Memory} }
+func CallTools() []Tool {
+	return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen, Memory, Repo}
+}
 
 // PRTools are the call tools for a conversation with an open pull request.
 func PRTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen} }
@@ -174,4 +176,12 @@ var Branches = Tool{
 	Usage: "To put the same change on other branches (for example a release branch), make a branch named after the one you are on with a suffix, starting from the target: " +
 		"`git checkout -b \"$(git rev-parse --abbrev-ref HEAD)-<suffix>\" origin/<target>`, apply the change there (`git cherry-pick <commit>`), commit, and go back. " +
 		"Unire pushes every branch named like that when you finish and offers the owner a pull request into the branch it started from. Do not push anything yourself.",
+}
+
+// Repo lets the agent bring another of the owner's repos into the session while it
+// runs (for example the backend of the app it is working on).
+var Repo = Tool{
+	Name: "repo",
+	Usage: `unire repo "<name or words>" - bring another of the owner's repos into /workspace (it is cloned there, on your branch, and pushed when you finish). ` +
+		`Use it when the work needs code that is not here. Unire says where it was cloned, or why not; it may ask the owner first, and it may give a short list to choose from (then run it again with the exact name, like "owner/name").`,
 }

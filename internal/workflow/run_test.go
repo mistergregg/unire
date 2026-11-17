@@ -905,3 +905,71 @@ func TestBranchesTheAgentMadeForOtherTargetsArePushedWithTheirBase(t *testing.T)
 		t.Error("the branch it was made for is remembered, because pushing replaces its upstream")
 	}
 }
+
+func TestTheAgentCanBringInAnotherRepoWhileItWorks(t *testing.T) {
+	askPath := tools.Dir + "/ask/88"
+	sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "@call repo\nthe backend\n"}}
+	sb.agentHook = func(ctx context.Context) {
+		for i := 0; i < 200; i++ {
+			sb.mu.Lock()
+			_, done := sb.files[askPath+".a"]
+			sb.mu.Unlock()
+			if done {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Error("the answer never reached the sandbox")
+	}
+	var asked []string
+	var mu sync.Mutex
+	o := opts(nil)
+	o.Tools = append(tools.ForReply(), tools.Repo)
+	o.AskPoll = 10 * time.Millisecond
+	o.AddRepo = func(_ context.Context, q string) (*AddedRepo, string) {
+		mu.Lock()
+		asked = append(asked, q)
+		mu.Unlock()
+		return &AddedRepo{Dir: "backend", URL: "https://git.example.com/me/backend.git", Token: "tok-backend"}, ""
+	}
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "the backend" {
+		t.Errorf("asked = %v", asked)
+	}
+	if got := sb.files[askPath+".a"]; !strings.Contains(got, "Cloned into /workspace/backend") {
+		t.Errorf("the agent is told where it is: %q", got)
+	}
+	cloned, finished := false, false
+	for _, c := range sb.calls {
+		if contains(c.Argv, "clone") && contains(c.Argv, "https://git.example.com/me/backend.git") {
+			cloned = true
+			if c.Env["UNIRE_GIT_TOKEN"] != "tok-backend" {
+				t.Errorf("the clone should use the added repo's token, got %v", c.Env)
+			}
+		}
+		if c.Dir == "/workspace/backend" && contains(c.Argv, "status") {
+			finished = true // finish() looked at it to commit and push
+		}
+	}
+	if !cloned || !finished {
+		t.Errorf("the new repo is cloned (%v) and handled when the agent finishes (%v)", cloned, finished)
+	}
+}
+
+func TestARepoRequestWithoutTheToolIsRefused(t *testing.T) {
+	askPath := tools.Dir + "/ask/89"
+	sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "@call repo\nanything\n"}}
+	sb.agentHook = func(ctx context.Context) { time.Sleep(80 * time.Millisecond) }
+	o := opts(nil)
+	o.Tools = tools.ForReply() // no repo tool
+	o.AskPoll = 10 * time.Millisecond
+	o.AddRepo = func(context.Context, string) (*AddedRepo, string) {
+		t.Error("a session that was not given the tool must not add repos")
+		return nil, ""
+	}
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+}

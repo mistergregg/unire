@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mistergregg/unire/internal/agent"
@@ -48,6 +49,10 @@ type Options struct {
 	// Call answers the agent's live tool requests (pr-status and the like): it
 	// gets the tool's name and the agent's text and returns what the agent reads.
 	Call func(ctx context.Context, tool, args string) string
+	// AddRepo resolves the agent's request for another repo (the repo tool) to one the
+	// session may use, asking the owner when that is needed. It returns the repo, or nil
+	// and what to tell the agent.
+	AddRepo func(ctx context.Context, query string) (*AddedRepo, string)
 	// Control carries what the owner says to the agent while it works. nil means
 	// the agent is run once and cannot be steered. OnMessage reports what became of
 	// each message (delivered, failed).
@@ -145,7 +150,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		_ = sb.Stop(stopCtx)
 	}()
 
-	w := &worker{sb: sb, opt: opt}
+	w := &worker{sb: sb, opt: opt, spec: spec}
 
 	// Mounted local repos are owned by a different user than the sandbox
 	// user. A global setting is needed because git ignores per-command
@@ -265,6 +270,12 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
 	prBody := w.requestedBody(ctx)
 
+	w.mu.Lock()
+	spec.Repos = append(spec.Repos, w.added...)
+	for dir, head := range w.addedHeads {
+		startHeads[dir] = head
+	}
+	w.mu.Unlock()
 	outcomes, err := w.finish(ctx, spec, startHeads)
 	if err != nil {
 		return res, err
@@ -299,8 +310,13 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 }
 
 type worker struct {
-	sb  runner.Sandbox
-	opt Options
+	spec        session.Spec
+	mu          sync.Mutex        // guards what the repo tool adds while the agent runs
+	added       []session.Repo    // repos brought in while the agent ran
+	addedTokens map[string]string // their tokens, by directory
+	addedHeads  map[string]string // where each started
+	sb          runner.Sandbox
+	opt         Options
 }
 
 // git runs git in the sandbox. For a repo with a token, the token is passed
@@ -309,7 +325,7 @@ func (w *worker) git(ctx context.Context, dir string, repo *session.Repo, args .
 	argv := []string{"git"}
 	env := map[string]string{"GIT_TERMINAL_PROMPT": "0"}
 	if repo != nil {
-		if tok := w.opt.GitTokens[repo.Name]; tok != "" {
+		if tok := w.tokenFor(repo.Name); tok != "" {
 			if scope := hostScope(repo.URL); scope != "" {
 				argv = append(argv, "-c", credentialHelper(scope))
 				env["UNIRE_GIT_TOKEN"] = tok
@@ -612,4 +628,71 @@ func (w *worker) pushExtraBranches(ctx context.Context, dir string, repo *sessio
 		}
 	}
 	return pushed
+}
+
+// AddedRepo is a repo brought into a running session: the directory it is cloned
+// into, where from, the token for its server, and the branch to start from (empty:
+// the repo's default).
+type AddedRepo struct {
+	Dir, URL, Token, Base string
+}
+
+// tokenFor is the git token for a repo directory, including repos added while the
+// agent ran.
+func (w *worker) tokenFor(dir string) string {
+	if tok := w.opt.GitTokens[dir]; tok != "" {
+		return tok
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.addedTokens[dir]
+}
+
+// addRepo clones another repo into the workspace for the agent, on the session's
+// branch, and arranges for it to be committed and pushed with the others.
+func (w *worker) addRepo(ctx context.Context, query string) string {
+	spec := w.spec
+	r, msg := w.opt.AddRepo(ctx, query)
+	if r == nil {
+		return msg
+	}
+	repo := session.Repo{Name: r.Dir, URL: r.URL, Base: r.Base}
+	w.mu.Lock()
+	if w.addedTokens == nil {
+		w.addedTokens = map[string]string{}
+		w.addedHeads = map[string]string{}
+	}
+	w.addedTokens[r.Dir] = r.Token
+	w.mu.Unlock()
+
+	dir := workspace + "/" + r.Dir
+	if w.cloned(ctx, dir) { // an earlier turn of the conversation already has it here
+		if _, err := w.git(ctx, dir, &repo, "checkout", "-B", spec.Branch()); err != nil {
+			return "Could not use " + r.Dir + ": " + err.Error()
+		}
+	} else {
+		args := []string{"clone"}
+		if r.Base != "" {
+			args = append(args, "--branch", r.Base)
+		}
+		args = append(args, r.URL, dir)
+		fmt.Fprintf(w.opt.Err, "cloning %s (the agent asked for it)\n", r.Dir)
+		if _, err := w.git(ctx, "", &repo, args...); err != nil {
+			return "Could not clone " + r.Dir + ": " + err.Error()
+		}
+		if r.Base != spec.Branch() {
+			if _, err := w.git(ctx, dir, &repo, "checkout", "-b", spec.Branch()); err != nil {
+				return "Could not branch " + r.Dir + ": " + err.Error()
+			}
+		}
+	}
+	head, err := w.git(ctx, dir, &repo, "rev-parse", "HEAD")
+	if err != nil {
+		return "Could not read " + r.Dir + ": " + err.Error()
+	}
+	w.mu.Lock()
+	w.added = append(w.added, repo)
+	w.addedHeads[r.Dir] = strings.TrimSpace(head)
+	w.mu.Unlock()
+	return fmt.Sprintf("Cloned into %s on branch %s. It is pushed with your other changes when you finish.", dir, spec.Branch())
 }

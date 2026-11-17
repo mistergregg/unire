@@ -57,6 +57,7 @@ type Server struct {
 
 	sessions      *sessions.Manager
 	pulls         *pulls.Service
+	catalog       catalogCache
 	runnerFactory RunnerFactory
 	egressProxy   *egress.Proxy
 	egressInfo    egress.Info
@@ -166,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/workspaces", s.auth(s.listWorkspaces))
 	mux.HandleFunc("POST /api/workspaces", s.auth(s.saveWorkspace))
 	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))
+	mux.HandleFunc("POST /api/repos/suggest", s.auth(s.suggestRepos))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /api/sessions", s.auth(s.startSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/egress"
+	"github.com/mistergregg/unire/internal/repopick"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
@@ -81,6 +82,7 @@ func (s *Server) sessionConfig() sessions.Config {
 		Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs,
 		Egress: sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
 		Pulls:  s.pulls,
+		Repos:  s,
 	}
 }
 
@@ -442,6 +444,31 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	var picked []repopick.Candidate
+	if len(req.Repos) == 0 {
+		// The owner chose no repos: use the ones the message is clearly about, and
+		// those usually used with them.
+		ranked := s.rankRepos(r.Context(), req.Prompt, nil)
+		picked = repopick.Auto(ranked)
+		if len(picked) == 0 {
+			msg := "I could not tell which repos this needs from your message. Name one (like its repo name) or add it with the box under the message."
+			if len(ranked) > 0 {
+				var near []string
+				for i, c := range ranked {
+					if i >= 3 {
+						break
+					}
+					near = append(near, c.FullName)
+				}
+				msg += " Closest: " + strings.Join(near, ", ") + "."
+			}
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+		for _, c := range picked {
+			req.Repos = append(req.Repos, refOf(c))
+		}
+	}
 	repos, err := s.resolveRepos(req.Repos)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -457,7 +484,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked)})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

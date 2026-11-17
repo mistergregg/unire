@@ -123,6 +123,7 @@ async function openNew(prefill) {
     if (prefill.note) { $("n-note").textContent = prefill.note; $("n-note").hidden = false; }
   }
   renderSelected();
+  $("n-suggest").hidden = true;
 }
 
 function updateNetworkDesc() {
@@ -158,7 +159,7 @@ function renderSelected() {
     const base = el("input", { placeholder: r.defaultBranch || "branch", value: r.base || "", maxlength: "100", title: "Base branch (empty: the default)", "aria-label": "Base branch for " + r.fullName });
     base.addEventListener("input", () => { selected[i].base = base.value.trim(); });
     const remove = el("button", { type: "button", class: "ghost", title: "Remove", "aria-label": "Remove " + r.fullName }, "×");
-    remove.addEventListener("click", () => { selected.splice(i, 1); renderSelected(); renderResults(); });
+    remove.addEventListener("click", () => { selected.splice(i, 1); renderSelected(); renderResults(); suggestSoon(); });
     return el("span", { class: "chip" }, el("span", { class: "name" }, r.fullName), base, remove);
   }));
 }
@@ -222,7 +223,6 @@ $("n-ws-save").addEventListener("click", () => guarded($("n-ws-save"), async () 
 $("new-form").addEventListener("submit", (e) => {
   e.preventDefault();
   guarded($("n-submit"), async () => {
-    if (!selected.length) throw new Error("Choose at least one repo.");
     const s = await api("POST", "/api/sessions", {
       task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
@@ -230,3 +230,56 @@ $("new-form").addEventListener("submit", (e) => {
     await openSession(s.id);
   });
 });
+
+// ---- repo suggestions for what you are writing ----
+// Leave the repos empty and Unire picks them from your message (the repos it names,
+// and those usually used with them); here it says which, and offers the near misses.
+let suggestTimer = null;
+let suggestSeq = 0;
+function suggestSoon() {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(suggestRepos, 600);
+}
+$("n-prompt").addEventListener("input", suggestSoon);
+
+async function suggestRepos() {
+  const box = $("n-suggest");
+  const text = $("n-prompt").value.trim();
+  if (!serverList.length || text.length < 4) { box.hidden = true; return; }
+  const seq = ++suggestSeq;
+  let res;
+  try { res = await api("POST", "/api/repos/suggest", { prompt: text, have: refsOf() }); } catch (_) { return; }
+  if (seq !== suggestSeq) return;
+  renderSuggest(res.candidates);
+}
+
+function renderSuggest(cands) {
+  const box = $("n-suggest");
+  const fresh = cands.filter((c) => !selected.some((s) => key(s) === key({ serverId: c.serverId, fullName: c.fullName })));
+  const autos = fresh.filter((c) => c.auto);
+  const rest = fresh.filter((c) => !c.auto);
+  const add = (c) => {
+    selected.push({ serverId: c.serverId, fullName: c.fullName, cloneUrl: c.cloneUrl, base: "", defaultBranch: c.defaultBranch });
+    renderSelected();
+    suggestSoon();
+  };
+  const chip = (c, label) => {
+    const b = el("button", { type: "button", class: "chip ghost", title: c.why.join("; ") }, label + c.fullName);
+    b.addEventListener("click", () => add(c));
+    return b;
+  };
+  const parts = [];
+  if (!selected.length && autos.length) {
+    parts.push(el("div", { class: "muted" }, "Unire will use ", el("strong", {}, autos.map((c) => c.fullName).join(", ")),
+      " (from your message" + (autos.some((c) => c.why.some((w) => w.startsWith("usually"))) ? " and what you usually use together" : "") +
+      "). Choose repos yourself to change that."));
+  } else if (selected.length && autos.length) {
+    parts.push(el("div", { class: "muted" }, "Usually needed with these:"), el("div", { class: "chips" }, ...autos.map((c) => chip(c, "+ "))));
+  }
+  if (rest.length) {
+    parts.push(el("div", { class: "muted" }, !selected.length && !autos.length ? "Did you mean:" : "Maybe also:"),
+      el("div", { class: "chips" }, ...rest.slice(0, 4).map((c) => chip(c, "+ "))));
+  }
+  box.replaceChildren(...parts);
+  box.hidden = !parts.length;
+}

@@ -18,7 +18,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 | Situation | Tools |
 |---|---|
-| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `memory` (with memory on) |
+| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `branches`, `repo`, `memory` (with memory on) |
 | A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
 | A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
@@ -125,3 +125,29 @@ into it.
 ### `memory`
 
 `unire memory "<words>"` searches the notes of earlier sessions on this chat's repos; `unire memory <id>` reads one in full. Unire answers it live. See [memory.md](memory.md).
+
+## Which repos a chat uses
+
+- **Leave the repos empty.** If you choose none, Unire picks them from your message
+  (`internal/repopick`, plain text matching, no model call): the repos whose names you
+  wrote ("echotalk mobile", "EchoTalkMobile" and `echotalk-mobile` all match), and
+  those usually used together with them (two or more past chats, at least half of the
+  time). Words that fit several repos ("echotalk" for the mobile and the backend) are
+  only suggested, and so are generic words ("app"). At most four are picked, the
+  activity says why ("picked repo X: you wrote … ", "usually used with Y"), and if it
+  cannot tell it says so and offers the closest names. Repos you choose yourself are
+  used exactly as chosen.
+- **Suggestions while you write.** The New chat form shows what it would use, and
+  near misses as buttons.
+- **Replies.** A repo you mention in a reply, or that is usually used with the
+  chat's repos, joins the conversation.
+- **The agent can ask for one: `unire repo "<name or words>"`.** Every word must
+  appear in a repo's name or description; several matches come back as a list to
+  choose from. The repo is cloned into the running sandbox on the chat's branch,
+  committed and pushed with the others, and kept for replies. If your own words in the
+  chat already point to it, it is added at once; otherwise you are asked first (a
+  card, like any question). A session has at most 10 repos.
+
+### `repo`
+
+`unire repo "<name or words>"` brings another of the owner's repos into the session. See "Which repos a chat uses" above.

@@ -11,6 +11,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ type Config struct {
 	Egress Egress
 	// Pulls answers the agent's pull request tools. Nil means the tools are not offered.
 	Pulls Pulls
+	// Repos finds a repo the agent asks for while it runs. Nil means the repo tool is not offered.
+	Repos RepoFinder
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -58,9 +61,10 @@ type Request struct {
 	Network                   egress.Mode // empty means internet only
 	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
-	Parent                    string // the session this one continues (a reply), or empty
-	Branch                    string // the branch to continue on (a reply, same agent); empty means a new, unused one
-	Preamble                  string // told to the agent before the prompt; not shown as part of what the owner wrote
+	Parent                    string   // the session this one continues (a reply), or empty
+	Branch                    string   // the branch to continue on (a reply, same agent); empty means a new, unused one
+	Preamble                  string   // told to the agent before the prompt; not shown as part of what the owner wrote
+	Notes                     []string // lines for the activity log (for example why repos were picked)
 }
 
 // Manager runs sessions.
@@ -168,6 +172,9 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Unlock()
 
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
+	for _, n := range req.Notes {
+		_ = m.st.AddEvent(spec.ID, "log", n)
+	}
 	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent)})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
@@ -285,6 +292,12 @@ func (m *Manager) run(ctx context.Context, j job) {
 	}
 	if j.memory {
 		wo.Tools = append(wo.Tools, tools.Memory)
+	}
+	if cfg.Repos != nil && len(j.refs) < maxRepos {
+		wo.Tools = append(wo.Tools, tools.Repo)
+		wo.AddRepo = func(ctx context.Context, query string) (*workflow.AddedRepo, string) {
+			return m.addRepoFor(ctx, &j, query)
+		}
 	}
 	if pulls != nil || j.memory {
 		wo.Call = func(ctx context.Context, tool, args string) string {
@@ -637,4 +650,82 @@ func excerpt(text, query string, n int) string {
 		out += "…"
 	}
 	return out
+}
+
+// RepoFinder resolves an agent's request for another repo (internal/server).
+type RepoFinder interface {
+	// Find turns words, or "owner/name", into one of the owner's repos that is not
+	// already in have. ownerText is what the owner wrote in the conversation: a repo
+	// their words name (or one usually used with the chat's repos) is Named, and
+	// needs no question. A problem, or several equally good repos, comes back as a
+	// message for the agent.
+	Find(ctx context.Context, query, ownerText string, have []store.RepoRef) (FoundRepo, string)
+}
+
+// FoundRepo is a repo the agent asked for.
+type FoundRepo struct {
+	Repo  Repo   // the repo and its token
+	Named bool   // the owner's own words point to it
+	Why   string // how it was matched, for the owner
+}
+
+// maxRepos is the most repos one session may have.
+const maxRepos = 10
+
+// addRepoFor handles the repo tool: find the repo, ask the owner unless their words
+// already point to it, and add it to the session's repos so replies keep it.
+func (m *Manager) addRepoFor(ctx context.Context, j *job, query string) (*workflow.AddedRepo, string) {
+	m.mu.Lock()
+	have := append([]store.RepoRef(nil), j.refs...)
+	m.mu.Unlock()
+	if len(have) >= maxRepos {
+		return nil, fmt.Sprintf("This session already has %d repos, the most it can have.", maxRepos)
+	}
+	found, msg := m.config().Repos.Find(ctx, query, m.ownerText(j), have)
+	if msg != "" {
+		return nil, msg
+	}
+	name := found.Repo.Ref.FullName
+	if !found.Named {
+		q := fmt.Sprintf("The agent wants to bring in the repo %s (%s). Answer yes to allow it, or no.", name, found.Why)
+		answer, ok := m.askFunc(j.spec.ID)(ctx, strconv.FormatInt(time.Now().UnixNano(), 10), q)
+		a := strings.ToLower(strings.TrimSpace(answer))
+		if !ok || !(strings.HasPrefix(a, "y") || strings.HasPrefix(a, "ok") || strings.HasPrefix(a, "allow") || strings.HasPrefix(a, "sure")) {
+			return nil, "The owner did not allow adding " + name + ". Carry on without it."
+		}
+	}
+	names := make([]string, 0, len(have)+1)
+	for _, r := range have {
+		names = append(names, r.FullName)
+	}
+	names = append(names, name)
+	dir := RepoDirNames(names)[len(names)-1]
+
+	m.mu.Lock()
+	j.refs = append(j.refs, found.Repo.Ref)
+	refs := append([]store.RepoRef(nil), j.refs...)
+	m.mu.Unlock()
+	_ = m.st.SetSessionRepos(j.spec.ID, refs)
+	why := "you named it"
+	if !found.Named {
+		why = "you allowed it"
+	}
+	_ = m.st.AddEvent(j.spec.ID, "log", fmt.Sprintf("added repo %s for the agent (%s)", name, why))
+	return &workflow.AddedRepo{Dir: dir, URL: found.Repo.Ref.CloneURL, Token: found.Repo.Token, Base: found.Repo.Ref.Base}, ""
+}
+
+// ownerText is what the owner wrote in this conversation, oldest first: the
+// messages, not the agent's answers.
+func (m *Manager) ownerText(j *job) string {
+	var parts []string
+	id := j.spec.ID
+	for i := 0; i < 100 && id != ""; i++ {
+		s, ok, err := m.st.Session(id)
+		if err != nil || !ok {
+			break
+		}
+		parts = append([]string{s.Prompt}, parts...)
+		id = s.ParentID
+	}
+	return strings.Join(parts, "\n")
 }

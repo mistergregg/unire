@@ -266,3 +266,13 @@ func (s *Store) SetTask(id, task string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET task = ? WHERE id = ?`, task, id)
 	return err
 }
+
+// SetSessionRepos replaces the repos of a session, when more were added while it ran.
+func (s *Store) SetSessionRepos(id string, repos []RepoRef) error {
+	b, err := json.Marshal(repos)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE sessions SET repos = ? WHERE id = ?`, string(b), id)
+	return err
+}

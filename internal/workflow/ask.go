@@ -31,7 +31,7 @@ type AskFunc func(ctx context.Context, id, question string) (answer string, ok b
 
 func (w *worker) asking() bool {
 	for _, t := range w.opt.Tools {
-		if (t.Name == tools.Ask.Name && w.opt.Ask != nil) || (tools.IsCall(t.Name) && w.opt.Call != nil) {
+		if (t.Name == tools.Ask.Name && w.opt.Ask != nil) || (tools.IsCall(t.Name) && (w.opt.Call != nil || w.opt.AddRepo != nil)) {
 			return true
 		}
 	}
@@ -95,7 +95,9 @@ func (w *worker) serveQuestions(ctx context.Context) {
 					// A live tool: Unire answers it itself, only if the session was given it.
 					tool, args, _ := strings.Cut(strings.TrimPrefix(question, callPrefix), "\n")
 					tool = strings.TrimSpace(tool)
-					if w.opt.Call != nil && w.hasTool(tool) {
+					if tool == tools.Repo.Name && w.opt.AddRepo != nil && w.hasTool(tool) {
+						answer, ok = w.addRepo(ctx, strings.TrimSpace(args)), true
+					} else if w.opt.Call != nil && w.hasTool(tool) {
 						answer, ok = w.opt.Call(ctx, tool, strings.TrimSpace(args)), true
 					} else {
 						answer, ok = "This tool is not available in this conversation.", true

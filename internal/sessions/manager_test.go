@@ -16,6 +16,7 @@ import (
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/tools"
+	"github.com/mistergregg/unire/internal/workflow"
 )
 
 // fakeSandbox behaves like a sandbox where the agent prints a line that
@@ -845,5 +846,81 @@ func TestTheMemoryToolSearchesOnlyThisSessionsRepos(t *testing.T) {
 	}
 	if usage := m.lookUpMemory(j, " "); !strings.Contains(usage, "usage") {
 		t.Errorf("empty = %q", usage)
+	}
+}
+
+// fakeFinder answers the repo tool with one repo.
+type fakeFinder struct{ named bool }
+
+func (f fakeFinder) Find(_ context.Context, query, ownerText string, have []store.RepoRef) (FoundRepo, string) {
+	if query == "nothing" {
+		return FoundRepo{}, "No repo matches."
+	}
+	return FoundRepo{Repo: Repo{Ref: store.RepoRef{ServerID: "g", FullName: "me/backend", CloneURL: "https://git/me/backend.git"}, Token: "tok"}, Named: f.named, Why: "usually used with me/api"}, ""
+}
+
+func TestTheRepoToolAsksTheOwnerUnlessTheirWordsNameTheRepo(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := store.RepoRef{ServerID: "g", FullName: "me/api", CloneURL: "https://git/me/api.git"}
+	newJob := func(id string) (*Manager, *job) {
+		f := fakeFinder{}
+		m, err := New(st, func() Config { return Config{Repos: f} })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateSession(store.Session{ID: id, Task: "t", Agent: "claude", Mode: "hands-off", Prompt: "work on the api", Branch: "b", Repos: []store.RepoRef{api}}); err != nil {
+			t.Fatal(err)
+		}
+		return m, &job{spec: session.Spec{ID: id}, refs: []store.RepoRef{api}}
+	}
+
+	// Named by the owner's own words: no question.
+	m, j := newJob("s1")
+	m.config = func() Config { return Config{Repos: fakeFinder{named: true}} }
+	got, msg := m.addRepoFor(context.Background(), j, "the backend")
+	if got == nil || msg != "" || got.Dir != "backend" || got.Token != "tok" {
+		t.Fatalf("named repo = %+v %q", got, msg)
+	}
+	if rec, _, _ := st.Session("s1"); len(rec.Repos) != 2 || rec.Repos[1].FullName != "me/backend" {
+		t.Errorf("the repo is kept for replies: %+v", rec.Repos)
+	}
+	if got, msg := m.addRepoFor(context.Background(), j, "nothing"); got != nil || msg != "No repo matches." {
+		t.Errorf("a problem goes to the agent: %+v %q", got, msg)
+	}
+
+	// Not named: the owner is asked, and "no" means no.
+	for answer, want := range map[string]bool{"yes please": true, "no": false} {
+		m, j := newJob("s-" + strings.ReplaceAll(answer, " ", "-"))
+		done := make(chan struct{})
+		var res *workflow.AddedRepo
+		var text string
+		go func() {
+			res, text = m.addRepoFor(context.Background(), j, "the backend")
+			close(done)
+		}()
+		var qid string
+		for i := 0; i < 200 && qid == ""; i++ {
+			time.Sleep(10 * time.Millisecond)
+			events, _ := st.Events(j.spec.ID, 0, 100)
+			for _, e := range events {
+				if e.Kind == "ask" && strings.Contains(e.Text, "me/backend") {
+					qid, _, _ = strings.Cut(e.Text, "\n")
+				}
+			}
+		}
+		if qid == "" {
+			t.Fatal("the owner should be asked")
+		}
+		if err := m.Answer(j.spec.ID, qid, answer); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		if (res != nil) != want {
+			t.Errorf("answer %q: added=%v (%q), want %v", answer, res != nil, text, want)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/egress"
+	"github.com/mistergregg/unire/internal/repopick"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -139,6 +140,18 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		}
 		refs[i] = ref
 	}
+	// A repo the owner now mentions (or one usually used with the repos here) joins
+	// the conversation. The repos already in it stay.
+	var picked []repopick.Candidate
+	if len(refs) < 10 {
+		picked = repopick.Auto(s.rankRepos(r.Context(), req.Prompt, refs))
+		if room := 10 - len(refs); len(picked) > room {
+			picked = picked[:room]
+		}
+		for _, c := range picked {
+			refs = append(refs, refOf(c))
+		}
+	}
 	repos, err := s.resolveRepos(refs)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -150,7 +163,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	}
 	started, err := s.sessions.Start(sessions.Request{
 		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: replyPreamble(thread, s.lastAnswer), Branch: sameAgentBranch(x, req.Agent),
-		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID,
+		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

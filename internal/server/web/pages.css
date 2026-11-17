@@ -210,3 +210,8 @@ a.button.primary:hover { filter: brightness(1.08); }
 .pr-base input { margin: 0; flex: 1; }
 .pr-another { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 200px; }
 .pr-another input { margin: 0; flex: 1; }
+
+/* repos Unire suggests while you write */
+.suggest { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; font-size: 13px; }
+.suggest .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.suggest .chip { cursor: pointer; }

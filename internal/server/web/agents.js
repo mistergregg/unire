@@ -50,11 +50,17 @@ function renderAgents(list) {
         banner(r.output || "Reset.");
       });
     });
-    return el("div", { class: "item" },
-      el("div", { class: "item-head" }, el("span", { class: "name" }, a.label), stateBadge(a)),
-      el("div", { class: "muted" }, a.description),
+    const state = a.loggedIn === true ? "ok" : a.loggedIn === false ? "bad" : "";
+    return el("div", { class: "item tile" },
+      el("div", { class: "tile-head" },
+        el("span", { class: "avatar-wrap" },
+          el("span", { class: "avatar lg" }, a.label.charAt(0).toUpperCase()),
+          el("span", { class: "state " + state })),
+        el("div", { class: "tile-title" }, el("span", { class: "name" }, a.label)),
+        stateBadge(a)),
+      el("div", { class: "tile-body" }, a.description),
       el("div", { class: "item-actions" }, signIn),
-      el("details", { class: "spaced" },
+      el("details", {},
         el("summary", {}, "Troubleshoot"),
         el("div", { class: "item-actions" }, inspect, last, reset),
         out));

@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/look.css">
+<link rel="stylesheet" href="/pages.css">
 </head>
 <body>
 <header class="top">
@@ -25,15 +26,18 @@
   <p id="banner" class="banner" role="status" hidden></p>
 
   <section id="view-auth" hidden>
-    <div class="card narrow">
-      <h1 id="auth-title"></h1>
-      <p id="auth-hint" class="muted"></p>
-      <form id="auth-form" autocomplete="off">
-        <label>Password
-          <input id="auth-password" type="password" required minlength="1" autocomplete="current-password">
-        </label>
-        <button class="primary" type="submit" id="auth-submit"></button>
-      </form>
+    <div class="auth-wrap">
+      <div class="glyph" aria-hidden="true">✦</div>
+      <div class="card narrow">
+        <h1 id="auth-title"></h1>
+        <p id="auth-hint" class="muted"></p>
+        <form id="auth-form" autocomplete="off">
+          <label>Password
+            <input id="auth-password" type="password" required minlength="1" autocomplete="current-password">
+          </label>
+          <button class="primary" type="submit" id="auth-submit"></button>
+        </form>
+      </div>
     </div>
   </section>
 
@@ -60,7 +64,7 @@
       <h1>What should we work on?</h1>
       <p class="muted">Describe it, pick the repos, and an agent gets to work on its own branch.</p>
     </div>
-    <p id="n-note" class="banner" hidden></p>
+    <p id="n-note" class="note" hidden></p>
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
       <div class="card">
@@ -129,67 +133,93 @@
 
   <!-- Agents -->
   <section id="view-agents" hidden>
-    <h1>Agents</h1>
-    <p class="muted">Sign in to the coding agents Unire can run. Each uses its own login, shared by every session.</p>
-    <div id="agent-list" class="stack"></div>
+    <header class="page-head">
+      <span class="icon-tile" data-icon="agents"></span>
+      <div class="grow">
+        <h1>Agents</h1>
+        <p class="muted">Sign in to the coding agents Unire can run. Each uses its own login, shared by every chat.</p>
+      </div>
+    </header>
+    <div id="agent-list" class="tiles"></div>
     <div id="term-card" class="card" hidden>
-      <div class="between">
+      <div class="term-bar">
+        <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
         <h2 id="term-title"></h2>
         <button id="term-close" type="button">Close</button>
       </div>
-      <p id="term-help" class="muted"></p>
-      <div id="term-link" class="row" hidden>
-        <a id="term-open" class="button primary" target="_blank" rel="noopener noreferrer">Open sign-in link</a>
-        <span class="muted">Sign in there, then paste the code below.</span>
+      <div class="term-body">
+        <p id="term-help" class="muted"></p>
+        <div id="term-link" class="row" hidden>
+          <a id="term-open" class="button primary" target="_blank" rel="noopener noreferrer">Open sign-in link</a>
+          <span class="muted">Sign in there, then paste the code below.</span>
+        </div>
+        <form id="term-code-form" class="row" autocomplete="off">
+          <input id="term-code" placeholder="Paste the code here" spellcheck="false" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+        <div id="term" aria-label="Sign-in terminal"></div>
+        <p class="muted small">You can also click in the terminal and type. Use the arrow keys to choose.</p>
       </div>
-      <form id="term-code-form" class="row" autocomplete="off">
-        <input id="term-code" placeholder="Paste the code here" spellcheck="false" autocomplete="off">
-        <button type="submit">Send</button>
-      </form>
-      <div id="term" aria-label="Sign-in terminal"></div>
-      <p class="muted">You can also click in the terminal and type. Use the arrow keys to choose.</p>
     </div>
   </section>
 
   <!-- Memory -->
   <section id="view-memory" hidden>
-    <h1>Memory</h1>
-    <p class="muted">What Unire remembers about your repos. Agents start with a repo's brief and the latest session summaries, and update them when they finish. It is background information for the agent, not instructions, and you can edit or clear any of it.</p>
-    <form id="mem-search-form" class="row">
-      <input id="mem-query" type="search" placeholder="Search session summaries">
+    <header class="page-head">
+      <span class="icon-tile" data-icon="memory"></span>
+      <div class="grow">
+        <h1>Memory</h1>
+        <p class="muted">What Unire remembers about your repos. Agents start with a repo's brief and the latest summaries, and update them when they finish. It is background information for the agent, not instructions, and you can edit or clear any of it.</p>
+      </div>
+    </header>
+    <form id="mem-search-form" class="searchbar">
+      <span data-icon="search"></span>
+      <input id="mem-query" type="search" placeholder="Search what the agents have done">
       <button class="primary" type="submit">Search</button>
     </form>
-    <div id="mem-results" class="stack spaced"></div>
-    <h2 class="spaced">Repos</h2>
-    <div id="mem-list" class="stack"></div>
+    <div id="mem-results" class="stack"></div>
+    <div class="section-title">Repos</div>
+    <div id="mem-list" class="tiles"></div>
   </section>
 
   <section id="view-repomem" hidden>
     <button class="ghost" id="rm-back">&larr; Memory</button>
-    <h1 id="rm-title"></h1>
+    <header class="page-head">
+      <span class="icon-tile" data-icon="memory"></span>
+      <div class="grow"><h1 id="rm-title"></h1></div>
+    </header>
     <div class="card">
-      <h2>Brief</h2>
-      <p id="rm-meta" class="muted"></p>
+      <div class="card-head">
+        <div class="grow">
+          <h2>Brief</h2>
+          <p id="rm-meta" class="muted"></p>
+        </div>
+      </div>
       <textarea id="rm-brief" rows="14" aria-label="Brief"></textarea>
-      <p id="rm-count" class="muted"></p>
+      <p id="rm-count" class="muted small"></p>
       <div class="item-actions">
         <button id="rm-save" class="primary">Save brief</button>
         <button id="rm-restore" hidden>Restore previous version</button>
         <button id="rm-clear" class="danger">Clear brief</button>
       </div>
     </div>
-    <h2 class="spaced">Session summaries</h2>
+    <div class="section-title">Session summaries</div>
     <div id="rm-summaries" class="stack"></div>
   </section>
 
   <!-- Git servers -->
   <section id="view-servers" hidden>
-    <h1>Git servers</h1>
-    <p class="muted">Tokens are encrypted on the server and can never be viewed again, only replaced.</p>
-    <div id="server-list" class="stack"></div>
+    <header class="page-head">
+      <span class="icon-tile" data-icon="git"></span>
+      <div class="grow">
+        <h1>Git servers</h1>
+        <p class="muted">Where your repos live. Tokens are encrypted on the server and can never be viewed again, only replaced.</p>
+      </div>
+    </header>
+    <div id="server-list" class="tiles"></div>
 
+    <div class="section-title">Add a git server</div>
     <div class="card">
-      <h2>Add a git server</h2>
       <form id="add-form" autocomplete="off">
         <div class="grid">
           <label>Name
@@ -205,9 +235,9 @@
         <label>Access token
           <input id="f-token" type="password" required autocomplete="new-password" spellcheck="false">
         </label>
-        <p id="f-token-help" class="muted"></p>
+        <p id="f-token-help" class="muted small"></p>
         <label class="check">
-          <input id="f-insecure" type="checkbox"> Skip TLS certificate check (self-signed certificate)
+          <input id="f-insecure" type="checkbox"> Skip the TLS certificate check (self-signed certificate)
         </label>
         <button class="primary" type="submit" id="add-submit">Test and save</button>
       </form>
@@ -216,82 +246,109 @@
 
   <!-- Settings -->
   <section id="view-settings" hidden>
-    <h1>Settings</h1>
-    <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
+    <header class="page-head">
+      <span class="icon-tile" data-icon="settings"></span>
+      <div class="grow">
+        <h1>Settings</h1>
+        <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
+      </div>
+    </header>
 
-    <div class="card">
-      <h2>Sandbox</h2>
-      <form id="sb-form" autocomplete="off">
-        <div class="grid">
-          <label>Sandbox image
-            <input id="sb-image" required>
-          </label>
-          <label>Agent login volume
-            <input id="sb-volume" required>
-          </label>
-          <label>Memory limit per session
-            <input id="sb-memory" placeholder="no limit, or e.g. 4g">
-          </label>
-          <label>CPU limit per session
-            <input id="sb-cpus" placeholder="no limit, or e.g. 2">
-          </label>
+    <div class="settings-grid">
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="box"></span>
+          <div class="grow"><h2>Sandbox</h2><p class="muted">How each agent's disposable container runs.</p></div>
         </div>
-        <button class="primary" type="submit" id="sb-submit">Save</button>
-      </form>
-      <p class="muted spaced">Sign in to the agents on the <strong>Agents</strong> tab. The logins are saved in the login volume above.</p>
-    </div>
+        <form id="sb-form" autocomplete="off">
+          <div class="grid">
+            <label>Sandbox image
+              <input id="sb-image" required>
+            </label>
+            <label>Agent login volume
+              <input id="sb-volume" required>
+            </label>
+            <label>Memory limit per chat
+              <input id="sb-memory" placeholder="no limit, or e.g. 4g">
+            </label>
+            <label>CPU limit per chat
+              <input id="sb-cpus" placeholder="no limit, or e.g. 2">
+            </label>
+          </div>
+          <button class="primary" type="submit" id="sb-submit">Save</button>
+        </form>
+        <p class="muted small spaced">Sign in to the agents on the <strong>Agents</strong> tab. The logins are saved in the login volume above.</p>
+      </div>
 
-    <div class="card">
-      <h2>Network access for sandboxes</h2>
-      <p id="net-status" class="muted"></p>
-      <form id="net-form" autocomplete="off">
-        <label>Default for new sessions
-          <select id="net-mode"></select>
-        </label>
-        <p id="net-desc" class="muted"></p>
-        <label>Allowed addresses
-          <textarea id="net-allow" rows="4" placeholder="One per line, for example:&#10;192.168.0.50:5432&#10;nas.local&#10;192.168.0.0/24"></textarea>
-        </label>
-        <p class="muted">Used in Internet only and Agent only mode, on top of the internet (or the agent's own service) and your git servers. A host name, an address or a range, optionally with a port. Your sessions' git servers are always allowed.</p>
-        <button class="primary" type="submit" id="net-submit">Save</button>
-      </form>
-    </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="shield"></span>
+          <div class="grow"><h2>Network access</h2><p class="muted">What a sandbox can reach.</p></div>
+        </div>
+        <p id="net-status" class="muted"></p>
+        <form id="net-form" autocomplete="off">
+          <label>Default for new chats
+            <select id="net-mode"></select>
+          </label>
+          <p id="net-desc" class="muted small"></p>
+          <label>Allowed addresses
+            <textarea id="net-allow" rows="4" placeholder="One per line, for example:&#10;192.168.0.50:5432&#10;nas.local&#10;192.168.0.0/24"></textarea>
+          </label>
+          <p class="muted small">Used in Internet only and Agent only mode, on top of the internet (or the agent's own service) and your git servers. A host name, an address or a range, optionally with a port. A chat's git servers are always allowed.</p>
+          <button class="primary" type="submit" id="net-submit">Save</button>
+        </form>
+      </div>
 
-    <div class="card">
-      <h2>Saved workspaces</h2>
-      <div id="ws-list" class="stack"></div>
-    </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="layers"></span>
+          <div class="grow"><h2>Saved workspaces</h2><p class="muted">Sets of repos you start chats from.</p></div>
+        </div>
+        <div id="ws-list" class="stack"></div>
+      </div>
 
-    <div class="card">
-      <h2>Logged-in devices</h2>
-      <p class="muted">Logins last 30 days and renew while you use them. They survive restarts.</p>
-      <div id="login-list" class="stack"></div>
-      <div class="item-actions"><button id="revoke-all" class="danger">Log out everywhere</button></div>
-    </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="bell"></span>
+          <div class="grow"><h2>Notifications</h2><p class="muted">Hear about questions while you are in another tab.</p></div>
+        </div>
+        <p id="notif-status" class="muted"></p>
+        <button id="notif-enable" type="button">Turn on notifications</button>
+      </div>
 
-    <div class="card">
-      <h2>Change password</h2>
-      <form id="pw-form" autocomplete="off">
-        <label>Current password
-          <input id="pw-current" type="password" required autocomplete="current-password">
-        </label>
-        <label>New password (at least 10 characters)
-          <input id="pw-new" type="password" required minlength="10" autocomplete="new-password">
-        </label>
-        <button class="primary" type="submit" id="pw-submit">Change password</button>
-        <p class="muted">Changing it logs out every other device.</p>
-      </form>
-    </div>
+      <div class="card full">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="monitor"></span>
+          <div class="grow"><h2>Logged-in devices</h2><p class="muted">Logins last 30 days and renew while you use them. They survive restarts.</p></div>
+        </div>
+        <div id="login-list" class="stack"></div>
+        <div class="item-actions"><button id="revoke-all" class="danger">Log out everywhere</button></div>
+      </div>
 
-    <div class="card">
-      <h2>Notifications</h2>
-      <p id="notif-status" class="muted"></p>
-      <button id="notif-enable" type="button">Turn on notifications</button>
-    </div>
-    <div class="card">
-      <h2>Backup</h2>
-      <p class="muted">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
-      <a class="button" href="/api/backup" download>Download backup</a>
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="key"></span>
+          <div class="grow"><h2>Change password</h2><p class="muted">Changing it logs out every other device.</p></div>
+        </div>
+        <form id="pw-form" autocomplete="off">
+          <label>Current password
+            <input id="pw-current" type="password" required autocomplete="current-password">
+          </label>
+          <label>New password (at least 10 characters)
+            <input id="pw-new" type="password" required minlength="10" autocomplete="new-password">
+          </label>
+          <button class="primary" type="submit" id="pw-submit">Change password</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="download"></span>
+          <div class="grow"><h2>Backup</h2><p class="muted">Everything needed to restore Unire.</p></div>
+        </div>
+        <p class="muted small">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
+        <a class="button" href="/api/backup" download>Download backup</a>
+      </div>
     </div>
   </section>
 </main>

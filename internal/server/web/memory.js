@@ -11,11 +11,14 @@ async function openMemory() {
   $("mem-results").replaceChildren();
   const list = await api("GET", "/api/memory");
   $("mem-list").replaceChildren(...(list.length ? list.map((r) => {
-    const row = el("div", { class: "item click", role: "button", tabindex: "0" },
-      el("div", { class: "item-head" },
-        el("span", { class: "name" }, r.name),
-        el("span", { class: "badge" }, (r.hasBrief ? "brief" : "no brief") + " · " + r.summaries + (r.summaries === 1 ? " summary" : " summaries"))),
-      el("div", { class: "muted" }, r.updatedAt ? "brief updated " + ago(r.updatedAt) : "summaries only"));
+    const row = el("div", { class: "item tile click", role: "button", tabindex: "0" },
+      el("div", { class: "tile-head" },
+        iconTile("memory", true),
+        el("div", { class: "tile-title" },
+          el("span", { class: "name" }, r.name),
+          el("div", { class: "tile-sub" }, r.updatedAt ? "brief updated " + ago(r.updatedAt) : "summaries only")),
+        el("span", { class: "badge" + (r.hasBrief ? " st-done" : "") }, r.hasBrief ? "brief" : "no brief")),
+      el("div", { class: "tile-body" }, r.summaries + (r.summaries === 1 ? " session summary" : " session summaries")));
     const open = () => guarded(null, () => openRepoMemory(r.key));
     row.addEventListener("click", open);
     row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
@@ -39,12 +42,14 @@ function summaryItem(x, onDeleted) {
     if (!confirm("Delete this summary? Agents will no longer see it.")) return;
     guarded(del, async () => { await api("DELETE", "/api/memory/summaries/" + encodeURIComponent(x.sessionId)); onDeleted(); });
   });
-  return el("div", { class: "item" },
-    el("div", { class: "item-head" },
-      el("span", { class: "name" }, x.task),
-      el("span", { class: "badge" }, x.agent + " · " + x.status + " · " + (x.source === "agent" ? "agent summary" : "plain summary"))),
-    el("div", { class: "muted" }, ago(x.createdAt) + " · " + x.repos.map(keyName).join(", ")),
-    x.snippet ? el("div", { class: "muted" }, x.snippet) : "",
+  return el("div", { class: "item tile" },
+    el("div", { class: "tile-head" },
+      el("div", { class: "tile-title" },
+        el("span", { class: "name" }, x.task),
+        el("div", { class: "tile-sub" }, ago(x.createdAt) + " · " + x.repos.map(keyName).join(", "))),
+      el("span", { class: "badge st-" + (x.status === "done" ? "done" : "failed") }, x.agent + " · " + x.status),
+      el("span", { class: "badge" }, x.source === "agent" ? "agent summary" : "plain summary")),
+    x.snippet ? el("div", { class: "tile-body" }, x.snippet) : "",
     el("div", { class: "item-actions" }, btn, del),
     body);
 }

@@ -17,6 +17,29 @@ function el(tag, attrs, ...kids) {
   return n;
 }
 
+// ---- icons: small line icons. The markup is fixed text written here, never data. ----
+const ICONS = {
+  agents: '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6"/><circle cx="12" cy="4" r="1"/>',
+  memory: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
+  git: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-6 3-12 6"/>',
+  settings: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+  box: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',
+  shield: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  key: '<circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5L20 3M16 7l3 3"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0112 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+};
+const iconSvg = (name) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
+function iconTile(name, small) {
+  const t = el("span", { class: "icon-tile" + (small ? " sm" : "") });
+  t.innerHTML = iconSvg(name);
+  return t;
+}
+document.querySelectorAll("[data-icon]").forEach((n) => { n.innerHTML = iconSvg(n.dataset.icon); });
+
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -141,7 +164,7 @@ async function openServers() {
   const servers = await api("GET", "/api/servers");
   const list = $("server-list");
   if (!servers.length) {
-    list.replaceChildren(el("p", { class: "muted" }, "No git servers yet. Add one below."));
+    list.replaceChildren(el("p", { class: "muted" }, "No git servers yet. Add one below to start working on your repos."));
     return;
   }
   list.replaceChildren(...servers.map(serverCard));
@@ -169,13 +192,18 @@ function serverCard(s) {
     guarded(removeBtn, async () => { await api("DELETE", "/api/servers/" + encodeURIComponent(s.id)); await openServers(); });
   });
 
-  return el("div", { class: "item" },
-    el("div", { class: "item-head" },
-      el("span", { class: "name" }, s.name),
-      el("span", { class: "badge" }, s.type + (s.tokenSet ? " · token saved" : " · no token"))),
-    el("div", { class: "muted" }, el("code", {}, s.baseUrl || (s.type === "github" ? "github.com" : ""))),
-    el("div", { class: "item-actions" }, testBtn, tokenInput, replaceBtn, removeBtn),
-    el("div", { class: "item-actions" }, status));
+  return el("div", { class: "item tile" },
+    el("div", { class: "tile-head" },
+      el("span", { class: "avatar-wrap" },
+        el("span", { class: "avatar lg" }, (s.type || "?").charAt(0).toUpperCase()),
+        el("span", { class: "state " + (s.tokenSet ? "ok" : "bad"), title: s.tokenSet ? "Token saved" : "No token" })),
+      el("div", { class: "tile-title" },
+        el("span", { class: "name" }, s.name),
+        el("div", { class: "tile-sub" }, s.baseUrl || (s.type === "github" ? "github.com" : ""))),
+      el("span", { class: "badge" }, s.type)),
+    el("div", { class: "tile-body" }, s.tokenSet ? "Token saved and encrypted." : "No token saved yet."),
+    el("div", { class: "item-actions" }, tokenInput, replaceBtn),
+    el("div", { class: "item-actions" }, testBtn, removeBtn, status));
 }
 
 $("add-form").addEventListener("submit", (e) => {
@@ -259,11 +287,13 @@ async function renderWorkspaces() {
       if (!confirm("Delete the workspace " + w.name + "?")) return;
       guarded(btn, async () => { await api("DELETE", "/api/workspaces/" + encodeURIComponent(w.id)); await renderWorkspaces(); });
     });
-    return el("div", { class: "item" },
-      el("div", { class: "item-head" }, el("span", { class: "name" }, w.name), el("span", { class: "badge" }, w.repos.length + " repos")),
-      el("div", { class: "muted" }, w.repos.map((r) => r.fullName).join(", ")),
-      el("div", { class: "item-actions" }, btn));
-  }) : [el("p", { class: "muted" }, "None yet. Save one from the New session page.")]));
+    return el("div", { class: "row-item" },
+      el("div", { class: "grow" },
+        el("span", { class: "name" }, w.name),
+        el("div", { class: "tile-sub" }, w.repos.map((r) => r.fullName).join(", "))),
+      el("span", { class: "badge" }, w.repos.length + (w.repos.length === 1 ? " repo" : " repos")),
+      btn);
+  }) : [el("p", { class: "muted small" }, "None yet. Save one from the New chat screen.")]));
 }
 
 async function renderLogins() {
@@ -275,12 +305,13 @@ async function renderLogins() {
       if (l.current) { showAuth(true); return; }
       await renderLogins();
     }));
-    return el("div", { class: "item" },
-      el("div", { class: "item-head" },
+    return el("div", { class: "row-item" },
+      iconTile("monitor", true),
+      el("div", { class: "grow" },
         el("span", { class: "name" }, describeAgent(l.userAgent)),
-        l.current ? el("span", { class: "badge" }, "this device") : ""),
-      el("div", { class: "muted" }, (l.ip || "unknown address") + " · active " + ago(l.lastSeen) + " · signed in " + ago(l.createdAt)),
-      el("div", { class: "item-actions" }, btn));
+        el("div", { class: "tile-sub" }, (l.ip || "unknown address") + " · active " + ago(l.lastSeen) + " · signed in " + ago(l.createdAt))),
+      l.current ? el("span", { class: "badge st-done" }, "this device") : "",
+      btn);
   }));
 }
 

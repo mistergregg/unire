@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/egress"
@@ -83,6 +84,7 @@ func (s *Server) sessionConfig() sessions.Config {
 		Egress: sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
 		Pulls:  s.pulls,
 		Repos:  s,
+		MaxRun: time.Duration(s.limits().MaxRunMinutes) * time.Minute,
 	}
 }
 

@@ -276,3 +276,62 @@ func (s *Store) SetSessionRepos(id string, repos []RepoRef) error {
 	_, err = s.db.Exec(`UPDATE sessions SET repos = ? WHERE id = ?`, string(b), id)
 	return err
 }
+
+// PruneLogs deletes the activity lines (progress, network) of sessions that
+// finished before the cutoff, and returns how many. The answers, questions and
+// messages stay, and so do the lines saying which branch was pushed, because pull
+// requests are found from those.
+func (s *Store) PruneLogs(before time.Time) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM session_events WHERE kind IN ('log', 'net', 'blocked')
+		AND text NOT LIKE '%: pushed %' AND text NOT LIKE '%: also pushed %'
+		AND session_id IN (SELECT id FROM sessions WHERE finished_at > 0 AND finished_at < ?)`, before.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// IdleConversations returns the first session of every conversation whose turns
+// have all finished, the newest before the cutoff.
+func (s *Store) IdleConversations(before time.Time) ([]string, error) {
+	list, err := s.Sessions(100000)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]Session{}
+	for _, x := range list {
+		byID[x.ID] = x
+	}
+	type conv struct {
+		newest time.Time
+		busy   bool
+	}
+	convs := map[string]*conv{}
+	for _, x := range list {
+		root := x.ID
+		for i := 0; i < 1000 && byID[root].ParentID != ""; i++ {
+			if _, ok := byID[byID[root].ParentID]; !ok {
+				break
+			}
+			root = byID[root].ParentID
+		}
+		c := convs[root]
+		if c == nil {
+			c = &conv{}
+			convs[root] = c
+		}
+		if !Finished(x.Status) {
+			c.busy = true
+		}
+		if x.FinishedAt.After(c.newest) {
+			c.newest = x.FinishedAt
+		}
+	}
+	var out []string
+	for root, c := range convs {
+		if !c.busy && !c.newest.IsZero() && c.newest.Before(before) {
+			out = append(out, root)
+		}
+	}
+	return out, nil
+}

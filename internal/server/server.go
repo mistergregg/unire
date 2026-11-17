@@ -58,6 +58,8 @@ type Server struct {
 	sessions      *sessions.Manager
 	pulls         *pulls.Service
 	catalog       catalogCache
+	stopCleanup   chan struct{}
+	stopOnce      sync.Once
 	runnerFactory RunnerFactory
 	egressProxy   *egress.Proxy
 	egressInfo    egress.Info
@@ -117,6 +119,8 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
+	s.stopCleanup = make(chan struct{})
+	go s.runCleanup(s.stopCleanup)
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()
@@ -127,6 +131,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 
 // Close stops running sessions and releases the database.
 func (s *Server) Close() error {
+	s.stopOnce.Do(func() { close(s.stopCleanup) })
 	s.sessions.Shutdown()
 	return s.store.Close()
 }
@@ -168,6 +173,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspaces", s.auth(s.saveWorkspace))
 	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))
 	mux.HandleFunc("POST /api/repos/suggest", s.auth(s.suggestRepos))
+	mux.HandleFunc("GET /api/limits", s.auth(s.getLimits))
+	mux.HandleFunc("PUT /api/limits", s.auth(s.putLimits))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /api/sessions", s.auth(s.startSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))

@@ -283,6 +283,7 @@ $("net-form").addEventListener("submit", (e) => {
 async function openSettings() {
   show("settings");
   fillSandbox(await api("GET", "/api/sandbox"));
+  fillLimits(await api("GET", "/api/limits"));
   fillNetwork(await api("GET", "/api/network"));
   await renderWorkspaces();
   await renderLogins();
@@ -352,3 +353,22 @@ $("pw-form").addEventListener("submit", (e) => {
 
 // Start after every script has loaded (sessions.js defines openSessions).
 window.addEventListener("load", () => init().catch((e) => banner(e.message, true)));
+
+// ---- limits: how long a run may take, how long things are kept ----
+function fillLimits(l) {
+  $("lim-run").value = l.maxRunMinutes;
+  $("lim-logs").value = l.keepLogsDays;
+  $("lim-ws").value = l.keepWorkspaceDays;
+}
+
+$("lim-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("lim-submit"), async () => {
+    fillLimits(await api("PUT", "/api/limits", {
+      maxRunMinutes: Number($("lim-run").value) || 0,
+      keepLogsDays: Number($("lim-logs").value) || 0,
+      keepWorkspaceDays: Number($("lim-ws").value) || 0,
+    }));
+    banner("Limits saved. The run limit applies to runs that start from now on.");
+  });
+});

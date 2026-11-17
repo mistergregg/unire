@@ -63,3 +63,11 @@ cloning everything again. The agent's work is still pushed to its branch after
 every message. The volume is removed when you delete the conversation. If you
 delete Unire's data by hand, you can remove leftover volumes with
 `docker volume ls --filter name=unire-ws-`.
+
+## Limits (Settings, Limits)
+
+- **Longest a run may take** (default 240 minutes, 0 for no limit). A run over its time is stopped and marked failed with the reason. **Stop** also always frees the slot: if a stopped run does not come back within 90 seconds, Unire gives up on it, marks the chat stopped and lets another run use the slot (the sandbox is removed when the run does end).
+- **Keep activity lines** (default 90 days). Progress and network lines of finished chats are deleted after this. Answers, questions, your messages, summaries, and the lines saying which branch was pushed are kept (pull requests are found from them).
+- **Remove idle workspaces after** (default 14 days). The workspace volume of a conversation with nothing running for this long is removed; a reply clones the repos again from the branch that was pushed. Anything that was never pushed is lost, so push before leaving work idle.
+
+Cleanup runs a couple of minutes after start-up and then every six hours.

@@ -144,3 +144,21 @@ func TestTheTokenCanBeCheckedForPullRequestAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestLimitsHaveSaneDefaultsAndAreValidated(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	code, body := e.do("GET", "/api/limits", nil)
+	if code != 200 || !strings.Contains(body, `"maxRunMinutes":240`) || !strings.Contains(body, `"keepLogsDays":90`) || !strings.Contains(body, `"keepWorkspaceDays":14`) {
+		t.Fatalf("defaults = %d %s", code, body)
+	}
+	if code, body := e.do("PUT", "/api/limits", map[string]any{"maxRunMinutes": 30, "keepLogsDays": 0, "keepWorkspaceDays": 7}); code != 200 || !strings.Contains(body, `"maxRunMinutes":30`) || !strings.Contains(body, `"keepLogsDays":0`) {
+		t.Errorf("save = %d %s", code, body)
+	}
+	if code, _ := e.do("PUT", "/api/limits", map[string]any{"maxRunMinutes": -5}); code != http.StatusBadRequest {
+		t.Errorf("a negative limit = %d, want 400", code)
+	}
+	if code, _ := e.do("PUT", "/api/limits", map[string]any{"keepLogsDays": 99999}); code != http.StatusBadRequest {
+		t.Errorf("too many days = %d, want 400", code)
+	}
+}

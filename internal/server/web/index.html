@@ -264,6 +264,28 @@
       <div class="card">
         <div class="card-head">
           <span class="icon-tile sm" data-icon="box"></span>
+          <div class="grow"><h2>Limits</h2><p class="muted">Stop runaway runs and keep the database and disk from growing for ever.</p></div>
+        </div>
+        <form id="lim-form" autocomplete="off">
+          <div class="grid">
+            <label>Longest a run may take (minutes)
+              <input id="lim-run" type="number" min="0" max="10080" placeholder="0 = no limit">
+            </label>
+            <label>Keep activity lines (days)
+              <input id="lim-logs" type="number" min="0" max="3650" placeholder="0 = keep for ever">
+            </label>
+            <label>Remove idle workspaces after (days)
+              <input id="lim-ws" type="number" min="0" max="3650" placeholder="0 = keep for ever">
+            </label>
+          </div>
+          <button class="primary" type="submit" id="lim-submit">Save</button>
+        </form>
+        <p class="muted small spaced">A run that goes over its time is stopped and marked failed. Answers, questions and what was pushed are always kept; a removed workspace is cloned again from its pushed branch when you reply.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="icon-tile sm" data-icon="box"></span>
           <div class="grow"><h2>Sandbox</h2><p class="muted">How each agent's disposable container runs.</p></div>
         </div>
         <form id="sb-form" autocomplete="off">

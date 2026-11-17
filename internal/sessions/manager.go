@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mistergregg/unire/internal/agent"
@@ -37,6 +38,8 @@ type Config struct {
 	Egress Egress
 	// Pulls answers the agent's pull request tools. Nil means the tools are not offered.
 	Pulls Pulls
+	// MaxRun is the longest one run may take; zero means no limit.
+	MaxRun time.Duration
 	// Repos finds a repo the agent asks for while it runs. Nil means the repo tool is not offered.
 	Repos RepoFinder
 }
@@ -262,6 +265,11 @@ func (m *Manager) run(ctx context.Context, j job) {
 
 	_ = m.st.MarkRunning(spec.ID)
 	cfg := m.config()
+	if cfg.MaxRun > 0 {
+		var cancelRun context.CancelFunc
+		ctx, cancelRun = context.WithTimeoutCause(ctx, cfg.MaxRun, errRunLimit{cfg.MaxRun})
+		defer cancelRun()
+	}
 	var rn runner.Runner = cfg.Runner
 	if network != egress.ModeFull {
 		pol, perr := m.policyFor(spec, network, cfg)
@@ -312,9 +320,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 	}
 	// The turn is finished as soon as the work is pushed. Saving to memory goes
 	// on in the background, so the owner can read the answer and reply at once.
-	finished := false
+	var finished atomic.Bool
 	wo.OnWorkDone = func(res workflow.Result, werr error) {
-		finished = true
+		finished.Store(true)
 		out.Flush()
 		info.Flush()
 		if res.PRBody != "" {
@@ -326,13 +334,41 @@ func (m *Manager) run(ctx context.Context, j job) {
 		m.applyName(j, res.Name)
 		m.finish(ctx, spec.ID, werr, secrets)
 	}
-	res, err := workflow.Run(ctx, rn, spec, wo)
+	type outcome struct {
+		res workflow.Result
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := workflow.Run(ctx, rn, spec, wo)
+		done <- outcome{res, err}
+	}()
+	var res workflow.Result
+	var err error
+	select {
+	case o := <-done:
+		res, err = o.res, o.err
+	case <-ctx.Done():
+		// Stopped (or out of time). The run is told to end; if it does not come back, give up on it.
+		select {
+		case o := <-done:
+			res, err = o.res, o.err
+		case <-time.After(abandonAfter):
+			out.Flush()
+			info.Flush()
+			_ = m.st.AddEvent(spec.ID, "log", "the run did not stop in time: giving up on it (its sandbox is removed when it ends)")
+			if !finished.Load() {
+				m.finish(ctx, spec.ID, nil, secrets)
+			}
+			return
+		}
+	}
 	out.Flush()
 	info.Flush()
 	if j.memory && ctx.Err() == nil {
 		m.saveMemory(j, res, err)
 	}
-	if !finished { // it failed before the work was done
+	if !finished.Load() { // it failed before the work was done
 		m.applyName(j, res.Name)
 		m.finish(ctx, spec.ID, err, secrets)
 	}
@@ -453,6 +489,10 @@ func (m *Manager) finish(ctx context.Context, id string, err error, secrets []st
 		closing := m.closing
 		m.mu.Unlock()
 		status = store.StatusStopped
+		var lim errRunLimit
+		if errors.As(context.Cause(ctx), &lim) {
+			status, msg = store.StatusFailed, lim.Error()
+		}
 		if closing {
 			status = store.StatusInterrupted
 			msg = "Unire stopped while this session was running"
@@ -728,4 +768,44 @@ func (m *Manager) ownerText(j *job) string {
 		id = s.ParentID
 	}
 	return strings.Join(parts, "\n")
+}
+
+// errRunLimit is why a run was stopped when it took longer than the limit in Settings.
+type errRunLimit struct{ d time.Duration }
+
+func (e errRunLimit) Error() string {
+	if e.d < time.Minute {
+		return fmt.Sprintf("stopped after %d seconds: the longest a run may take (Settings, Limits)", int(e.d.Seconds()))
+	}
+	return fmt.Sprintf("stopped after %d minutes: the longest a run may take (Settings, Limits)", int(e.d.Minutes()))
+}
+
+// abandonAfter is how long a stopped run may take to come back before the manager
+// gives up on it, frees its slot and marks it stopped. The run is ended in the
+// background; Stop must never leave a chat looking busy.
+var abandonAfter = 90 * time.Second
+
+// Cleanup removes what old conversations no longer need: their activity lines, and
+// the workspace volume of conversations idle for a while (a reply clones again
+// from the branch that was pushed). Zero keeps everything of that kind.
+func (m *Manager) Cleanup(ctx context.Context, keepLogs, keepWorkspaces time.Duration) (logs int64, workspaces int) {
+	if keepLogs > 0 {
+		if n, err := m.st.PruneLogs(time.Now().Add(-keepLogs)); err == nil {
+			logs = n
+		}
+	}
+	if keepWorkspaces > 0 {
+		if k, ok := m.config().Runner.(runner.WorkspaceKeeper); ok {
+			roots, _ := m.st.IdleConversations(time.Now().Add(-keepWorkspaces))
+			for _, root := range roots {
+				if ctx.Err() != nil {
+					break
+				}
+				if k.RemoveWorkspace(ctx, workspaceName(root)) == nil {
+					workspaces++
+				}
+			}
+		}
+	}
+	return logs, workspaces
 }

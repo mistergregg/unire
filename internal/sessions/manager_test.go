@@ -26,6 +26,7 @@ type fakeSandbox struct {
 	agentErr    error
 	block       chan struct{} // if set, the agent waits on it or on ctx
 	memoryGate  chan struct{} // if set, the memory step waits on it (or on ctx)
+	stuck       chan struct{} // if set, the agent ignores being stopped until it is closed
 	heads       int           // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
 	mu       sync.Mutex
@@ -37,6 +38,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	if inner, isAgent, isSignal := agenttest.Unwrap(o.Argv); isSignal {
 		return nil
 	} else if isAgent {
+		if f.stuck != nil {
+			<-f.stuck // a process that cannot be stopped
+		}
 		if inner[0] != "claude" { // another agent: it prints its output and ignores its input
 			io.WriteString(o.Stdout, f.agentOutput)
 			if f.block != nil {
@@ -922,5 +926,114 @@ func TestTheRepoToolAsksTheOwnerUnlessTheirWordsNameTheRepo(t *testing.T) {
 		if (res != nil) != want {
 			t.Errorf("answer %q: added=%v (%q), want %v", answer, res != nil, text, want)
 		}
+	}
+}
+
+func waitFinished(t *testing.T, st *store.Store, id string) store.Session {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if s, _, _ := st.Session(id); store.Finished(s.Status) {
+			return s
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the session never finished")
+	return store.Session{}
+}
+
+func TestARunThatTakesTooLongIsStoppedAndSaysWhy(t *testing.T) {
+	sb := &fakeSandbox{block: make(chan struct{})} // the agent works until stopped
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m, err := New(st, func() Config { return Config{Runner: &fakeRunner{sb: sb}, MaxRun: 200 * time.Millisecond} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, err := m.Start(req("tok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := waitFinished(t, st, x.ID)
+	if got.Status != store.StatusFailed || !strings.Contains(got.Error, "stopped after") || !strings.Contains(got.Error, "Limits") {
+		t.Errorf("status = %q, error = %q: a run over its time fails and says which limit", got.Status, got.Error)
+	}
+}
+
+func TestStopFreesTheSlotEvenWhenTheRunWillNotEnd(t *testing.T) {
+	old := abandonAfter
+	abandonAfter = 150 * time.Millisecond
+	defer func() { abandonAfter = old }()
+	sb := &fakeSandbox{stuck: make(chan struct{})}
+	defer close(sb.stuck) // let the abandoned run end when the test is done
+	m, st := setup(t, sb)
+	x, err := m.Start(req("tok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		if s, _, _ := st.Session(x.ID); s.Status == store.StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	m.Stop(x.ID)
+	got := waitFinished(t, st, x.ID)
+	if got.Status != store.StatusStopped {
+		t.Errorf("status = %q, want stopped", got.Status)
+	}
+	if !strings.Contains(logText(st, x.ID), "giving up on it") {
+		t.Errorf("the log says the run was given up on:\n%s", logText(st, x.ID))
+	}
+	// The slot is free: another session can run.
+	sb2 := &fakeSandbox{}
+	_ = sb2
+	if len(m.sem) != 0 {
+		t.Errorf("the slot is still held: %d", len(m.sem))
+	}
+}
+
+func TestOldActivityIsPrunedButAnswersAndPushedBranchesStay(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	old := store.Session{ID: "old", Task: "t", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "b"}
+	fresh := store.Session{ID: "new", Task: "t", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "b"}
+	for _, s := range []store.Session{old, fresh} {
+		if err := st.CreateSession(s); err != nil {
+			t.Fatal(err)
+		}
+		st.AddEvent(s.ID, "log", "running the agent")
+		st.AddEvent(s.ID, "log", "api: pushed b")
+		st.AddEvent(s.ID, "out", "the answer")
+		st.MarkFinished(s.ID, store.StatusDone, "")
+	}
+	// Make "old" finish long ago.
+	n, err := st.PruneLogs(time.Now().Add(time.Hour)) // a cutoff after both finished
+	if err != nil || n != 2 {
+		t.Fatalf("pruned %d, %v: only the progress lines go", n, err)
+	}
+	ev, _ := st.Events("old", 0, 100)
+	var texts []string
+	for _, e := range ev {
+		texts = append(texts, e.Kind+":"+e.Text)
+	}
+	got := strings.Join(texts, "|")
+	if strings.Contains(got, "running the agent") || !strings.Contains(got, "api: pushed b") || !strings.Contains(got, "out:the answer") {
+		t.Errorf("events after pruning: %s", got)
+	}
+	if n, _ := st.PruneLogs(time.Now().Add(-time.Hour)); n != 0 {
+		t.Errorf("a cutoff before they finished prunes nothing, pruned %d", n)
+	}
+	roots, _ := st.IdleConversations(time.Now().Add(time.Hour))
+	if len(roots) != 2 {
+		t.Errorf("both conversations are idle: %v", roots)
+	}
+	if roots, _ := st.IdleConversations(time.Now().Add(-time.Hour)); len(roots) != 0 {
+		t.Errorf("none has been idle that long: %v", roots)
 	}
 }

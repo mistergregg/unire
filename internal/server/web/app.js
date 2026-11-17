@@ -182,12 +182,22 @@ function serverCard(s) {
   const tokenInput = el("input", { type: "password", placeholder: "New token", autocomplete: "new-password", spellcheck: "false" });
   const status = el("span", { class: "muted" });
   const testBtn = el("button", {}, "Test");
+  const prBtn = el("button", { title: "Check that the token can open and follow pull requests (changes nothing)" }, "Check pull requests");
+  const prResult = el("ul", { class: "pr-perms" });
   const replaceBtn = el("button", {}, "Replace token");
   const removeBtn = el("button", { class: "danger" }, "Remove");
 
   testBtn.addEventListener("click", () => guarded(testBtn, async () => {
     const r = await api("POST", "/api/servers/" + encodeURIComponent(s.id) + "/test");
     status.className = "ok"; status.textContent = "Connected as " + r.user;
+  }));
+  prBtn.addEventListener("click", () => guarded(prBtn, async () => {
+    prResult.replaceChildren(el("li", { class: "muted" }, "Checking…"));
+    try {
+      const r = await api("POST", "/api/servers/" + encodeURIComponent(s.id) + "/test-pulls");
+      prResult.replaceChildren(el("li", { class: "muted" }, "Checked on " + r.repo),
+        ...r.capabilities.map((c) => el("li", { class: c.ok ? "ok" : "bad" }, (c.ok ? "✓ " : "✗ ") + c.name + (c.note ? " (" + c.note + ")" : ""))));
+    } catch (e) { prResult.replaceChildren(); throw e; }
   }));
   replaceBtn.addEventListener("click", () => guarded(replaceBtn, async () => {
     if (!tokenInput.value) throw new Error("Enter the new token first.");
@@ -211,7 +221,8 @@ function serverCard(s) {
       el("span", { class: "badge" }, s.type)),
     el("div", { class: "tile-body" }, s.tokenSet ? "Token saved and encrypted." : "No token saved yet."),
     el("div", { class: "item-actions" }, tokenInput, replaceBtn),
-    el("div", { class: "item-actions" }, testBtn, removeBtn, status));
+    el("div", { class: "item-actions" }, testBtn, prBtn, removeBtn, status),
+    prResult);
 }
 
 $("add-form").addEventListener("submit", (e) => {

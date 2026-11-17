@@ -184,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/servers", s.auth(s.listServers))
 	mux.HandleFunc("POST /api/servers", s.auth(s.addServer))
 	mux.HandleFunc("POST /api/servers/{id}/test", s.auth(s.testServer))
+	mux.HandleFunc("POST /api/servers/{id}/test-pulls", s.auth(s.testPullRequestAccess))
 	mux.HandleFunc("PUT /api/servers/{id}/token", s.auth(s.replaceToken))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.auth(s.deleteServer))
 	mux.HandleFunc("GET /api/servers/{id}/repos", s.auth(s.listRepos))

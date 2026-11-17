@@ -91,3 +91,46 @@ func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
 		t.Errorf("unknown chat = %d, want 404", code)
 	}
 }
+
+func TestTheTokenCanBeCheckedForPullRequestAccess(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/user":
+			w.Write([]byte(`{"login":"greg"}`))
+		case "/api/v1/repos/search":
+			w.Write([]byte(`{"data":[{"full_name":"greg/api","clone_url":"https://g/greg/api.git","default_branch":"main"}]}`))
+		case "/api/v1/repos/greg/api":
+			w.Write([]byte(`{"permissions":{"push":true}}`))
+		case "/api/v1/repos/greg/api/issues":
+			http.Error(w, `{"message":"token does not have issue scope"}`, 403) // too few permissions
+		case "/api/v1/repos/greg/api/commits":
+			w.Write([]byte(`[{"sha":"abc"}]`))
+		default:
+			w.Write([]byte(`[]`))
+		}
+	}))
+	defer api.Close()
+	if code, body := e.do("POST", "/api/servers", map[string]any{"name": "home", "type": "gitea", "baseUrl": api.URL, "token": "t"}); code != http.StatusCreated {
+		t.Fatalf("add = %d %s", code, body)
+	}
+	code, body := e.do("POST", "/api/servers/home/test-pulls", nil)
+	if code != 200 {
+		t.Fatalf("test = %d %s", code, body)
+	}
+	var got struct {
+		Repo         string                   `json:"repo"`
+		Capabilities []gitprovider.Capability `json:"capabilities"`
+	}
+	json.Unmarshal([]byte(body), &got)
+	if got.Repo != "greg/api" || len(got.Capabilities) != 4 {
+		t.Fatalf("result = %s", body)
+	}
+	for _, c := range got.Capabilities {
+		wantOK := c.Name != gitprovider.CapComments // the one the fake refuses
+		if c.OK != wantOK {
+			t.Errorf("%s: ok = %v, want %v (%s)", c.Name, c.OK, wantOK, c.Note)
+		}
+	}
+}

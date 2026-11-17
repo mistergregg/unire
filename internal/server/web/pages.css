@@ -199,3 +199,9 @@ a.button.primary:hover { filter: brightness(1.08); }
 .pr-later { display: flex; gap: 8px; flex-wrap: wrap; }
 .pr-check a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); }
 .pr-check a:hover { color: var(--accent); }
+
+/* what a git server's token can do with pull requests */
+.pr-perms { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.pr-perms:empty { display: none; }
+.pr-perms .ok { color: var(--ok); }
+.pr-perms .bad { color: var(--danger); }

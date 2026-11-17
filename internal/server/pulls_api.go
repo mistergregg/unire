@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/mistergregg/unire/internal/gitprovider"
 	"github.com/mistergregg/unire/internal/pulls"
 )
 
@@ -65,4 +68,51 @@ func (s *Server) openPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// testPullRequestAccess checks what a git server's token can do with pull
+// requests in one repo (the first it can see, unless the owner names one),
+// without changing anything.
+func (s *Server) testPullRequestAccess(w http.ResponseWriter, r *http.Request) {
+	g, ok := s.lookup(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Repo string `json:"repo"`
+	}
+	if r.ContentLength > 0 && !readJSON(w, r, &req) {
+		return
+	}
+	p, err := s.provider(g)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	checker, ok := p.(gitprovider.PermissionChecker)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "this git server type cannot open pull requests")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	repo := strings.TrimSpace(req.Repo)
+	if repo == "" {
+		repos, err := p.ListRepos(ctx, "")
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(repos) == 0 {
+			writeErr(w, http.StatusBadRequest, "the token can see no repos to check against")
+			return
+		}
+		repo = repos[0].FullName
+	}
+	caps, err := checker.CheckPullRequestAccess(ctx, repo)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "capabilities": caps})
 }

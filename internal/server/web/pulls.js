@@ -131,8 +131,16 @@ function proposalCard(p) {
   const later = el("button", { type: "button", class: "ghost" }, "Not now");
   open.addEventListener("click", () => guarded(open, async () => {
     const tail = thread[thread.length - 1];
-    await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls",
-      { serverId: p.serverId, repo: p.repo, branch: p.branch, title: title.value, body: body.value });
+    try {
+      await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls",
+        { serverId: p.serverId, repo: p.repo, branch: p.branch, title: title.value, body: body.value });
+    } catch (e) {
+      // A refused token is the usual reason: say where to check it.
+      if (/token|permission|rejected|not found/i.test(e.message)) {
+        throw new Error(e.message + ". Check what the token may do on the Git servers page (Check pull requests).");
+      }
+      throw e;
+    }
     await refreshPulls();
   }));
   later.addEventListener("click", () => { dismiss(proposalKey(p)); renderPulls(); });

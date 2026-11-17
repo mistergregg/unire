@@ -5,6 +5,7 @@
 #   unire ask "<question>"    ask the owner and wait for the answer
 #   unire wait <number>       keep waiting for the answer to an earlier question
 #   unire pr "<title>"        suggest a pull request title (read when the session ends)
+#   unire pr-body <<EOF ... EOF   the pull request description, from standard input
 #   unire pr-status, pr-comments, pr-reply "<text>"   answered by Unire while the agent runs
 dir=/workspace/.unire-tools
 tool=$1
@@ -39,6 +40,12 @@ case "$tool" in
     mkdir -p "$dir/ask" || exit 1
     printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     wait_for "$id"
+    ;;
+  pr-body)
+    # The description has several lines, so it is read from standard input.
+    mkdir -p "$dir" || exit 1
+    head -c 8000 > "$dir/pr-body.tmp" && mv "$dir/pr-body.tmp" "$dir/pr-body" \
+      && echo "ok: Unire has your pull request description and will use it if the owner opens a pull request."
     ;;
   wait)
     case "$1" in

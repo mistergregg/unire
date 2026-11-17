@@ -289,6 +289,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		finished = true
 		out.Flush()
 		info.Flush()
+		if res.PRBody != "" {
+			_ = m.st.AddEvent(spec.ID, "prbody", res.PRBody)
+		}
 		if res.PRTitle != "" {
 			_ = m.st.AddEvent(spec.ID, "prtitle", res.PRTitle) // the title Unire offers when it asks about a pull request
 		}

@@ -48,6 +48,13 @@ Unire opens pull requests only when you say so, and follows them afterwards.
 `unire pr "<title>"` suggests the title Unire offers when it asks. The agent
 cannot open the pull request; the last suggestion wins.
 
+### `pr-body`
+
+`unire pr-body <<'EOF' ... EOF` gives the pull request description (markdown,
+several lines, so it is piped in). It is meant for the reviewer: what changed,
+why, how it was checked. Without one, Unire uses the end of the agent's final
+answer. You can edit both the title and the description before opening.
+
 ### `pr-status`, `pr-comments`, `pr-reply`
 
 Once a conversation has an open pull request, its replies also get these tools,

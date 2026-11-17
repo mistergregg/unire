@@ -71,6 +71,7 @@ type Result struct {
 	Briefs        map[string]string // repo directory -> updated brief written by the agent
 	Name          string            // a title the agent asked for with the name tool; empty if none
 	PRTitle       string            // a pull request title the agent suggested with the pr tool; empty if none
+	PRBody        string            // a pull request description the agent wrote with the pr-body tool; empty if none
 }
 
 const workspace = "/workspace"
@@ -262,6 +263,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	<-asksDone
 	requestedName := tools.CleanName(w.requestedTool(ctx, tools.Name.Name))
 	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
+	prBody := w.requestedBody(ctx)
 
 	outcomes, err := w.finish(ctx, spec, startHeads)
 	if err != nil {
@@ -285,13 +287,14 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// The work is done and pushed. Tell the caller now, so the owner can carry on
 	// while the memory step below (which can take a while) finishes in the background.
 	if opt.OnWorkDone != nil {
-		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle}, workErr)
+		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle, PRBody: prBody}, workErr)
 	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}
 	res.Name = requestedName
 	res.PRTitle = prTitle
+	res.PRBody = prBody
 	return res, workErr
 }
 
@@ -523,4 +526,17 @@ func (w *worker) cloned(ctx context.Context, dir string) bool {
 	var out bytes.Buffer
 	err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"ls", "-d", dir + "/.git"}, Stdout: &out})
 	return err == nil && strings.TrimSpace(out.String()) != ""
+}
+
+// requestedBody is the pull request description the agent wrote with the pr-body
+// tool, or "" when the session was not given the tool or it was not used.
+func (w *worker) requestedBody(ctx context.Context) string {
+	if !w.hasTool(tools.PRBody.Name) || ctx.Err() != nil {
+		return ""
+	}
+	content, err := w.readFile(ctx, tools.Dir+"/"+tools.PRBody.Name, 8000)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(content)
 }

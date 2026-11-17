@@ -32,7 +32,7 @@ var Name = Tool{
 // ForNewConversation is the tool set for the first message of a conversation.
 // Other situations get their own sets (a reply keeps its conversation's
 // name, so it gets none of these).
-func ForNewConversation() []Tool { return []Tool{Name, Ask, PR} }
+func ForNewConversation() []Tool { return []Tool{Name, Ask, PR, PRBody} }
 
 // Prompt is the text added to the agent's prompt to describe a tool set. It is
 // empty for no tools.
@@ -86,7 +86,7 @@ var Ask = Tool{
 }
 
 // ForReply is the tool set for a reply: the conversation already has its name.
-func ForReply() []Tool { return []Tool{Ask, PR} }
+func ForReply() []Tool { return []Tool{Ask, PR, PRBody} }
 
 // PR lets the agent suggest a title for a pull request. It cannot open one: when
 // it has pushed changes, Unire asks the owner whether to open a pull request, and
@@ -130,3 +130,11 @@ func IsCall(name string) bool {
 // ForReplyWithPR is the tool set for a reply in a conversation that has an open
 // pull request: the agent can read its checks and comments and answer.
 func ForReplyWithPR() []Tool { return append([]Tool{Ask}, CallTools()...) }
+
+// PRBody lets the agent write the description of a pull request. It is piped in,
+// because it has several lines.
+var PRBody = Tool{
+	Name: "pr-body",
+	Usage: "unire pr-body <<'EOF' ... EOF - write the pull request description (markdown, a few short paragraphs or bullets): what changed and why, and how it was checked. " +
+		"Write it for the reviewer, as the change itself: do not mention Unire, this conversation or questions you asked the owner. Run it once, when you have finished.",
+}

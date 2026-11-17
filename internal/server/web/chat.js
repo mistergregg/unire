@@ -278,7 +278,7 @@ function addEvents(t, events) {
     if (e.kind === "answer") { answerCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
-    if (e.kind === "prtitle") continue; // the title the agent suggests for a pull request, used when you are asked
+    if (e.kind === "prtitle" || e.kind === "prbody") continue; // what the agent suggests for a pull request, used when you are asked
     t.steps.append(logLine(e));
     t.count++;
     if (e.kind === "log") t.lastStep = e.text;

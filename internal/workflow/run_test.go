@@ -818,3 +818,20 @@ func TestTheAgentCanSuggestAPullRequestTitle(t *testing.T) {
 		t.Errorf("PRTitle = %q", res.PRTitle)
 	}
 }
+
+func TestTheAgentCanWriteAPullRequestDescription(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{tools.Dir + "/pr-body": "Fixes the redirect.\n\n- tested\n"}}
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PRBody != "Fixes the redirect.\n\n- tested" {
+		t.Errorf("PRBody = %q", res.PRBody)
+	}
+	o.Tools = nil
+	if res, _ := run(t, sb, baseSpec(), o); res.PRBody != "" {
+		t.Errorf("a session without the tool ignores it: %q", res.PRBody)
+	}
+}

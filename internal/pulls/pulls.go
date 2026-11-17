@@ -121,7 +121,7 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 		if opened[p] {
 			continue
 		}
-		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: baseOf(thread[0], p), Title: title, Body: bodyOf(s.Store, last[p], thread[0].Task)})
+		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: baseOf(thread[0], p), Title: title, Body: bodyOf(s.Store, thread, last[p], thread[0].Task)})
 	}
 	return out, nil
 }
@@ -155,14 +155,33 @@ func suggestedTitle(st *store.Store, thread []store.Session) string {
 	return title
 }
 
-// bodyOf describes the change from the agent's final answer, which says what it
-// did. It is shown to the owner before anything is opened.
-func bodyOf(st *store.Store, t store.Session, task string) string {
+// bodyOf is the description offered for a pull request. The agent's own
+// (pr-body) is used when it wrote one; otherwise the end of its final answer, which
+// usually says what it did. The owner sees and can edit it before anything is opened.
+func bodyOf(st *store.Store, thread []store.Session, t store.Session, task string) string {
+	footer := "\n\n---\n_Opened from a Unire conversation: " + task + "_"
+	var written string
+	for _, s := range thread {
+		events, err := st.Events(s.ID, 0, 5000)
+		if err != nil {
+			continue
+		}
+		for _, e := range events {
+			if e.Kind == "prbody" && strings.TrimSpace(e.Text) != "" {
+				written = strings.TrimSpace(e.Text) // the newest one wins
+			}
+		}
+	}
+	if written != "" {
+		return written + footer
+	}
 	var b strings.Builder
-	events, err := st.Events(t.ID, 0, 5000)
-	if err == nil {
+	if events, err := st.Events(t.ID, 0, 5000); err == nil {
 		for _, e := range events {
 			if e.Kind == "out" {
+				if b.Len() > 0 {
+					b.WriteString("\n")
+				}
 				b.WriteString(e.Text)
 			}
 		}
@@ -171,11 +190,10 @@ func bodyOf(st *store.Store, t store.Session, task string) string {
 	if r := []rune(text); len(r) > 3000 {
 		text = strings.TrimSpace(string(r[len(r)-3000:])) // the end of the answer is its summary
 	}
-	out := "Opened from a Unire conversation: " + task
-	if text != "" {
-		out += "\n\n" + text
+	if text == "" {
+		return strings.TrimSpace(footer[5:])
 	}
-	return out
+	return text + footer
 }
 
 // Open opens a pull request for one of the conversation's proposals. The branch

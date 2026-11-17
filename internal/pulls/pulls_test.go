@@ -143,3 +143,20 @@ func TestTheAgentToolsReadTheStatusAndComment(t *testing.T) {
 		t.Errorf("an empty comment: %q", got)
 	}
 }
+
+func TestTheAgentsOwnDescriptionIsUsedAndTheAnswerLinesKeepTheirBreaks(t *testing.T) {
+	svc, thread, _ := setup(t)
+	svc.Store.AddEvent("s1", "out", "second line")
+	props, _ := svc.Proposals(thread)
+	if !strings.Contains(props[0].Body, "I fixed the redirect.\nsecond line") {
+		t.Errorf("without a description of its own the answer is used, with its line breaks: %q", props[0].Body)
+	}
+	svc.Store.AddEvent("s1", "prbody", "Fixes the redirect.\n\n- checked with the tests")
+	props, _ = svc.Proposals(thread)
+	if !strings.HasPrefix(props[0].Body, "Fixes the redirect.\n\n- checked with the tests") || strings.Contains(props[0].Body, "I fixed") {
+		t.Errorf("the agent's own description wins: %q", props[0].Body)
+	}
+	if !strings.Contains(props[0].Body, "Opened from a Unire conversation") {
+		t.Errorf("the description says where it came from: %q", props[0].Body)
+	}
+}

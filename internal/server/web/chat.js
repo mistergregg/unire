@@ -278,6 +278,7 @@ function addEvents(t, events) {
     if (e.kind === "answer") { answerCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
+    if (e.kind === "prtitle") continue; // the title the agent suggests for a pull request, used when you are asked
     t.steps.append(logLine(e));
     t.count++;
     if (e.kind === "log") t.lastStep = e.text;
@@ -314,6 +315,7 @@ async function finishTurn(t) {
   t.foot.replaceChildren(...bits);
   t.memoryNote = el("span", {});
   t.foot.append(t.memoryNote);
+  refreshPulls(); // the turn may have pushed a branch: offer a pull request
 }
 
 // Saving to memory goes on after the turn is done. Show that, then the summary.
@@ -374,6 +376,7 @@ async function openSession(id) {
   stopPolling();
   show("session");
   $("chat").replaceChildren();
+  resetPulls();
   $("reply-text").value = "";
   autoGrow();
   const token = (pollToken = {});
@@ -393,6 +396,7 @@ async function openSession(id) {
   // Keep reading the log in the background. Waiting for it here would leave the
   // button that opened this chat disabled until the agent has finished.
   (async () => { for (const t of thread) await watch(t, token); })().catch((e) => banner(e.message, true));
+  watchPulls(token);
 }
 
 // Reads a turn's log until it ends. Finished turns are read once; the running
@@ -437,17 +441,24 @@ $("reply-form").addEventListener("submit", (e) => {
   if (!text || !tail) return;
   if (!isFinished(tail.s.status)) { if (tail.s.canSteer) steer(text, false); return; }
   guarded($("reply-send"), async () => {
-    const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent: $("reply-agent").value });
+    await sendReply(text);
     $("reply-text").value = "";
     autoGrow();
-    const t = makeTurn(s);
-    thread.push(t);
-    $("chat").append(t.root);
-    setComposer();
-    window.scrollTo(0, document.body.scrollHeight);
-    watch(t, pollToken);
   });
 });
+
+// Sends a message as the next turn of the conversation and starts following it.
+async function sendReply(text) {
+  const tail = thread[thread.length - 1];
+  const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent: $("reply-agent").value });
+  const t = makeTurn(s);
+  thread.push(t);
+  $("chat").append(t.root);
+  setComposer();
+  renderPulls();
+  window.scrollTo(0, document.body.scrollHeight);
+  watch(t, pollToken);
+}
 
 // Say something to the agent while it works. now=true stops what it is doing and
 // carries on from the message. The message appears in the conversation when the

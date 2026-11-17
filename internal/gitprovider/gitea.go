@@ -17,7 +17,7 @@ func init() {
 			"Accept":        {"application/json"},
 		})}, nil
 	}
-	help := "In Gitea: Settings, Applications, Generate New Token. Under permissions choose: repository Read and Write, user Read, organization Read. (A token without user Read still works for cloning, but cannot be identified.)"
+	help := "In Gitea: Settings, Applications, Generate New Token. Under permissions choose: repository Read and Write, issue Read and Write (for pull requests), user Read, organization Read. (A token without user Read still works for cloning, but cannot be identified.)"
 	Register(Info{Type: "gitea", Label: "Gitea", BaseURLRequired: true, BaseURLHint: "e.g. https://git.example.com", TokenHelp: help}, f)
 	Register(Info{Type: "forgejo", Label: "Forgejo", BaseURLRequired: true, BaseURLHint: "e.g. https://codeberg.org", TokenHelp: help}, f)
 }

@@ -3,6 +3,7 @@
 package gitprovider
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -115,9 +116,25 @@ func newClient(cfg Config, base string, header http.Header) *client {
 }
 
 func (c *client) getJSON(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	return c.doJSON(ctx, http.MethodGet, path, nil, out)
+}
+
+// doJSON sends body (if not nil) as JSON and decodes the reply into out (if not nil).
+func (c *client) doJSON(ctx context.Context, method, path string, body, out any) error {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rd)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range c.header {
 		req.Header[k] = v
@@ -127,16 +144,19 @@ func (c *client) getJSON(ctx context.Context, path string, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return &httpError{Status: resp.StatusCode, msg: "the server rejected the token (HTTP " + fmt.Sprint(resp.StatusCode) + ")" + serverReason(resp, body)}
+		return &httpError{Status: resp.StatusCode, msg: "the server rejected the token (HTTP " + fmt.Sprint(resp.StatusCode) + ")" + serverReason(resp, reply)}
 	case resp.StatusCode == http.StatusNotFound:
 		return &httpError{Status: resp.StatusCode, msg: "not found (HTTP 404): check the server URL and type"}
 	case resp.StatusCode >= 300:
-		return &httpError{Status: resp.StatusCode, msg: fmt.Sprintf("unexpected response (HTTP %d)", resp.StatusCode)}
+		return &httpError{Status: resp.StatusCode, msg: fmt.Sprintf("unexpected response (HTTP %d)", resp.StatusCode) + serverReason(resp, reply)}
 	}
-	return json.Unmarshal(body, out)
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(reply, out)
 }
 
 // httpError is an error response from a git server's API.

@@ -748,3 +748,73 @@ func TestAReplyThatArrivesInPiecesIsTheAnswerWhenThereIsNoResult(t *testing.T) {
 		t.Errorf("answer = %q, want the pieces joined", out.String())
 	}
 }
+
+// A live tool (pr-status and the like) is answered by Unire while the agent runs,
+// and only when the session was given it.
+func TestLiveToolCallsAreAnsweredOnlyWhenGiven(t *testing.T) {
+	askPath := tools.Dir + "/ask/55"
+	for _, c := range []struct {
+		name  string
+		given []tools.Tool
+		want  string
+	}{
+		{"given", tools.ForReplyWithPR(), "state open, checks failure"},
+		{"not given", tools.ForReply(), ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "@call pr-status\nplease\n"}}
+			sb.agentHook = func(ctx context.Context) {
+				for i := 0; i < 100; i++ {
+					sb.mu.Lock()
+					_, done := sb.files[askPath+".a"]
+					sb.mu.Unlock()
+					if done {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			var got []string
+			var mu sync.Mutex
+			o := opts(nil)
+			o.Tools = c.given
+			o.AskPoll = 10 * time.Millisecond
+			o.Ask = func(context.Context, string, string) (string, bool) {
+				t.Error("a tool call is not a question for the owner")
+				return "", false
+			}
+			o.Call = func(_ context.Context, tool, args string) string {
+				mu.Lock()
+				got = append(got, tool+"|"+args)
+				mu.Unlock()
+				return "state open, checks failure"
+			}
+			if _, err := run(t, sb, baseSpec(), o); err != nil {
+				t.Fatal(err)
+			}
+			answer := sb.files[askPath+".a"]
+			if c.want == "" {
+				if len(got) != 0 {
+					t.Errorf("a tool the session was not given was answered: %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0] != "pr-status|please" || answer != c.want {
+				t.Errorf("calls = %v, answer = %q", got, answer)
+			}
+		})
+	}
+}
+
+func TestTheAgentCanSuggestAPullRequestTitle(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{tools.Dir + "/pr": "first\n\"Fix the login redirect\"\n"}}
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PRTitle != "Fix the login redirect" {
+		t.Errorf("PRTitle = %q", res.PRTitle)
+	}
+}

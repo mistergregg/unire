@@ -10,7 +10,7 @@ type github struct{ c *client }
 func init() {
 	Register(Info{
 		Type: "github", Label: "GitHub", BaseURLHint: "leave empty for github.com; for GitHub Enterprise use https://github.example.com",
-		TokenHelp: "In GitHub: Settings, Developer settings, Fine-grained tokens. Choose only the repos agents may use, with Contents set to read and write.",
+		TokenHelp: "In GitHub: Settings, Developer settings, Fine-grained tokens. Choose only the repos agents may use, with Contents, Pull requests and Issues set to read and write, and Checks and Commit statuses set to read (the last four are for pull requests).",
 	}, func(cfg Config) (Provider, error) {
 		// api.github.com by default; GitHub Enterprise uses <host>/api/v3.
 		base := "https://api.github.com"

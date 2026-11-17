@@ -31,6 +31,7 @@ import (
 
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/pulls"
 	"github.com/mistergregg/unire/internal/runner"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
@@ -55,6 +56,7 @@ type Server struct {
 	vault   *vault.Vault
 
 	sessions      *sessions.Manager
+	pulls         *pulls.Service
 	runnerFactory RunnerFactory
 	egressProxy   *egress.Proxy
 	egressInfo    egress.Info
@@ -113,6 +115,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 	}
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
+	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()
@@ -169,6 +172,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.auth(s.sessionLogs))
 	mux.HandleFunc("GET /api/sessions/{id}/thread", s.auth(s.getThread))
 	mux.HandleFunc("POST /api/sessions/{id}/reply", s.auth(s.replyToSession))
+	mux.HandleFunc("GET /api/sessions/{id}/pulls", s.auth(s.getPulls))
+	mux.HandleFunc("POST /api/sessions/{id}/pulls", s.auth(s.openPull))
 	mux.HandleFunc("POST /api/sessions/{id}/answer", s.auth(s.answerQuestion))
 	mux.HandleFunc("POST /api/sessions/{id}/steer", s.auth(s.steerSession))
 	mux.HandleFunc("POST /api/sessions/{id}/steer/{msg}/now", s.auth(s.promoteSteer))

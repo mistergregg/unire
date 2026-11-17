@@ -80,6 +80,7 @@ func (s *Server) sessionConfig() sessions.Config {
 	return sessions.Config{
 		Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs,
 		Egress: sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
+		Pulls:  s.pulls,
 	}
 }
 

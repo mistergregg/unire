@@ -34,6 +34,8 @@ type Config struct {
 	Memory string
 	CPUs   string
 	Egress Egress
+	// Pulls answers the agent's pull request tools. Nil means the tools are not offered.
+	Pulls Pulls
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -275,6 +277,10 @@ func (m *Manager) run(ctx context.Context, j job) {
 	wo.Tools = tools.ForReply()
 	if j.parent == "" {
 		wo.Tools = tools.ForNewConversation() // a reply keeps its conversation's name
+	} else if cfg.Pulls != nil && cfg.Pulls.HasOpen(ctx, j.root) {
+		// Once a pull request is open the agent can read its checks and comments.
+		wo.Tools = tools.ForReplyWithPR()
+		wo.Call = func(ctx context.Context, tool, args string) string { return cfg.Pulls.Call(ctx, j.root, tool, args) }
 	}
 	// The turn is finished as soon as the work is pushed. Saving to memory goes
 	// on in the background, so the owner can read the answer and reply at once.
@@ -283,6 +289,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		finished = true
 		out.Flush()
 		info.Flush()
+		if res.PRTitle != "" {
+			_ = m.st.AddEvent(spec.ID, "prtitle", res.PRTitle) // the title Unire offers when it asks about a pull request
+		}
 		m.applyName(j, res.Name)
 		m.finish(ctx, spec.ID, werr, secrets)
 	}
@@ -514,4 +523,12 @@ func (m *Manager) freeBranch(spec session.Spec) string {
 		name = fmt.Sprintf("%s-%d", base, n)
 	}
 	return name
+}
+
+// Pulls is what the manager needs to know about pull requests (internal/pulls).
+type Pulls interface {
+	// HasOpen reports whether the conversation has a pull request that is open.
+	HasOpen(ctx context.Context, rootID string) bool
+	// Call answers one of the agent's pull request tools.
+	Call(ctx context.Context, rootID, tool, args string) string
 }

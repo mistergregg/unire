@@ -59,3 +59,14 @@ That's all. The provider shows up in the server list and the repo search once bu
 
 - Clone and push use the same token over HTTPS through a git credential helper, so the provider only needs an API client for listing and testing.
 - Servers with no API at all (plain `git://` or SSH) will get a generic provider later; it will implement only cloning.
+
+## 3. Pull requests
+
+A provider that can open pull requests also implements `PullRequests`
+(`internal/gitprovider/pullrequests.go`): `CreatePR`, `GetPR`, `Checks`,
+`Comments` and `AddComment`. Map the server's own states onto the shared ones
+(`PROpen`/`PRMerged`/`PRClosed`, and `CheckPending`/`CheckSuccess`/`CheckFailure`),
+leave system notes out of the comments, and add a case to
+`TestPullRequestsOnEveryProvider` in `pullrequests_test.go`. `doJSON` sends and
+reads JSON bodies, and a refused request reports the server's own reason. The
+token needs permission to write pull requests, so say so in `TokenHelp`.

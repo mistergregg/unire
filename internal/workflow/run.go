@@ -45,6 +45,9 @@ type Options struct {
 	// often the sandbox is checked for new ones; zero means two seconds.
 	Ask     AskFunc
 	AskPoll time.Duration
+	// Call answers the agent's live tool requests (pr-status and the like): it
+	// gets the tool's name and the agent's text and returns what the agent reads.
+	Call func(ctx context.Context, tool, args string) string
 	// Control carries what the owner says to the agent while it works. nil means
 	// the agent is run once and cannot be steered. OnMessage reports what became of
 	// each message (delivered, failed).
@@ -67,6 +70,7 @@ type Result struct {
 	SummarySource string            // "agent" or "fallback"
 	Briefs        map[string]string // repo directory -> updated brief written by the agent
 	Name          string            // a title the agent asked for with the name tool; empty if none
+	PRTitle       string            // a pull request title the agent suggested with the pr tool; empty if none
 }
 
 const workspace = "/workspace"
@@ -256,7 +260,8 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	}
 	stopAsks()
 	<-asksDone
-	requestedName := w.requestedName(ctx)
+	requestedName := tools.CleanName(w.requestedTool(ctx, tools.Name.Name))
+	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
 
 	outcomes, err := w.finish(ctx, spec, startHeads)
 	if err != nil {
@@ -280,12 +285,13 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// The work is done and pushed. Tell the caller now, so the owner can carry on
 	// while the memory step below (which can take a while) finishes in the background.
 	if opt.OnWorkDone != nil {
-		opt.OnWorkDone(Result{Name: requestedName}, workErr)
+		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle}, workErr)
 	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}
 	res.Name = requestedName
+	res.PRTitle = prTitle
 	return res, workErr
 }
 
@@ -490,17 +496,18 @@ func (w *worker) askAgentToRemember(ctx context.Context, ad agent.Adapter, spec 
 	return summary, briefs, nil
 }
 
-// requestedName is the title the agent asked for with the name tool (the last
-// request wins), or "" when the session was not given the tool or it was not used.
-func (w *worker) requestedName(ctx context.Context) string {
+// requestedTool is the text of the agent's last request for a tool that only
+// needs reading when the run ends (the last request wins), or "" when the session
+// was not given the tool or it was not used.
+func (w *worker) requestedTool(ctx context.Context, name string) string {
 	given := false
 	for _, t := range w.opt.Tools {
-		given = given || t.Name == tools.Name.Name
+		given = given || t.Name == name
 	}
 	if !given || ctx.Err() != nil {
 		return ""
 	}
-	content, err := w.readFile(ctx, tools.Dir+"/"+tools.Name.Name, 4096)
+	content, err := w.readFile(ctx, tools.Dir+"/"+name, 4096)
 	if err != nil {
 		return "" // the agent did not use the tool
 	}
@@ -508,7 +515,7 @@ func (w *worker) requestedName(ctx context.Context) string {
 	if len(reqs) == 0 {
 		return ""
 	}
-	return tools.CleanName(reqs[len(reqs)-1])
+	return reqs[len(reqs)-1]
 }
 
 // cloned reports whether a repo was already cloned into dir by an earlier turn.

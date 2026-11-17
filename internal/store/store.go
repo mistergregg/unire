@@ -103,6 +103,19 @@ var migrations = []string{
 	CREATE INDEX summary_repos_by_repo ON summary_repos (repo_key);`,
 	// 5: a reply continues a conversation: it is a new session whose parent is the one before it
 	`ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';`,
+	// 6: the pull requests a conversation opened
+	`CREATE TABLE pull_requests (
+		root_id    TEXT NOT NULL,
+		server_id  TEXT NOT NULL,
+		repo       TEXT NOT NULL,
+		number     INTEGER NOT NULL,
+		branch     TEXT NOT NULL,
+		title      TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (server_id, repo, number)
+	);
+	CREATE INDEX pull_requests_by_root ON pull_requests (root_id);`,
 }
 
 // DBFileName is the database file inside the data directory.

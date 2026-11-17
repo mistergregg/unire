@@ -30,16 +30,17 @@ var questionFile = regexp.MustCompile(`^([0-9]{1,30})\.q$`)
 type AskFunc func(ctx context.Context, id, question string) (answer string, ok bool)
 
 func (w *worker) asking() bool {
-	if w.opt.Ask == nil {
-		return false
-	}
 	for _, t := range w.opt.Tools {
-		if t.Name == tools.Ask.Name {
+		if (t.Name == tools.Ask.Name && w.opt.Ask != nil) || (tools.IsCall(t.Name) && w.opt.Call != nil) {
 			return true
 		}
 	}
 	return false
 }
+
+// callPrefix marks a request in a question file as a live tool call (pr-status
+// and the like) rather than a question for the owner: "@call <tool>\n<text>".
+const callPrefix = "@call "
 
 // questionIDs lists the questions the agent has written so far.
 func (w *worker) questionIDs(ctx context.Context) []string {
@@ -88,7 +89,20 @@ func (w *worker) serveQuestions(ctx context.Context) {
 			wg.Add(1)
 			go func(id, question string) {
 				defer wg.Done()
-				answer, ok := w.opt.Ask(ctx, id, strings.TrimSpace(question))
+				var answer string
+				var ok bool
+				if strings.HasPrefix(question, callPrefix) {
+					// A live tool: Unire answers it itself, only if the session was given it.
+					tool, args, _ := strings.Cut(strings.TrimPrefix(question, callPrefix), "\n")
+					tool = strings.TrimSpace(tool)
+					if w.opt.Call != nil && w.hasTool(tool) {
+						answer, ok = w.opt.Call(ctx, tool, strings.TrimSpace(args)), true
+					} else {
+						answer, ok = "This tool is not available in this conversation.", true
+					}
+				} else if w.opt.Ask != nil {
+					answer, ok = w.opt.Ask(ctx, id, strings.TrimSpace(question))
+				}
 				if ctx.Err() != nil {
 					return // the agent has finished: nobody is waiting
 				}
@@ -104,4 +118,14 @@ func (w *worker) serveQuestions(ctx context.Context) {
 		case <-time.After(poll):
 		}
 	}
+}
+
+// hasTool reports whether the session was given a tool.
+func (w *worker) hasTool(name string) bool {
+	for _, t := range w.opt.Tools {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
 }

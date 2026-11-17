@@ -11,7 +11,7 @@ type gitlab struct{ c *client }
 func init() {
 	Register(Info{
 		Type: "gitlab", Label: "GitLab", BaseURLHint: "leave empty for gitlab.com; for self-hosted use https://gitlab.example.com",
-		TokenHelp: "In GitLab: User settings, Access tokens. Scopes: read_api, read_repository and write_repository.",
+		TokenHelp: "In GitLab: User settings, Access tokens. Scopes: api (to open merge requests and read their pipelines and comments), read_repository and write_repository.",
 	}, func(cfg Config) (Provider, error) {
 		base := "https://gitlab.com"
 		if cfg.BaseURL != "" {

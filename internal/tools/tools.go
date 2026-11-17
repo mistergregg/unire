@@ -32,7 +32,7 @@ var Name = Tool{
 // ForNewConversation is the tool set for the first message of a conversation.
 // Other situations get their own sets (a reply keeps its conversation's
 // name, so it gets none of these).
-func ForNewConversation() []Tool { return []Tool{Name, Ask} }
+func ForNewConversation() []Tool { return []Tool{Name, Ask, PR} }
 
 // Prompt is the text added to the agent's prompt to describe a tool set. It is
 // empty for no tools.
@@ -86,4 +86,47 @@ var Ask = Tool{
 }
 
 // ForReply is the tool set for a reply: the conversation already has its name.
-func ForReply() []Tool { return []Tool{Ask} }
+func ForReply() []Tool { return []Tool{Ask, PR} }
+
+// PR lets the agent suggest a title for a pull request. It cannot open one: when
+// it has pushed changes, Unire asks the owner whether to open a pull request, and
+// uses this title if the agent gave one.
+var PR = Tool{
+	Name: "pr",
+	Usage: `unire pr "<title>" - suggest a title (under 70 characters) for a pull request with your changes. ` +
+		`Run it once, when you have finished. You cannot open the pull request yourself: Unire asks the owner whether to.`,
+}
+
+// The tools for a conversation with an open pull request. Each prints an answer.
+var (
+	PRStatus = Tool{
+		Name:  "pr-status",
+		Usage: `unire pr-status - show this conversation's pull request and the state of its checks (builds and tests). Use it to see whether your changes pass.`,
+	}
+	PRComments = Tool{
+		Name:  "pr-comments",
+		Usage: `unire pr-comments - show what reviewers and others wrote on the pull request, including comments on lines of code.`,
+	}
+	PRReply = Tool{
+		Name: "pr-reply",
+		Usage: `unire pr-reply "<comment>" - write a comment on the pull request, for example to say what you changed after a review. ` +
+			`It is posted publicly, so write it as you would to a colleague, and never include secrets.`,
+	}
+)
+
+// CallTools are the tools whose answer comes from Unire while the agent runs.
+func CallTools() []Tool { return []Tool{PRStatus, PRComments, PRReply} }
+
+// IsCall reports whether name is one of CallTools.
+func IsCall(name string) bool {
+	for _, t := range CallTools() {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ForReplyWithPR is the tool set for a reply in a conversation that has an open
+// pull request: the agent can read its checks and comments and answer.
+func ForReplyWithPR() []Tool { return append([]Tool{Ask}, CallTools()...) }

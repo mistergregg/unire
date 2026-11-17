@@ -1,0 +1,93 @@
+package server
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/store"
+)
+
+func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+
+	var opened string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		pr := `{"number":9,"title":"Fix it","html_url":"http://git/pr/9","state":"open","head":{"ref":"agent/b","sha":"abc"},"base":{"ref":"main"}}`
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/repos/greg/api":
+			w.Write([]byte(`{"default_branch":"main"}`))
+		case "POST /api/v1/repos/greg/api/pulls":
+			opened = string(b)
+			w.Write([]byte(pr))
+		case "GET /api/v1/repos/greg/api/pulls/9":
+			w.Write([]byte(pr))
+		case "GET /api/v1/repos/greg/api/commits/abc/status":
+			w.Write([]byte(`{"statuses":[{"context":"build","status":"success","target_url":""}]}`))
+		case "GET /api/v1/repos/greg/api/issues/9/comments", "GET /api/v1/repos/greg/api/pulls/9/reviews":
+			w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "no route", 404)
+		}
+	}))
+	defer api.Close()
+
+	st := e.srv.store
+	g, err := st.AddGitServer(store.GitServer{Name: "home", Type: "gitea", BaseURL: api.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.pulls.Provider = func(g store.GitServer) (gitprovider.Provider, error) {
+		return gitprovider.New(gitprovider.Config{Type: g.Type, BaseURL: g.BaseURL, Token: "t"})
+	}
+	ref := store.RepoRef{ServerID: g.ID, FullName: "greg/api"}
+	if err := st.CreateSession(store.Session{ID: "c1", Task: "Fix the bug", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "agent/b", Repos: []store.RepoRef{ref}}); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("c1", "log", "api: pushed agent/b")
+
+	code, body := e.do("GET", "/api/sessions/c1/pulls", nil)
+	if code != 200 {
+		t.Fatalf("GET = %d %s", code, body)
+	}
+	var got struct {
+		Proposals []map[string]any `json:"proposals"`
+		Pulls     []map[string]any `json:"pulls"`
+	}
+	json.Unmarshal([]byte(body), &got)
+	if len(got.Proposals) != 1 || len(got.Pulls) != 0 || got.Proposals[0]["title"] != "Fix the bug" {
+		t.Fatalf("before saying yes: %s", body)
+	}
+	if opened != "" {
+		t.Fatal("nothing may be opened before the owner agrees")
+	}
+
+	code, body = e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "agent/b", "title": "Fix the bug"})
+	if code != 200 || !strings.Contains(body, `"number":9`) || !strings.Contains(body, `"summary":"success"`) {
+		t.Fatalf("POST = %d %s", code, body)
+	}
+	if !strings.Contains(opened, "Fix the bug") {
+		t.Errorf("the pull request was not opened with the title: %q", opened)
+	}
+
+	code, body = e.do("GET", "/api/sessions/c1/pulls", nil)
+	json.Unmarshal([]byte(body), &got)
+	if code != 200 || len(got.Proposals) != 0 || len(got.Pulls) != 1 {
+		t.Fatalf("after: %d %s", code, body)
+	}
+	if code, _ := e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "agent/b"}); code != 400 {
+		t.Errorf("opening it again = %d, want 400", code)
+	}
+	if code, _ := e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "main"}); code != 400 {
+		t.Errorf("a branch that was not pushed = %d, want 400", code)
+	}
+	if code, _ := e.do("GET", "/api/sessions/nope/pulls", nil); code != 404 {
+		t.Errorf("unknown chat = %d, want 404", code)
+	}
+}

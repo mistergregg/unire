@@ -36,21 +36,42 @@ function sidebarRank(s) {
   return s.waiting ? 0 : (st === "running" || st === "queued") ? 1 : 2;
 }
 
+
+let sideSignature = "";
+
 function renderSidebar(list) {
   sideList = list;
-  const sorted = [...list].sort((a, b) => sidebarRank(a) - sidebarRank(b) || (b.createdAt - a.createdAt));
-  $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
-    : [el("p", { class: "muted" }, "No chats yet. Add a git server, then press New chat.")]));
+  const q = ($("side-search").value || "").trim().toLowerCase();
+  const shown = !q ? list : list.filter((s) =>
+    (s.task + " " + s.agent + " " + s.repos.map((r) => r.fullName).join(" ")).toLowerCase().includes(q));
+  const sorted = [...shown].sort((a, b) => sidebarRank(a) - sidebarRank(b) || (b.createdAt - a.createdAt));
+  // Draw again only when something changed, so the little lights keep pulsing
+  // instead of starting over every few seconds.
+  const sig = q + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
+    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting].join(":")).join(",");
+  if (sig === sideSignature) return;
+  sideSignature = sig;
+  const out = [];
+  for (const [rank, label] of [[0, "Needs you"], [1, "Running"], [2, "Earlier"]]) {
+    const rows = sorted.filter((s) => sidebarRank(s) === rank);
+    if (rows.length) out.push(el("div", { class: "side-group" }, label), ...rows.map(sessionRow));
+  }
+  $("session-list").replaceChildren(...(out.length ? out
+    : [el("p", { class: "muted" }, q ? "No chats match." : "No chats yet. Add a git server, then press New chat.")]));
 }
+$("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
 
 function sessionRow(s) {
   const open = () => guarded(null, () => openSession(s.id));
   const status = s.latestStatus || s.status;
-  const row = el("div", { class: "side-item" + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
-    el("div", { class: "item-head" }, el("span", { class: "name" }, s.task),
-      s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : statusBadge(status)),
-    el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
-    el("div", { class: "muted small-line" }, ago(s.startedAt || s.createdAt)));
+  const light = s.waiting ? "needs" : (status === "running" || status === "queued") ? "live"
+    : status === "done" ? "done" : (status === "failed" || status === "interrupted") ? "failed" : "";
+  const row = el("div", { class: "side-item " + light + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
+    el("span", { class: "dot" }),
+    el("div", {},
+      el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(s.startedAt || s.createdAt))),
+      el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
+      s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : ""));
   row.addEventListener("click", open);
   row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
   return row;
@@ -62,6 +83,7 @@ function setHash(id) {
 }
 
 $("new-session").addEventListener("click", () => guarded(null, openNew));
+$("empty-new").addEventListener("click", () => guarded(null, openNew));
 $("new-back").addEventListener("click", () => guarded(null, openSessions));
 $("s-back").addEventListener("click", () => guarded(null, openSessions));
 

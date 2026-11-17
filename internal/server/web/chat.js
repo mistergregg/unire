@@ -31,6 +31,29 @@ function inlineNodes(text) {
   return out;
 }
 
+const tableCells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+
+function tableBlock(rows) {
+  const head = el("tr", {}, ...tableCells(rows[0]).map((c) => el("th", {}, ...inlineNodes(c))));
+  const body = rows.slice(1).map((r) => el("tr", {}, ...tableCells(r).map((c) => el("td", {}, ...inlineNodes(c)))));
+  return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
+}
+
+function copyText(text, btn) {
+  const done = () => { const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => { btn.textContent = old; }, 1300); };
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, () => {}); return; }
+  const ta = el("textarea", { style: "position:fixed;opacity:0" }, text); // plain http: the older way
+  document.body.append(ta); ta.select();
+  try { document.execCommand("copy"); done(); } catch (_) { /* not possible here */ }
+  ta.remove();
+}
+
+function codeBlock(code) {
+  const btn = el("button", { type: "button", class: "tiny copy" }, "Copy");
+  btn.addEventListener("click", () => copyText(code, btn));
+  return el("pre", { class: "code" }, btn, el("code", {}, code));
+}
+
 function renderMarkdown(text) {
   const root = document.createDocumentFragment();
   const lines = text.split("\n");
@@ -46,7 +69,16 @@ function renderMarkdown(text) {
       flush(); list = null;
       const code = [];
       for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]);
-      root.append(el("pre", { class: "code" }, el("code", {}, code.join("\n"))));
+      root.append(codeBlock(code.join("\n")));
+      continue;
+    }
+    // a table: a header row, a row of dashes, then the body rows
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+      flush(); list = null;
+      const rows = [line];
+      for (i += 2; i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]); i++) rows.push(lines[i]);
+      i--; // the line after the table is read again by the loop
+      root.append(tableBlock(rows));
       continue;
     }
     const item = /^(\s*)([*-]|\d+\.)\s+(.*)$/.exec(line);
@@ -145,49 +177,71 @@ function closeOpenAsks(t) {
 let thread = [];      // one entry per turn: { s, node pieces, text, after }
 let agentChoices = [];
 
+const agentLabel = (id) => (agentChoices.find((a) => a.id === id) || { label: id }).label;
+const initialOf = (id) => (agentLabel(id) || "?").trim().charAt(0).toUpperCase();
+
+// One turn: your message, then the agent's reply with what it is doing above it.
 function makeTurn(s) {
+  const spin = el("span", { class: "spin" });
+  const stepText = el("span", { class: "step-text" });
+  const dots = el("span", { class: "working-dots" });
+  const summary = el("summary", {}, spin, stepText, dots);
   const steps = el("div", { class: "steps" });
-  const summary = el("summary", {}, "Activity");
   // Open while the agent works, so what it is doing is in view; folded away when it is done.
   const activity = el("details", { class: "activity" }, summary, steps);
   activity.open = !isFinished(s.status);
   const askBox = el("div", { class: "asks" });
-  const answer = el("div", { class: "bubble agent" });
+  const answer = el("div", { class: "agent-text" });
   const foot = el("div", { class: "turn-foot muted" });
-  const root = el("div", { class: "turn" },
-    el("div", { class: "bubble user" }, el("div", { class: "who muted" }, "You"), el("div", { class: "said" }, s.prompt)),
-    activity, askBox, answer, foot);
-  const t = { s, root, steps, summary, activity, askBox, answer, foot, asks: {}, text: "", count: 0, after: 0, shownDone: false };
+  const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
+  const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)), el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
+  const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt)), el("div", { class: "time" }, ago(s.createdAt)));
+  const body = el("div", { class: "msg-body" }, head, activity, askBox, answer, foot);
+  const root = el("div", { class: "turn" }, user, el("div", { class: "msg agent" }, avatar, body));
+  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, answer, foot, avatar, asks: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
+  renderSummary(t);
   renderAnswer(t);
   return t;
+}
+
+// The one line that says what the agent is doing now, or how much it did.
+function renderSummary(t) {
+  const running = !isFinished(t.s.status);
+  t.activity.classList.toggle("running", running);
+  t.avatar.classList.toggle("live", running);
+  t.spin.hidden = t.dots.hidden = !running;
+  t.stepText.textContent = running ? (t.lastStep || "Working") : "Activity · " + t.count + " step" + (t.count === 1 ? "" : "s");
 }
 
 function renderAnswer(t) {
   const running = !isFinished(t.s.status);
   if (!t.text) {
-    t.answer.replaceChildren(el("div", { class: "muted" }, running ? "Working…" + (t.lastStep ? " " + t.lastStep : "") : "The agent printed no reply."));
+    const state = running ? "skeleton" : "none";
+    if (t.shown === state) return; // keep the animation running instead of restarting it
+    t.shown = state;
+    t.answer.replaceChildren(running
+      ? el("div", { class: "skeleton" }, el("i"), el("i"), el("i"))
+      : el("div", { class: "muted" }, "The agent printed no reply."));
     return;
   }
-  t.answer.replaceChildren(el("div", { class: "who muted" }, agentLabel(t.s.agent)), el("div", { class: "md" }, renderMarkdown(t.text)));
+  t.shown = "text";
+  t.answer.replaceChildren(el("div", { class: "md" }, renderMarkdown(t.text)));
 }
-
-const agentLabel = (id) => (agentChoices.find((a) => a.id === id) || { label: id }).label;
 
 function addEvents(t, events) {
   let textChanged = false;
-  let stepChanged = false;
   for (const e of events) {
     if (e.kind === "out") { t.text += (t.text ? "\n" : "") + e.text; textChanged = true; continue; }
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
     t.steps.append(logLine(e));
     t.count++;
-    if (e.kind === "log") { t.lastStep = e.text; stepChanged = true; }
+    if (e.kind === "log") t.lastStep = e.text;
     if (e.kind === "blocked") { t.activity.open = true; t.needsLook = true; } // something needs the owner's attention
   }
   if (events.length) t.steps.scrollTop = t.steps.scrollHeight;
-  t.summary.textContent = "Activity (" + t.count + " step" + (t.count === 1 ? "" : "s") + ")";
-  if (textChanged || (stepChanged && !t.text)) renderAnswer(t);
+  renderSummary(t);
+  if (textChanged) renderAnswer(t);
 }
 
 // After a turn ends: what it pushed, why it failed, and what it saved to memory.
@@ -197,18 +251,24 @@ async function finishTurn(t) {
   closeOpenAsks(t);
   if (!t.needsLook) t.activity.open = false;
   try { t.s = await api("GET", "/api/sessions/" + encodeURIComponent(t.s.id)); } catch (_) { /* keep what we have */ }
+  renderSummary(t);
   renderAnswer(t);
   const bits = [];
   if (t.s.status === "failed" || t.s.status === "interrupted" || t.s.status === "stopped") {
-    bits.push(el("div", { class: t.s.status === "failed" ? "err" : "" }, t.s.status + (t.s.error ? ": " + t.s.error : "")));
+    bits.push(el("span", { class: t.s.status === "failed" ? "err" : "" }, t.s.status + (t.s.error ? ": " + t.s.error : "")));
   }
   if (t.s.pushed && t.s.pushed.length) {
-    bits.push(el("div", {}, "Pushed ", el("code", {}, t.s.branch), " to " + t.s.pushed.join(", ")));
+    bits.push(el("span", {}, "Pushed ", el("code", {}, t.s.branch), " to " + t.s.pushed.join(", ")));
   } else if (t.s.status === "done") {
-    bits.push(el("div", {}, "No changes were pushed."));
+    bits.push(el("span", {}, "No changes were pushed."));
+  }
+  if (t.text) {
+    const copy = el("button", { type: "button", class: "tiny" }, "Copy reply");
+    copy.addEventListener("click", () => copyText(t.text, copy));
+    bits.push(el("span", { class: "actions" }, copy));
   }
   t.foot.replaceChildren(...bits);
-  t.memoryNote = el("div", {});
+  t.memoryNote = el("span", {});
   t.foot.append(t.memoryNote);
 }
 
@@ -224,6 +284,8 @@ async function showMemory(t, saving) {
   } catch (_) { /* memory was off for this turn, or nothing was saved */ }
 }
 
+const pill = (text, title) => el("span", { class: "pill", title: title || "" }, text);
+
 function setComposer() {
   const tail = thread[thread.length - 1];
   const running = !isFinished(tail.s.status);
@@ -237,9 +299,23 @@ function setComposer() {
   const badge = $("s-status");
   badge.className = "badge st-" + tail.s.status;
   badge.textContent = tail.s.status;
-  $("s-meta").textContent = tail.s.agent + " · network: " + tail.s.network + " · started " + ago(thread[0].s.startedAt || thread[0].s.createdAt);
+  const repos = thread[0].s.repos.map((r) => r.fullName.split("/").pop());
+  $("s-meta").replaceChildren(
+    pill(agentLabel(tail.s.agent)),
+    pill("network: " + tail.s.network),
+    ...repos.slice(0, 4).map((r) => pill(r)),
+    ...(repos.length > 4 ? [pill("+" + (repos.length - 4) + " more", repos.slice(4).join(", "))] : []),
+    pill("started " + ago(thread[0].s.startedAt || thread[0].s.createdAt)));
   $("s-error").hidden = true;
 }
+
+// The message box grows with what you type, up to a limit.
+function autoGrow() {
+  const box = $("reply-text");
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, 200) + "px";
+}
+$("reply-text").addEventListener("input", autoGrow);
 
 const nearBottom = () => window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
 
@@ -248,6 +324,7 @@ async function openSession(id) {
   show("session");
   $("chat").replaceChildren();
   $("reply-text").value = "";
+  autoGrow();
   const token = (pollToken = {});
   const [turns, agents] = await Promise.all([api("GET", "/api/sessions/" + encodeURIComponent(id) + "/thread"), api("GET", "/api/agents")]);
   if (pollToken !== token) return;
@@ -307,6 +384,7 @@ $("reply-form").addEventListener("submit", (e) => {
   guarded($("reply-send"), async () => {
     const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent: $("reply-agent").value });
     $("reply-text").value = "";
+    autoGrow();
     const t = makeTurn(s);
     thread.push(t);
     $("chat").append(t.root);

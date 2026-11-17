@@ -6,6 +6,7 @@
 <title>Unire</title>
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/look.css">
 </head>
 <body>
 <header class="top">
@@ -39,17 +40,26 @@
   <!-- Chats: every conversation in a list on the left, the open one on the right -->
   <div id="workspace" class="workspace" hidden>
   <aside id="side" class="side" aria-label="Conversations">
-    <button id="new-session" class="primary">New chat</button>
+    <button id="new-session" class="primary">+ New chat</button>
+    <input id="side-search" class="side-search" type="search" placeholder="Search chats" aria-label="Search chats" autocomplete="off">
     <div id="session-list" class="side-list"></div>
   </aside>
   <div class="pane">
   <section id="view-sessions" hidden>
-    <p class="muted empty">Pick a conversation on the left, or start a new chat. Several agents can work at the same time.</p>
+    <div class="empty-hero">
+      <div class="glyph" aria-hidden="true">✦</div>
+      <h2>Pick a chat, or start something new</h2>
+      <p class="muted">Several agents can work at the same time, each on its own branch.</p>
+      <button id="empty-new" class="primary">+ New chat</button>
+    </div>
   </section>
 
   <section id="view-new" hidden>
     <button class="ghost back" id="new-back">&larr; Chats</button>
-    <h1>New chat</h1>
+    <div class="hero">
+      <h1>What should we work on?</h1>
+      <p class="muted">Describe it, pick the repos, and an agent gets to work on its own branch.</p>
+    </div>
     <p id="n-note" class="banner" hidden></p>
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
@@ -65,8 +75,8 @@
         <div id="n-results" class="results" hidden></div>
 
         <div class="between spaced">
-          <select id="n-agent" aria-label="Agent"></select>
-          <button class="primary" type="submit" id="n-submit">Start</button>
+          <select id="n-agent" class="pill-select" aria-label="Agent"></select>
+          <button class="primary" type="submit" id="n-submit">Start &rarr;</button>
         </div>
 
         <details class="spaced">
@@ -89,25 +99,30 @@
   </section>
 
   <section id="view-session" hidden>
-    <button class="ghost back" id="s-back">&larr; Chats</button>
-    <div class="between">
+    <header class="chat-head">
+      <button class="ghost back" id="s-back">&larr; Chats</button>
       <h1 id="s-title"></h1>
       <span id="s-status" class="badge"></span>
-    </div>
-    <p id="s-meta" class="muted"></p>
+      <button id="s-delete" type="button" class="ghost tiny" title="Delete this conversation" hidden>Delete</button>
+      <div id="s-meta" class="chat-meta"></div>
+    </header>
     <div id="chat" class="chat" aria-live="polite"></div>
     <p id="s-error" class="err" hidden></p>
     <form id="reply-form" class="composer" autocomplete="off">
-      <textarea id="reply-text" rows="2" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
-      <div class="between">
-        <select id="reply-agent" aria-label="Agent for the next message"></select>
-        <span class="row">
-          <button id="s-stop" type="button" class="danger" hidden>Stop</button>
-          <button id="reply-send" type="submit" class="primary">Send</button>
-        </span>
+      <div class="composer-box">
+        <textarea id="reply-text" rows="1" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
+        <div class="composer-bar">
+          <select id="reply-agent" class="pill-select" aria-label="Agent for the next message"></select>
+          <span class="hint muted">Enter to send · Shift+Enter for a new line</span>
+          <button id="s-stop" type="button" class="icon-btn stop" title="Stop the agent" aria-label="Stop" hidden>
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+          <button id="reply-send" type="submit" class="icon-btn primary" title="Send" aria-label="Send">
+            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
       </div>
     </form>
-    <div class="item-actions"><button id="s-delete" type="button" hidden>Delete conversation</button></div>
   </section>
   </div>
   </div>

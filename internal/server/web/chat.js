@@ -423,7 +423,10 @@ async function watch(t, token) {
         // else keep reading: the memory step is still writing to the log
       }
     } catch (e) { banner(e.message, true); }
-    await new Promise((res) => schedule(res, more ? 0 : 1000));
+    // Each loop waits on its own timer: a shared one let a second loop (a reply
+    // sent while the last turn was still saving its memory) cancel this one's wait,
+    // so the page stopped updating until it was reopened.
+    await new Promise((res) => setTimeout(res, more ? 0 : 1000));
   }
 }
 

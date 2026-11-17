@@ -3,10 +3,8 @@
 // Sessions pages: the list, the New session form with its repo picker, and
 // a session's live log. Uses the helpers from app.js.
 
-let pollTimer = null;
 let pollToken = null;
-function stopPolling() { clearTimeout(pollTimer); pollTimer = null; pollToken = null; }
-function schedule(fn, ms) { clearTimeout(pollTimer); pollTimer = setTimeout(fn, ms); }
+function stopPolling() { pollToken = null; }
 
 function statusBadge(status) { return el("span", { class: "badge st-" + status }, status); }
 const isFinished = (status) => status !== "queued" && status !== "running";

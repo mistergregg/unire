@@ -40,6 +40,10 @@ func TestClaudeEvents(t *testing.T) {
 		{`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"The user wants\n a plan"}]}}`, "thinking: The user wants a plan", "", "", true},
 		{`{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}`, "", "", "", true},
 		{`{"type":"result","subtype":"success","is_error":false,"result":"All done."}`, "", "", "All done.", true},
+		// Lines a real Claude Code run printed.
+		{`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.34,"status":"allowed"},"seven_day":{"utilization":0.72,"status":"allowed"}}},"session_id":"s"}`, "usage: 34% of the 5-hour limit, 72% of the 7-day limit", "", "", true},
+		{`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`, "", "", "", true},
+		{`{"type":"some_future_event","x":1}`, "", "", "", true},
 		{`some plain text the CLI printed`, "", "", "", false},
 		{`{"unrelated":true}`, "", "", "", false},
 		{`{not json`, "", "", "", false},

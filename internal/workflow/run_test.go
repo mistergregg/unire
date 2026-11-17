@@ -634,6 +634,7 @@ func streamRun(t *testing.T, agentOut string) (answer, progress string, argv []s
 func TestAgentProgressIsShownWhileItWorksAndOnlyTheAnswerIsTheAnswer(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"type":"system","subtype":"init"}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.34}}}}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/main.dart"}}]}}`,
 		`{"type":"user","message":{"content":[{"type":"tool_result","content":"..."}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Looks fine."}]}}`,
@@ -646,7 +647,10 @@ func TestAgentProgressIsShownWhileItWorksAndOnlyTheAnswerIsTheAnswer(t *testing.
 	if strings.TrimSpace(answer) != "The app looks fine." {
 		t.Errorf("answer = %q, want only the final answer (not the JSON, not the intermediate text)", answer)
 	}
-	for _, want := range []string{"Read lib/main.dart", "says: Looks fine."} {
+	if strings.Contains(answer, "rate_limit") {
+		t.Errorf("an event that is not the answer was printed as text: %q", answer)
+	}
+	for _, want := range []string{"Read lib/main.dart", "says: Looks fine.", "usage: 34% of the 5-hour limit"} {
 		if !strings.Contains(progress, want) {
 			t.Errorf("progress is missing %q:\n%s", want, progress)
 		}

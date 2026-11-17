@@ -129,6 +129,32 @@ func (claude) ParseEvent(line string) Event {
 		return ev
 	case "system", "user":
 		return Event{Known: true} // setup and tool results: nothing to show
+	case "rate_limit_event":
+		return Event{Known: true, Progress: claudeUsage(m)}
+	}
+	// Any other event type (the stream has several kinds Unire does not use) is
+	// part of the stream, so it must never be printed as if it were the answer.
+	if _, ok := m["type"].(string); ok {
+		return Event{Known: true}
 	}
 	return Event{}
+}
+
+// claudeUsage says how much of the subscription's limits are used, from the
+// rate_limit_event Claude Code sends: {"rate_limit_info": {"unifiedWindows":
+// {"five_hour": {"utilization": 0.34}, "seven_day": {"utilization": 0.72}}}}.
+func claudeUsage(m map[string]any) string {
+	info, _ := m["rate_limit_info"].(map[string]any)
+	windows, _ := info["unifiedWindows"].(map[string]any)
+	var parts []string
+	for _, w := range []struct{ key, label string }{{"five_hour", "5-hour"}, {"seven_day", "7-day"}} {
+		win, _ := windows[w.key].(map[string]any)
+		if u, ok := win["utilization"].(float64); ok {
+			parts = append(parts, fmt.Sprintf("%.0f%% of the %s limit", u*100, w.label))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "usage: " + strings.Join(parts, ", ")
 }

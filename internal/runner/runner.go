@@ -27,6 +27,8 @@ type StartSpec struct {
 	Network string
 	// Env is set inside the sandbox for every command.
 	Env map[string]string
+	// Log, when set, is told what a slow start is waiting for (a download).
+	Log io.Writer
 }
 
 // OneShot is implemented by runners that can run one short command in a

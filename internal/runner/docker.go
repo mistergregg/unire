@@ -72,7 +72,14 @@ func (d Docker) runArgs(s StartSpec) []string {
 func (d Docker) Refresh(ctx context.Context) { EnsureFresh(ctx, d.Image) }
 
 func (d Docker) Start(ctx context.Context, s StartSpec) (Sandbox, error) {
-	d.Refresh(ctx)
+	if s.Log != nil && fromRegistry(d.Image) && !haveImage(ctx, d.Image) {
+		fmt.Fprintf(s.Log, "downloading the sandbox image %s: this host does not have it yet (after an update), so the first start can take several minutes\n", d.Image)
+		t := time.Now()
+		d.Refresh(ctx)
+		fmt.Fprintf(s.Log, "sandbox image downloaded (%.0fs)\n", time.Since(t).Seconds())
+	} else {
+		d.Refresh(ctx)
+	}
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", d.runArgs(s)...)
 	cmd.Stderr = &stderr

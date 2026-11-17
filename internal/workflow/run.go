@@ -128,10 +128,12 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	}
 
 	fmt.Fprintf(opt.Err, "starting session %s (agent %s, branch %s)\n", spec.ID, spec.Agent, spec.Branch())
-	sb, err := r.Start(ctx, runner.StartSpec{SessionID: spec.ID, Mounts: mounts, Memory: opt.Memory, CPUs: opt.CPUs, Workspace: opt.Workspace})
+	began := time.Now()
+	sb, err := r.Start(ctx, runner.StartSpec{SessionID: spec.ID, Mounts: mounts, Memory: opt.Memory, CPUs: opt.CPUs, Workspace: opt.Workspace, Log: opt.Err})
 	if err != nil {
 		return res, err
 	}
+	fmt.Fprintf(opt.Err, "sandbox ready (%.1fs)\n", time.Since(began).Seconds())
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

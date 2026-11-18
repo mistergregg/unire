@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mistergregg/unire/internal/repopick"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -27,6 +28,12 @@ type catalogCache struct {
 	m  map[string]catalogEntry
 }
 
+func matchRepo(r repopick.Repo, query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	return q == "" || strings.Contains(strings.ToLower(r.FullName), q) ||
+		strings.Contains(strings.ToLower(r.Description), q)
+}
+
 // listCached lists a server's repos matching query, from the cache when fresh.
 func (s *Server) listCached(ctx context.Context, g store.GitServer, query string) []repopick.Repo {
 	key := g.ID + "\x00" + query
@@ -34,6 +41,21 @@ func (s *Server) listCached(ctx context.Context, g store.GitServer, query string
 	if e, ok := s.catalog.m[key]; ok && time.Since(e.at) < catalogFor {
 		s.catalog.mu.Unlock()
 		return e.repos
+	}
+	// GitHub's ListRepos does in-memory filtering from the full repo list.
+	// If the server's base repo list is already cached, filter from it directly
+	// without another network call.
+	if g.Type == "github" && query != "" {
+		if base, ok := s.catalog.m[g.ID+"\x00"]; ok && time.Since(base.at) < catalogFor {
+			s.catalog.mu.Unlock()
+			var filtered []repopick.Repo
+			for _, r := range base.repos {
+				if matchRepo(r, query) {
+					filtered = append(filtered, r)
+				}
+			}
+			return filtered
+		}
 	}
 	s.catalog.mu.Unlock()
 	p, err := s.provider(g)
@@ -66,7 +88,10 @@ func (s *Server) reposFor(ctx context.Context, text string) []repopick.Repo {
 	}
 	seen := map[string]bool{}
 	var out []repopick.Repo
+	var mu sync.Mutex
 	add := func(list []repopick.Repo) {
+		mu.Lock()
+		defer mu.Unlock()
 		for _, r := range list {
 			if !seen[r.Key()] {
 				seen[r.Key()] = true
@@ -75,11 +100,26 @@ func (s *Server) reposFor(ctx context.Context, text string) []repopick.Repo {
 		}
 	}
 	words := append([]string{""}, repopick.SearchWords(text)...)
+	var wg sync.WaitGroup
 	for _, g := range servers {
-		for _, w := range words {
-			add(s.listCached(ctx, g, w))
+		g := g
+		// For GitHub, the base query ("") already returns all accessible repos,
+		// and word queries only filter that same set (which add() deduplicates anyway).
+		serverWords := words
+		if g.Type == "github" {
+			serverWords = []string{""}
+		}
+		for _, w := range serverWords {
+			w := w
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer safe.Recover("reposFor", nil)
+				add(s.listCached(ctx, g, w))
+			}()
 		}
 	}
+	wg.Wait()
 	return out
 }
 

@@ -55,7 +55,7 @@ type statusCache struct {
 	m  map[string]statusEntry
 }
 
-const statusTTL = 15 * time.Second
+const statusTTL = 2 * time.Minute
 
 func (s *Server) invalidateStatus() {
 	s.signins.mu.Lock()

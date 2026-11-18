@@ -45,6 +45,10 @@ case "$tool" in
   share)
     # Copy the file now (the agent may change or delete it later). Layout: name, kind, content.
     f=$1
+    case "$f" in
+      file://*) f=${f#file://} ;;
+    esac
+    f="${f%%#*}"
     [ -f "$f" ] || { echo "unire share: no such file: $f" >&2; exit 2; }
     name=$(basename -- "$f" | tr -d '\r\n')
     case "$(printf '%s' "$name" | tr 'A-Z' 'a-z')" in

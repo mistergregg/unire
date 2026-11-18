@@ -21,9 +21,28 @@ function inlineNodes(text) {
     else if (m[2]) out.push(el("strong", {}, ...inlineNodes(t.slice(2, -2))));
     else {
       const [, label, url] = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(t);
-      out.push(/^https?:\/\//i.test(url)
-        ? el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)
-        : el("code", {}, label.replace(/^`|`$/g, "")));
+      if (/^https?:\/\//i.test(url)) {
+        out.push(el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label));
+      } else if (/^file:\/\//i.test(url)) {
+        const cleanPath = url.replace(/^file:\/\//i, "").split(/[?#]/)[0];
+        const base = cleanPath.split("/").pop();
+        const a = el("a", { href: "#", class: "file-link", title: url }, label);
+        a.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          const cards = document.querySelectorAll(".share-card");
+          for (const c of cards) {
+            const nameEl = c.querySelector(".share-name");
+            if (nameEl && (nameEl.textContent === base || c.dataset.filename === base)) {
+              c.open = true;
+              c.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              return;
+            }
+          }
+        });
+        out.push(a);
+      } else {
+        out.push(el("code", {}, label.replace(/^`|`$/g, "")));
+      }
     }
     last = m.index + t.length;
   }
@@ -155,7 +174,16 @@ function askCard(t, e) {
     ev.preventDefault();
     const text = box.value.trim();
     if (!text) return;
-    guarded(send, () => api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/answer", { id, text }));
+    box.disabled = true;
+    guarded(send, async () => {
+      try {
+        await api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/answer", { id, text });
+        answerCard(t, { text: id + "\n" + text });
+      } catch (err) {
+        box.disabled = false;
+        throw err;
+      }
+    });
   });
   box.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); form.requestSubmit(); }
@@ -170,7 +198,7 @@ function askCard(t, e) {
 function answerCard(t, e) {
   const [id, text] = splitEvent(e.text);
   const a = t.asks[id];
-  if (!a) return;
+  if (!a || !a.form) return;
   a.form.replaceWith(el("div", { class: "muted said" }, "You answered: " + text));
   a.form = null;
 }
@@ -201,16 +229,20 @@ function steerCard(t, e) {
   const note = mode === "now" ? "sent now: it stopped the agent" : "sent";
   // A message that is still waiting can be made urgent: the agent is stopped and
   // gets it, with anything else that waits, at once.
+  const entry = { mode, text, id, status };
   const now = el("button", { type: "button", class: "tiny steer-now-btn", title: "Stop what the agent is doing and give it this now" }, "Send now");
+  now.disabled = id.startsWith("pending-");
   now.addEventListener("click", () => guarded(now, async () => {
-    await api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/steer/" + encodeURIComponent(id) + "/now");
+    await api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/steer/" + encodeURIComponent(entry.id) + "/now");
     now.hidden = true;
   }));
   const card = el("div", { class: "steer" },
     el("div", { class: "bubble user" }, el("div", { class: "said" }, text)),
     el("div", { class: "time" }, note + " · ", status, " ", now));
   now.hidden = mode === "now";
-  t.steers[id] = { card, status, now, mode };
+  entry.card = card;
+  entry.now = now;
+  t.steers[id] = entry;
   t.steerBox.append(card);
 }
 
@@ -357,6 +389,7 @@ function setComposer() {
     ? "Enter: for its next step · Ctrl+Enter: send now"
     : "Enter to send · Shift+Enter for a new line";
   $("s-stop").hidden = !running;
+  $("s-stop").disabled = !tail.s.id || tail.s.id.startsWith("pending-");
   $("s-delete").hidden = running;
   $("reply-agent").disabled = running;
   $("s-title").textContent = thread[0].s.task;
@@ -453,24 +486,56 @@ $("reply-form").addEventListener("submit", (e) => {
   const tail = thread[thread.length - 1];
   if (!text || !tail) return;
   if (!isFinished(tail.s.status)) { if (tail.s.canSteer) steer(text, false); return; }
-  guarded($("reply-send"), async () => {
-    await sendReply(text);
-    $("reply-text").value = "";
-    autoGrow();
-  });
+  sendReply(text);
 });
 
 // Sends a message as the next turn of the conversation and starts following it.
 async function sendReply(text) {
   const tail = thread[thread.length - 1];
-  const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent: $("reply-agent").value });
-  const t = makeTurn(s);
+  const agent = $("reply-agent").value;
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const optSession = {
+    id: "pending-" + Date.now(),
+    task: tail.s.task,
+    agent,
+    prompt: text,
+    status: "queued",
+    createdAt: nowUnix,
+    startedAt: nowUnix,
+    network: tail.s.network,
+    repos: tail.s.repos || [],
+    branch: tail.s.branch,
+  };
+  const t = makeTurn(optSession);
   thread.push(t);
   $("chat").append(t.root);
+  $("reply-text").value = "";
+  autoGrow();
   setComposer();
-  renderPulls();
   window.scrollTo(0, document.body.scrollHeight);
-  watch(t, pollToken);
+
+  const token = pollToken;
+  guarded($("reply-send"), async () => {
+    try {
+      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent });
+      t.s = s;
+      if (pollToken !== token || currentView !== "session") return;
+      setComposer();
+      renderPulls();
+      watch(t, token);
+    } catch (err) {
+      if (pollToken === token && currentView === "session") {
+        t.root.remove();
+        const idx = thread.indexOf(t);
+        if (idx >= 0) thread.splice(idx, 1);
+        $("reply-text").value = text;
+        autoGrow();
+        setComposer();
+        $("reply-text").focus();
+      }
+      throw err;
+    }
+  });
 }
 
 // Say something to the agent while it works. now=true stops what it is doing and
@@ -479,10 +544,38 @@ async function sendReply(text) {
 function steer(text, now) {
   const tail = thread[thread.length - 1];
   const btn = now ? $("steer-now") : $("reply-send");
+  const tempId = "pending-steer-" + Date.now();
+  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text });
+  $("reply-text").value = "";
+  autoGrow();
+  window.scrollTo(0, document.body.scrollHeight);
+
+  const token = pollToken;
   guarded(btn, async () => {
-    await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now });
-    $("reply-text").value = "";
-    autoGrow();
+    try {
+      const res = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now });
+      if (res && res.id) {
+        const pending = tail.steers[tempId];
+        if (pending) {
+          delete tail.steers[tempId];
+          pending.id = res.id;
+          pending.now.disabled = false;
+          tail.steers[res.id] = pending;
+        }
+      }
+    } catch (err) {
+      if (pollToken === token && currentView === "session") {
+        const pending = tail.steers[tempId];
+        if (pending) {
+          pending.card.remove();
+          delete tail.steers[tempId];
+        }
+        $("reply-text").value = text;
+        autoGrow();
+        $("reply-text").focus();
+      }
+      throw err;
+    }
   });
 }
 
@@ -502,7 +595,9 @@ $("steer-now").addEventListener("click", () => {
 });
 
 $("s-stop").addEventListener("click", () => guarded($("s-stop"), async () => {
-  await api("POST", "/api/sessions/" + encodeURIComponent(thread[thread.length - 1].s.id) + "/stop");
+  const tail = thread[thread.length - 1];
+  if (!tail || !tail.s.id || tail.s.id.startsWith("pending-")) return;
+  await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/stop");
   banner("Stopping…");
 }));
 
@@ -560,5 +655,6 @@ function shareCard(t, e) {
     el("summary", {}, el("span", { class: "share-name" }, name), el("span", { class: "muted" }, size)),
     el("div", { class: "share-actions" }, actions),
     el("div", { class: "share-body" }, body));
+  card.dataset.filename = name;
   t.shareBox.append(card);
 }

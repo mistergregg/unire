@@ -177,3 +177,46 @@ func TestFindingARepoForTheAgent(t *testing.T) {
 		t.Errorf("empty = %q", msg)
 	}
 }
+
+func TestGitHubCatalogBaseListReused(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	names := []string{"Gbreed/echotalk-mobile", "Gbreed/echotalk-backend"}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/user":
+			w.Write([]byte(`{"login":"greg"}`))
+		case "/api/v3/user/repos":
+			calls++
+			var items []string
+			for _, n := range names {
+				items = append(items, fmt.Sprintf(`{"full_name":%q,"clone_url":%q,"default_branch":"main"}`, n, "https://github.example.com/"+n+".git"))
+			}
+			w.Write([]byte(`[` + strings.Join(items, ",") + `]`))
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	if code, body := e.do("POST", "/api/servers", map[string]any{"name": "GH", "type": "github", "baseUrl": srv.URL, "token": "t"}); code != http.StatusCreated {
+		t.Fatalf("add server = %d %s", code, body)
+	}
+
+	servers, err := e.srv.store.GitServers()
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("servers: %v, %v", servers, err)
+	}
+	ctx := context.Background()
+	// First query: base list "" fetches from server
+	repos := e.srv.listCached(ctx, servers[0], "")
+	if len(repos) != 2 || calls != 1 {
+		t.Fatalf("first call: %d repos, %d calls", len(repos), calls)
+	}
+
+	// Subsequent query for "echotalk": should reuse base list from cache without another server call
+	filtered := e.srv.listCached(ctx, servers[0], "echotalk")
+	if len(filtered) != 2 || calls != 1 {
+		t.Fatalf("cached call: %d repos, %d calls (wanted 1 call)", len(filtered), calls)
+	}
+}

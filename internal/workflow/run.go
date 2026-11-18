@@ -119,6 +119,32 @@ func (t *tail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// textCapture collects up to max bytes written to it.
+type textCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+	max int
+}
+
+func (c *textCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.max <= 0 || c.buf.Len() < c.max {
+		toWrite := p
+		if c.max > 0 && c.buf.Len()+len(p) > c.max {
+			toWrite = p[:c.max-c.buf.Len()]
+		}
+		c.buf.Write(toWrite)
+	}
+	return len(p), nil
+}
+
+func (c *textCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
 // Run executes the session. Work the agent produced is pushed even when the
 // agent exits with an error, and the error is returned afterwards.
 func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (Result, error) {
@@ -227,9 +253,10 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 
 	fmt.Fprintf(opt.Err, "running %s\n", adapter.Name())
 	out := &tail{}
+	capture := &textCapture{max: 1024 * 1024}
 	agentOpts := runner.ExecOpts{
 		Argv: argv, Dir: workspace, TTY: opt.Interactive,
-		Stdout: io.MultiWriter(opt.Out, out), Stderr: opt.Err,
+		Stdout: io.MultiWriter(opt.Out, out, capture), Stderr: opt.Err,
 	}
 	// An agent that can be steered runs as a process that stays open, so the owner
 	// can talk to it while it works (see runLive). The others run once.
@@ -241,7 +268,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if s, ok := adapter.(agent.Streamer); ok && !useLive && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != "" {
 		if sargv, err := s.StreamCommand(prompt, spec.Mode, ref); err == nil {
 			agentOpts.Argv = sargv
-			stream = &streamWriter{s: s, out: io.MultiWriter(opt.Out, out), log: opt.Err}
+			stream = &streamWriter{s: s, out: io.MultiWriter(opt.Out, out, capture), log: opt.Err}
 			agentOpts.Stdout = stream
 		}
 	}
@@ -260,7 +287,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	}()
 	var agentErr error
 	if useLive {
-		agentErr = w.runLive(ctx, live, spec, prompt, ref, out)
+		agentErr = w.runLive(ctx, live, spec, prompt, ref, io.MultiWriter(out, capture))
 	} else {
 		agentErr = sb.Exec(ctx, agentOpts)
 		if stream != nil {
@@ -272,7 +299,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	requestedName := tools.CleanName(w.requestedTool(ctx, tools.Name.Name))
 	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
 	prBody := w.requestedBody(ctx)
-	shared := w.requestedShares(ctx)
+	shared := w.requestedShares(ctx, capture.String())
 
 	w.mu.Lock()
 	spec.Repos = append(spec.Repos, w.added...)

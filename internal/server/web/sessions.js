@@ -254,6 +254,12 @@ function autoGrowPrompt() {
   box.style.height = Math.min(Math.max(box.scrollHeight, 132), 360) + "px";
 }
 $("n-prompt").addEventListener("input", autoGrowPrompt);
+$("n-prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    $("new-form").requestSubmit();
+  }
+});
 
 async function suggestRepos() {
   const box = $("n-suggest");

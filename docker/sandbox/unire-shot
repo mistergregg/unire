@@ -1,0 +1,27 @@
+#!/bin/sh
+# unire-shot: screenshot a page you are serving inside the sandbox.
+#   unire-shot <url> [out.png] [WIDTHxHEIGHT]
+# Only localhost, 127.0.0.1 and file:// pages are allowed, and the browser cannot
+# resolve any other name, so a page cannot pull in anything from the network.
+url=$1
+out=${2:-shot.png}
+size=${3:-1280x800}
+[ -n "$url" ] || { echo "usage: unire-shot <url> [out.png] [WIDTHxHEIGHT]" >&2; exit 2; }
+case "$url" in
+  *@*) echo "unire-shot: only localhost pages" >&2; exit 2 ;;
+  http://localhost|http://localhost[:/]*|http://127.0.0.1|http://127.0.0.1[:/]*|file:///*) ;;
+  *) echo "unire-shot: only localhost, 127.0.0.1 or file:/// pages" >&2; exit 2 ;;
+esac
+case "$size" in
+  [0-9]*x[0-9]*) ;;
+  *) echo "unire-shot: size looks like 1280x800" >&2; exit 2 ;;
+esac
+w=${size%x*}; h=${size#*x}
+profile=$(mktemp -d)
+trap 'rm -rf "$profile"' EXIT
+chromium --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --hide-scrollbars \
+  --no-proxy-server --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 127.0.0.1" \
+  --user-data-dir="$profile" --window-size="$w,$h" --virtual-time-budget=5000 \
+  --screenshot="$out" "$url" >/dev/null 2>"$profile/err" || { cat "$profile/err" >&2; exit 1; }
+[ -s "$out" ] || { cat "$profile/err" >&2; echo "unire-shot: no screenshot was written" >&2; exit 1; }
+echo "ok $out (${w}x${h})"

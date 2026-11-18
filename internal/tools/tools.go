@@ -46,8 +46,17 @@ func Prompt(set []Tool) string {
 	for _, t := range set {
 		b.WriteString("- " + t.Usage + "\n")
 	}
+	b.WriteString("\n" + checkingTools)
 	return b.String()
 }
+
+// checkingTools tells the agent about the programs the sandbox image carries for
+// checking work (see docker/sandbox/Dockerfile). They are plain commands, not
+// requests to Unire.
+const checkingTools = "# Checking your work\n\nThe sandbox has these installed. Use them instead of guessing.\n\n" +
+	"- unire-shot <url> [out.png] [WIDTHxHEIGHT] - screenshot a page you are serving on localhost (only localhost and file:/// pages work), then look at the image. Use it after changing HTML or CSS.\n" +
+	"- unire-lsp refs|def <file>:<line> <name> and unire-lsp symbols <file> - find every use of a symbol, where it is defined, or what a file declares (Go, TypeScript and JavaScript). Better than grep for renames and impact checks.\n" +
+	"- go (with gopls), golangci-lint, gosec, semgrep - build, lint and scan. semgrep cannot download rule sets here, so give it rules in a file (--config rules.yml).\n"
 
 // Requests are the lines the agent wrote for a tool, newest last.
 func Requests(content string) []string {

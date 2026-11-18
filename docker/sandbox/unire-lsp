@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+// unire-lsp: ask a language server about code, from the command line.
+//   unire-lsp refs    <file>:<line>[:<col>] [name]   every use of the symbol
+//   unire-lsp def     <file>:<line>[:<col>] [name]   where the symbol is defined
+//   unire-lsp symbols <file>                          the symbols a file declares
+// Lines and columns start at 1. Give a name instead of a column to find it on that
+// line. Go files use gopls; .ts/.tsx/.js/.jsx use typescript-language-server.
+'use strict';
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const usage = () => { console.error(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 7).map(l => l.slice(3)).join('\n')); process.exit(2); };
+const [cmd, target, name] = process.argv.slice(2);
+if (!['refs', 'def', 'symbols'].includes(cmd) || !target) usage();
+
+const m = /^(.*?)(?::(\d+))?(?::(\d+))?$/.exec(target);
+const file = path.resolve(m[1]);
+if (!fs.existsSync(file)) { console.error('unire-lsp: no such file: ' + m[1]); process.exit(1); }
+const ext = path.extname(file);
+const servers = {
+  '.go': { argv: ['gopls'], id: 'go' },
+  '.ts': { argv: ['typescript-language-server', '--stdio'], id: 'typescript' },
+  '.tsx': { argv: ['typescript-language-server', '--stdio'], id: 'typescriptreact' },
+  '.js': { argv: ['typescript-language-server', '--stdio'], id: 'javascript' },
+  '.jsx': { argv: ['typescript-language-server', '--stdio'], id: 'javascriptreact' },
+};
+const srv = servers[ext];
+if (!srv) { console.error('unire-lsp: no language server for ' + ext); process.exit(1); }
+
+const text = fs.readFileSync(file, 'utf8');
+const lines = text.split('\n');
+let line0 = 0, col0 = 0;
+if (cmd !== 'symbols') {
+  if (!m[2]) usage();
+  line0 = Number(m[2]) - 1;
+  const src = lines[line0];
+  if (src === undefined) { console.error('unire-lsp: the file has only ' + lines.length + ' lines'); process.exit(1); }
+  if (name) {
+    col0 = src.indexOf(name);
+    if (col0 < 0) { console.error('unire-lsp: "' + name + '" is not on line ' + m[2]); process.exit(1); }
+  } else if (m[3]) {
+    col0 = Number(m[3]) - 1;
+  } else {
+    usage();
+  }
+}
+
+// Find the project root: the nearest folder above the file with go.mod or package.json.
+let root = path.dirname(file);
+for (let d = root; ; d = path.dirname(d)) {
+  if (fs.existsSync(path.join(d, 'go.mod')) || fs.existsSync(path.join(d, 'package.json'))) { root = d; break; }
+  if (d === path.dirname(d)) break;
+}
+const uri = p => 'file://' + p;
+
+let child;
+try { child = spawn(srv.argv[0], srv.argv.slice(1), { cwd: root, stdio: ['pipe', 'pipe', 'inherit'] }); }
+catch (e) { console.error('unire-lsp: cannot start ' + srv.argv[0]); process.exit(1); }
+child.on('error', () => { console.error('unire-lsp: cannot start ' + srv.argv[0]); process.exit(1); });
+
+let nextId = 1, buf = Buffer.alloc(0);
+const waiting = new Map();
+const send = msg => {
+  const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', ...msg }));
+  child.stdin.write('Content-Length: ' + body.length + '\r\n\r\n');
+  child.stdin.write(body);
+};
+const request = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++;
+  waiting.set(id, { resolve, reject });
+  send({ id, method, params });
+});
+child.stdout.on('data', chunk => {
+  buf = Buffer.concat([buf, chunk]);
+  for (;;) {
+    const end = buf.indexOf('\r\n\r\n');
+    if (end < 0) return;
+    const len = Number(/Content-Length: *(\d+)/i.exec(buf.slice(0, end).toString())?.[1]);
+    if (!len || buf.length < end + 4 + len) return;
+    const msg = JSON.parse(buf.slice(end + 4, end + 4 + len).toString());
+    buf = buf.slice(end + 4 + len);
+    if (msg.id !== undefined && waiting.has(msg.id)) {
+      const w = waiting.get(msg.id); waiting.delete(msg.id);
+      msg.error ? w.reject(new Error(msg.error.message)) : w.resolve(msg.result);
+    } else if (msg.id !== undefined && msg.method) {
+      send({ id: msg.id, result: null }); // the server asked us something; "nothing" is fine
+    }
+  }
+});
+
+const rel = p => path.relative(process.cwd(), p) || p;
+const loc = l => {
+  const u = l.uri || l.targetUri, r = l.range || l.targetSelectionRange;
+  return rel(decodeURIComponent(u.replace(/^file:\/\//, ''))) + ':' + (r.start.line + 1) + ':' + (r.start.character + 1);
+};
+const walk = (syms, depth) => syms.forEach(s => {
+  const r = (s.selectionRange || s.location.range).start;
+  console.log('  '.repeat(depth) + s.name + '  ' + rel(file) + ':' + (r.line + 1) + ':' + (r.character + 1));
+  if (s.children) walk(s.children, depth + 1);
+});
+
+const timer = setTimeout(() => { console.error('unire-lsp: the language server did not answer in 120 seconds'); child.kill(); process.exit(1); }, 120000);
+
+(async () => {
+  await request('initialize', { processId: process.pid, rootUri: uri(root), capabilities: {}, workspaceFolders: [{ uri: uri(root), name: 'root' }] });
+  send({ method: 'initialized', params: {} });
+  send({ method: 'textDocument/didOpen', params: { textDocument: { uri: uri(file), languageId: srv.id, version: 1, text } } });
+  const doc = { uri: uri(file) };
+  const pos = { line: line0, character: col0 };
+  let out;
+  if (cmd === 'refs') out = await request('textDocument/references', { textDocument: doc, position: pos, context: { includeDeclaration: true } });
+  else if (cmd === 'def') out = await request('textDocument/definition', { textDocument: doc, position: pos });
+  else out = await request('textDocument/documentSymbol', { textDocument: doc });
+  out = out ? (Array.isArray(out) ? out : [out]) : [];
+  if (!out.length) console.log('nothing found');
+  else if (cmd === 'symbols') walk(out, 0);
+  else out.map(loc).sort().forEach(l => console.log(l));
+  clearTimeout(timer);
+  child.kill();
+})().catch(e => { console.error('unire-lsp: ' + e.message); child.kill(); process.exit(1); });

@@ -640,6 +640,15 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, `"id"`) {
 		t.Fatalf("steer = %d %s", code, body)
 	}
+	// Release the agent only once it has taken the message: a message that reaches an agent
+	// that has already finished is "not delivered", which is correct but not what this tests.
+	for i := 0; i < 300; i++ {
+		_, l := e.do("GET", "/api/sessions/"+id+"/logs", nil)
+		if strings.Contains(l, `"kind":"steerstate"`) && strings.Contains(l, "queued") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	e.box.mu.Lock()
 	close(e.box.block)
 	e.box.mu.Unlock()

@@ -77,7 +77,10 @@ func (s *Server) runCleanup(stop <-chan struct{}) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		day := 24 * time.Hour
-		s.sessions.Cleanup(ctx, time.Duration(l.KeepLogsDays)*day, time.Duration(l.KeepWorkspaceDays)*day)
+		logs, ws := s.sessions.Cleanup(ctx, time.Duration(l.KeepLogsDays)*day, time.Duration(l.KeepWorkspaceDays)*day)
+		s.cleanup.mu.Lock()
+		s.cleanup.at, s.cleanup.logs, s.cleanup.workspaces = time.Now(), logs, ws
+		s.cleanup.mu.Unlock()
 	}
 	t := time.NewTimer(2 * time.Minute)
 	defer t.Stop()

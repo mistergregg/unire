@@ -18,6 +18,7 @@
     <button class="tab" data-view="memory">Memory</button>
     <button class="tab" data-view="servers">Git servers</button>
     <button class="tab" data-view="settings">Settings</button>
+    <button class="tab" data-view="health" id="tab-health">Health</button>
   </nav>
   <button id="logout" class="ghost" hidden>Log out</button>
 </header>
@@ -142,6 +143,20 @@
   </section>
   </div>
   </div>
+
+  <!-- Health -->
+  <section id="view-health" hidden>
+    <header class="page-head">
+      <span class="icon-tile" data-icon="shield"></span>
+      <div class="grow">
+        <h1>Health</h1>
+        <p class="muted">Whether everything Unire depends on is working, and what to do when it is not.</p>
+      </div>
+      <button id="health-refresh" class="ghost">Check again</button>
+    </header>
+    <div id="health-summary" class="muted"></div>
+    <div id="health-list" class="health"></div>
+  </section>
 
   <!-- Agents -->
   <section id="view-agents" hidden>
@@ -398,5 +413,6 @@
 <script src="/attention.js" defer></script>
 <script src="/memory.js" defer></script>
 <script src="/agents.js" defer></script>
+<script src="/health.js" defer></script>
 </body>
 </html>

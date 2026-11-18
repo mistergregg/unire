@@ -82,8 +82,8 @@ function ago(unix) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "sessions", "new", "session", "agents", "memory", "repomem", "servers", "settings"];
-const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings" };
+const VIEWS = ["auth", "sessions", "new", "session", "agents", "memory", "repomem", "servers", "settings", "health"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings", health: "health" };
 let currentView = "";
 function show(name) {
   currentView = name;
@@ -152,7 +152,7 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { sessions: openSessions, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings }[t.dataset.view];
+  const open = { sessions: openSessions, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings, health: openHealth }[t.dataset.view];
   guarded(null, open);
 }));
 

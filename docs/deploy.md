@@ -75,3 +75,7 @@ Cleanup runs a couple of minutes after start-up and then every six hours.
 ## Memory limit
 
 Each chat's sandbox is limited to 4 GB of memory by default, so one runaway agent cannot use all of the host's RAM and take down the other containers on it. Change it under Settings, Sandbox, **Memory limit per chat** (for example `8g` or `512m`); `0` means no limit and empty means the default. It applies to chats that start after the change.
+
+## The Health page
+
+When something does not work, open **Health**. It checks, and says what to do about each problem: Docker is reachable, the sandbox image is on the host (and how old), the agent login volume exists, sandbox containers match the running chats, network protection, free disk space, the database (size, counts and SQLite's integrity check), the limits and the last cleanup, each agent's sign-in, and each git server's token. Anything broken or worth a look comes first. Nothing on the page changes anything; it only reads. The agent and git server checks ask over the network, so the page can take several seconds.

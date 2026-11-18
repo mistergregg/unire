@@ -61,6 +61,8 @@ type Server struct {
 	catalog       catalogCache
 	stopCleanup   chan struct{}
 	stopOnce      sync.Once
+	probe         healthProbe // how the health page asks Docker about the host
+	cleanup       lastCleanup
 	runnerFactory RunnerFactory
 	egressProxy   *egress.Proxy
 	egressInfo    egress.Info
@@ -121,6 +123,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.stopCleanup = make(chan struct{})
+	s.probe = dockerProbe{}
 	safe.Go("cleanup", func() { s.runCleanup(s.stopCleanup) })
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
@@ -175,6 +178,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/workspaces/{id}", s.auth(s.deleteWorkspace))
 	mux.HandleFunc("POST /api/repos/suggest", s.auth(s.suggestRepos))
 	mux.HandleFunc("GET /api/memory/stats", s.auth(s.memoryStats))
+	mux.HandleFunc("GET /api/health", s.auth(s.getHealth))
 	mux.HandleFunc("GET /api/limits", s.auth(s.getLimits))
 	mux.HandleFunc("PUT /api/limits", s.auth(s.putLimits))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))

@@ -226,3 +226,16 @@ table.stats th { color: var(--muted); font-weight: 600; }
 .chat-link:hover { color: var(--accent); }
 #s-links:empty { display: none; }
 #s-links select { margin: 0; padding: 2px 8px; width: auto; }
+
+/* health */
+.health { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.health-row { display: flex; gap: 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.health-row .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex: none; background: var(--muted); }
+.health-row.ok .dot { background: var(--ok); }
+.health-row.warn .dot { background: #e0a100; }
+.health-row.bad .dot { background: var(--danger); }
+.health-row.bad { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.health-row.warn { border-color: color-mix(in srgb, #e0a100 45%, transparent); }
+.health-name { font-weight: 650; }
+.health-summary { overflow-wrap: anywhere; }
+.health-fix { margin-top: 4px; color: var(--muted); font-size: 14px; }

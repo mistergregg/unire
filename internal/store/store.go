@@ -232,3 +232,31 @@ func (s *Store) SetSettingIfUnset(key, value string) (bool, error) {
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// Counts are how much is in the database, for the health page.
+type Counts struct {
+	Sessions, Events, Summaries int
+}
+
+// Counts returns row counts and checks the database is readable.
+func (s *Store) Counts() (Counts, error) {
+	var c Counts
+	for q, dst := range map[string]*int{
+		`SELECT COUNT(*) FROM sessions`:          &c.Sessions,
+		`SELECT COUNT(*) FROM session_events`:    &c.Events,
+		`SELECT COUNT(*) FROM session_summaries`: &c.Summaries,
+	} {
+		if err := s.db.QueryRow(q).Scan(dst); err != nil {
+			return c, err
+		}
+	}
+	return c, nil
+}
+
+// QuickCheck runs SQLite's integrity check (the quick form) and returns what it says
+// ("ok" when the database is sound).
+func (s *Store) QuickCheck() (string, error) {
+	var res string
+	err := s.db.QueryRow(`PRAGMA quick_check(1)`).Scan(&res)
+	return res, err
+}

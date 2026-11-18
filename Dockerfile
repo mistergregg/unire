@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/unire ./cmd/unire
 
-FROM alpine:3.21
+FROM alpine:3.24
 # The controller starts sandboxes by talking to the host's Docker through the
 # mounted socket, using the docker CLI.
 RUN apk add --no-cache docker-cli ca-certificates

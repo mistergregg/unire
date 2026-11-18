@@ -243,7 +243,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 			if err != nil {
 				return res, fmt.Errorf("decode attached image data: %w", err)
 			}
-			if _, err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"sh", "-c", `mkdir -p /workspace/.unire-images && cat > "$1"`, "sh", path}, Stdin: bytes.NewReader(encoded)}); err != nil {
+			if err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"sh", "-c", `mkdir -p /workspace/.unire-images && cat > "$1"`, "sh", path}, Stdin: bytes.NewReader(encoded)}); err != nil {
 				return res, fmt.Errorf("save attached image: %w", err)
 			}
 			refs = append(refs, fmt.Sprintf("- %s (%s)", path, img.Name))

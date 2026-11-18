@@ -17,36 +17,9 @@ import (
 // A conversation is a chain of sessions: the first one, then one per reply.
 // Each reply is a new run that starts from the branch the one before pushed.
 
-const maxThread = 100 // a guard against a loop, far more than anyone replies
-
 // threadOf returns every session of the conversation that id belongs to, first to last.
 func (s *Server) threadOf(id string) ([]store.Session, error) {
-	x, ok, err := s.store.Session(id)
-	if err != nil || !ok {
-		return nil, err
-	}
-	for i := 0; i < maxThread && x.ParentID != ""; i++ {
-		p, ok, err := s.store.Session(x.ParentID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			break // the earlier turns were deleted
-		}
-		x = p
-	}
-	out := []store.Session{x}
-	for len(out) < maxThread {
-		c, ok, err := s.store.ChildOf(x.ID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			break
-		}
-		out, x = append(out, c), c
-	}
-	return out, nil
+	return s.store.Thread(id)
 }
 
 // viewWithPushed is toView plus the repos the session pushed a branch to.

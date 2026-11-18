@@ -87,6 +87,102 @@ func CleanName(s string) string {
 	return s
 }
 
+// FormatPRTitle ensures a pull request title follows the "Feature: ..." or "Fix: ..."
+// naming subject convention.
+func FormatPRTitle(title string) string {
+	title = CleanName(title)
+	if title == "" {
+		return ""
+	}
+	var suffix string
+	if i := strings.Index(title, " (into "); i >= 0 && strings.HasSuffix(title, ")") {
+		suffix = title[i:]
+		title = strings.TrimSpace(title[:i])
+	}
+
+	lower := strings.ToLower(title)
+	switch {
+	case strings.HasPrefix(lower, "feature:"):
+		title = "Feature: " + cleanSubject(title[len("feature:"):])
+	case strings.HasPrefix(lower, "feat:"):
+		title = "Feature: " + cleanSubject(title[len("feat:"):])
+	case strings.HasPrefix(lower, "fix:"):
+		title = "Fix: " + cleanSubject(title[len("fix:"):])
+	case strings.HasPrefix(lower, "bugfix:"):
+		title = "Fix: " + cleanSubject(title[len("bugfix:"):])
+	case strings.HasPrefix(lower, "hotfix:"):
+		title = "Fix: " + cleanSubject(title[len("hotfix:"):])
+	case hasConventionalPrefix(title, "feat"):
+		title = "Feature: " + cleanSubject(stripConventional(title))
+	case hasConventionalPrefix(title, "fix"):
+		title = "Fix: " + cleanSubject(stripConventional(title))
+	case strings.HasPrefix(lower, "fix ") || strings.HasPrefix(lower, "fixing ") || strings.HasPrefix(lower, "fixed "):
+		idx := strings.Index(title, " ")
+		title = "Fix: " + cleanSubject(title[idx+1:])
+	case isFixSubject(title):
+		title = "Fix: " + cleanSubject(title)
+	default:
+		title = "Feature: " + cleanSubject(title)
+	}
+	return title + suffix
+}
+
+func cleanSubject(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+func hasConventionalPrefix(title, kind string) bool {
+	lower := strings.ToLower(title)
+	if !strings.HasPrefix(lower, kind) {
+		return false
+	}
+	rest := lower[len(kind):]
+	if strings.HasPrefix(rest, "(") {
+		end := strings.Index(rest, ")")
+		if end < 0 {
+			return false
+		}
+		rest = rest[end+1:]
+	}
+	return strings.HasPrefix(rest, ":")
+}
+
+func stripConventional(title string) string {
+	colon := strings.Index(title, ":")
+	if colon >= 0 {
+		return title[colon+1:]
+	}
+	return title
+}
+
+func isFixSubject(s string) bool {
+	lower := strings.ToLower(s)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	for _, w := range words {
+		switch w {
+		case "fix", "fixes", "fixing", "fixed",
+			"bug", "bugs", "bugfix", "hotfix",
+			"patch", "patches", "repair", "repairs",
+			"correct", "corrects", "correction",
+			"resolve", "resolves", "resolving", "resolved",
+			"prevent", "prevents",
+			"crash", "crashes", "crashing",
+			"fail", "fails", "failing", "failure",
+			"flaky", "timeout", "regression":
+			return true
+		}
+	}
+	return false
+}
+
 // Ask lets the agent put a question to the owner and wait for the answer.
 var Ask = Tool{
 	Name: "ask",
@@ -104,7 +200,7 @@ func ForReply() []Tool { return []Tool{Ask, PR, PRBody, Share, Branches} }
 // uses this title if the agent gave one.
 var PR = Tool{
 	Name: "pr",
-	Usage: `unire pr "<title>" - suggest a title (under 70 characters) for a pull request with your changes. ` +
+	Usage: `unire pr "<title>" - suggest a title (under 70 characters) for a pull request with your changes, prefixed with "Feature: " or "Fix: " (for example: "Feature: Add user profile" or "Fix: Resolve redirect loop"). ` +
 		`Run it once, when you have finished. You cannot open the pull request yourself: Unire asks the owner whether to.`,
 }
 
@@ -145,8 +241,9 @@ func IsCall(name string) bool {
 }
 
 // ForReplyWithPR is the tool set for a reply in a conversation that has an open
-// pull request: the agent can read its checks and comments and answer.
-func ForReplyWithPR() []Tool { return append([]Tool{Ask, Share, Branches}, PRTools()...) }
+// pull request: the agent can read its checks and comments, update the pull request
+// title and description, and answer.
+func ForReplyWithPR() []Tool { return append([]Tool{Ask, PR, PRBody, Share, Branches}, PRTools()...) }
 
 // PRBody lets the agent write the description of a pull request. It is piped in,
 // because it has several lines.

@@ -360,6 +360,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		}
 		m.applyName(j, res.Name)
 		m.finish(ctx, spec.ID, werr, secrets)
+		if cfg.Pulls != nil && cfg.Pulls.HasAny(ctx, j.root) {
+			m.syncPullUpdates(j.root, spec.ID, cfg.Pulls)
+		}
 	}
 	type outcome struct {
 		res workflow.Result
@@ -634,6 +637,18 @@ type Pulls interface {
 	HasAny(ctx context.Context, rootID string) bool
 	// Call answers one of the agent's pull request tools.
 	Call(ctx context.Context, rootID, tool, args string) string
+	// SyncUpdates updates open pull requests that have new commits pushed by a later turn.
+	SyncUpdates(ctx context.Context, rootID string) error
+}
+
+// syncPullUpdates updates any open pull requests in the conversation whose branch
+// was pushed to again by this turn.
+func (m *Manager) syncPullUpdates(rootID, turnID string, pulls Pulls) {
+	uctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := pulls.SyncUpdates(uctx, rootID); err != nil {
+		_ = m.st.AddEvent(turnID, "log", "could not update pull request text: "+err.Error())
+	}
 }
 
 // lookUpMemory answers the agent's memory tool: a session id reads that session's

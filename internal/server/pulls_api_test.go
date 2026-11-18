@@ -64,18 +64,18 @@ func TestAPushedBranchIsOfferedAndOpenedAfterTheOwnerSaysYes(t *testing.T) {
 		Pulls     []map[string]any `json:"pulls"`
 	}
 	json.Unmarshal([]byte(body), &got)
-	if len(got.Proposals) != 1 || len(got.Pulls) != 0 || got.Proposals[0]["title"] != "Fix the bug" {
+	if len(got.Proposals) != 1 || len(got.Pulls) != 0 || got.Proposals[0]["title"] != "Fix: The bug" {
 		t.Fatalf("before saying yes: %s", body)
 	}
 	if opened != "" {
 		t.Fatal("nothing may be opened before the owner agrees")
 	}
 
-	code, body = e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "agent/b", "title": "Fix the bug"})
+	code, body = e.do("POST", "/api/sessions/c1/pulls", map[string]any{"serverId": g.ID, "repo": "greg/api", "branch": "agent/b", "title": "Fix: The bug"})
 	if code != 200 || !strings.Contains(body, `"number":9`) || !strings.Contains(body, `"summary":"success"`) {
 		t.Fatalf("POST = %d %s", code, body)
 	}
-	if !strings.Contains(opened, "Fix the bug") {
+	if !strings.Contains(opened, "Fix: The bug") {
 		t.Errorf("the pull request was not opened with the title: %q", opened)
 	}
 

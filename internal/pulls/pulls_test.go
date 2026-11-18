@@ -93,7 +93,7 @@ func TestAPushedBranchIsOfferedThenOpenedOnce(t *testing.T) {
 		t.Fatalf("proposals = %+v, %v", props, err)
 	}
 	p := props[0]
-	if p.Repo != "o/r" || p.Branch != "agent/x" || p.Title != "Fix the login redirect" || !strings.Contains(p.Body, "I fixed the redirect.") {
+	if p.Repo != "o/r" || p.Branch != "agent/x" || p.Title != "Fix: The login redirect" || !strings.Contains(p.Body, "I fixed the redirect.") {
 		t.Errorf("proposal = %+v: the title is the agent's suggestion and the body says what it did", p)
 	}
 
@@ -101,7 +101,7 @@ func TestAPushedBranchIsOfferedThenOpenedOnce(t *testing.T) {
 	if err != nil || v.Number != 4 || v.State != gitprovider.PROpen {
 		t.Fatalf("Open = %+v, %v", v, err)
 	}
-	if !strings.Contains(api.sent["POST /api/v1/repos/o/r/pulls"], "Fix the login redirect") {
+	if !strings.Contains(api.sent["POST /api/v1/repos/o/r/pulls"], "Fix: The login redirect") {
 		t.Errorf("the suggested title was not used: %v", api.sent)
 	}
 	if v.Summary != "failure" || len(v.Checks) != 1 || len(v.Comments) != 1 {
@@ -322,14 +322,14 @@ func TestALaterTurnOffersToUpdateThePullRequestsText(t *testing.T) {
 		t.Fatalf("the branch was pushed again, so its text can be updated: %+v %v", ups, err)
 	}
 	u := ups[0]
-	if u.Number != 4 || u.Title != "Fix the login redirect and add tests" || !strings.Contains(u.Body, "Adds tests for the redirect.") {
+	if u.Number != 4 || u.Title != "Fix: The login redirect and add tests" || !strings.Contains(u.Body, "Adds tests for the redirect.") {
 		t.Errorf("update = %+v", u)
 	}
 	if _, err := svc.SetText(ctx, "s1", u.ServerID, u.Repo, u.Number, u.Title, u.Body); err != nil {
 		t.Fatal(err)
 	}
 	sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]
-	if !strings.Contains(sent, "Fix the login redirect and add tests") || !strings.Contains(sent, "Adds tests for the redirect.") {
+	if !strings.Contains(sent, "Fix: The login redirect and add tests") || !strings.Contains(sent, "Adds tests for the redirect.") {
 		t.Errorf("the server was sent %q", sent)
 	}
 	if ups, _ := svc.Updates(thread); len(ups) != 0 {
@@ -340,5 +340,40 @@ func TestALaterTurnOffersToUpdateThePullRequestsText(t *testing.T) {
 	}
 	if _, err := svc.SetText(ctx, "s1", u.ServerID, u.Repo, 4, " ", "y"); err == nil {
 		t.Error("a title is required")
+	}
+}
+
+func TestSyncUpdatesUpdatesPullRequestOnGitServer(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	second := store.Session{ID: "s2", Task: "Fix the login", Agent: "antigravity", Mode: "hands-off", Prompt: "also tests", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}
+	if err := st.CreateSession(second); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "prtitle", "Fix: The login redirect and add tests")
+	st.AddEvent("s2", "prbody", "Adds tests for the redirect.")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	st.MarkFinished("s2", store.StatusDone, "")
+
+	if err := svc.SyncUpdates(ctx, "s1"); err != nil {
+		t.Fatalf("SyncUpdates failed: %v", err)
+	}
+
+	sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]
+	if !strings.Contains(sent, "Fix: The login redirect and add tests") || !strings.Contains(sent, "Adds tests for the redirect.") {
+		t.Errorf("expected PATCH to update PR text on git server, got: %q", sent)
+	}
+
+	second, _, _ = st.Session("s2")
+	thread = append(thread, second)
+	if ups, _ := svc.Updates(thread); len(ups) != 0 {
+		t.Errorf("after SyncUpdates, nothing more is offered: %+v", ups)
 	}
 }

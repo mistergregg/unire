@@ -267,6 +267,38 @@ func (s *Store) ChildOf(id string) (Session, bool, error) {
 	return x, err == nil, err
 }
 
+const maxThread = 100 // guard against a loop, far more than anyone replies
+
+// Thread returns every session of the conversation that id belongs to, first to last.
+func (s *Store) Thread(id string) ([]Session, error) {
+	x, ok, err := s.Session(id)
+	if err != nil || !ok {
+		return nil, err
+	}
+	for i := 0; i < maxThread && x.ParentID != ""; i++ {
+		p, ok, err := s.Session(x.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break // the earlier turns were deleted
+		}
+		x = p
+	}
+	out := []Session{x}
+	for len(out) < maxThread {
+		c, ok, err := s.ChildOf(x.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		out, x = append(out, c), c
+	}
+	return out, nil
+}
+
 // SetTask renames a session. The branch it already uses keeps its name.
 func (s *Store) SetTask(id, task string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET task = ? WHERE id = ?`, task, id)

@@ -4,7 +4,7 @@
 #   unire name "<title>"      give the conversation a title (read when the session ends)
 #   unire ask "<question>"    ask the owner and wait for the answer
 #   unire wait <number>       keep waiting for the answer to an earlier question
-#   unire pr "<title>"        suggest a pull request title (read when the session ends)
+#   unire pr "<title>"        suggest a pull request title (prefixed with Feature: or Fix:)
 #   unire share <file>        show a file (text or image) to the owner in the chat
 #   unire pr-body <<EOF ... EOF   the pull request description, from standard input
 #   unire pr-status, pr-comments, pr-reply "<text>", memory "<words>", repo "<name>", parent   answered by Unire while the agent runs
@@ -71,7 +71,7 @@ case "$tool" in
     # The description has several lines, so it is read from standard input.
     mkdir -p "$dir" || exit 1
     head -c 8000 > "$dir/pr-body.tmp" && mv "$dir/pr-body.tmp" "$dir/pr-body" \
-      && echo "ok: Unire has your pull request description and will use it if the owner opens a pull request."
+      && echo "ok: Unire has your pull request description and will use it for the pull request."
     ;;
   wait)
     case "$1" in

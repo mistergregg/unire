@@ -19,6 +19,7 @@ import (
 	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
+	"github.com/mistergregg/unire/internal/tools"
 )
 
 // Service finds, opens and follows a conversation's pull requests.
@@ -178,7 +179,7 @@ func titleOf(st *store.Store, thread []store.Session, t store.Session) string {
 			}
 		}
 	}
-	return title
+	return tools.FormatPRTitle(title)
 }
 
 // bodyOf is the description offered for a pull request, written from the turn that pushed
@@ -259,6 +260,8 @@ func (s *Service) Open(ctx context.Context, thread []store.Session, want Proposa
 		if found.base != "" {
 			title += " (into " + found.base + ")"
 		}
+	} else {
+		title = tools.FormatPRTitle(title)
 	}
 	if body == "" {
 		body = bodyOf(s.Store, last[*found], thread[0].Task)
@@ -668,14 +671,48 @@ func (s *Service) Updates(thread []store.Session) ([]Update, error) {
 		if t == nil || !t.FinishedAt.After(rec.DescribedAt) {
 			continue
 		}
-		out = append(out, Update{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: titleOf(s.Store, thread, *t), Body: bodyOf(s.Store, *t, thread[0].Task)})
+		title := titleOf(s.Store, thread, *t)
+		if !hasPRTitle(s.Store, t.ID) && rec.Title != "" {
+			title = tools.FormatPRTitle(rec.Title)
+		}
+		out = append(out, Update{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: title, Body: bodyOf(s.Store, *t, thread[0].Task)})
 	}
 	return out, nil
 }
 
+func hasPRTitle(st *store.Store, sessionID string) bool {
+	if events, err := st.Events(sessionID, 0, 5000); err == nil {
+		for _, e := range events {
+			if e.Kind == "prtitle" && strings.TrimSpace(e.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// SyncUpdates updates open pull requests that have new commits pushed by a later turn,
+// changing their title and description on the git server to match what has changed.
+func (s *Service) SyncUpdates(ctx context.Context, rootID string) error {
+	thread, err := s.Store.Thread(rootID)
+	if err != nil || len(thread) == 0 {
+		return err
+	}
+	ups, err := s.Updates(thread)
+	if err != nil || len(ups) == 0 {
+		return err
+	}
+	for _, u := range ups {
+		if _, err := s.SetText(ctx, rootID, u.ServerID, u.Repo, u.Number, u.Title, u.Body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetText changes the title and description of one of the conversation's pull requests.
 func (s *Service) SetText(ctx context.Context, rootID, serverID, repo string, number int, title, body string) (View, error) {
-	title = strings.TrimSpace(title)
+	title = tools.FormatPRTitle(strings.TrimSpace(title))
 	if title == "" {
 		return View{}, errors.New("a pull request needs a title")
 	}

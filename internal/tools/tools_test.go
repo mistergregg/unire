@@ -28,7 +28,7 @@ func TestPromptListsOnlyTheToolsGiven(t *testing.T) {
 	if !strings.Contains(p, `unire name "<title>"`) {
 		t.Errorf("prompt does not describe the name tool: %q", p)
 	}
-	if !strings.Contains(p, "unire-shot") || !strings.Contains(p, "unire-lsp") {
+	if !strings.Contains(p, "unire-shot") || !strings.Contains(p, "unire-lsp") || !strings.Contains(p, "unire-diff") {
 		t.Errorf("prompt does not mention the checking tools: %q", p)
 	}
 }
@@ -37,5 +37,20 @@ func TestRequestsSkipsBlankLines(t *testing.T) {
 	got := Requests("one\n\n  two  \n")
 	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
 		t.Errorf("Requests = %q", got)
+	}
+}
+
+func TestShareIsOfferedInEveryConversation(t *testing.T) {
+	for name, set := range map[string][]Tool{"new": ForNewConversation(), "reply": ForReply(), "reply with PR": ForReplyWithPR()} {
+		found := false
+		for _, tl := range set {
+			found = found || tl.Name == Share.Name
+		}
+		if !found {
+			t.Errorf("%s: the share tool is missing", name)
+		}
+	}
+	if !strings.Contains(Prompt(ForReply()), "unire share <file>") {
+		t.Error("the prompt does not describe share")
 	}
 }

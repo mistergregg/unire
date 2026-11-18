@@ -1035,3 +1035,33 @@ func TestAPushRefusedForPermissionSaysWhatToDo(t *testing.T) {
 		t.Errorf("a network failure is not a token problem: %v", err)
 	}
 }
+
+func TestFilesTheAgentSharesComeBackAsCards(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{
+		tools.Dir + "/share/200.s": "shot.png\nimage\naGVsbG8=",
+		tools.Dir + "/share/100.s": "plan.md\ntext\n# Plan\n\n- one\n",
+		tools.Dir + "/share/300.s": "evil\nscript\nx",
+		tools.Dir + "/share/400.s": "../../etc/passwd\ntext\nhi",
+		tools.Dir + "/share/500.s": "bad.png\nimage\nnot base64!",
+	}}
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, s := range res.Shared {
+		names = append(names, s.Name)
+	}
+	if got := strings.Join(names, ","); got != "plan.md,shot.png,passwd" {
+		t.Errorf("shared = %q", got)
+	}
+	if len(res.Shared) > 0 && res.Shared[0].Event() != "plan.md\ntext\n# Plan\n\n- one\n" {
+		t.Errorf("event = %q", res.Shared[0].Event())
+	}
+	o.Tools = nil
+	if res, _ := run(t, sb, baseSpec(), o); len(res.Shared) != 0 {
+		t.Errorf("a session without the tool ignores it: %v", res.Shared)
+	}
+}

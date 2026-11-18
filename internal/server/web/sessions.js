@@ -106,6 +106,7 @@ async function openNew(prefill) {
     api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);
   serverList = servers; workspaceList = workspaces; selected = []; lastResults = []; networkInfo = net;
   $("new-form").reset();
+  $("n-prompt").style.height = "";
   const def = net.modes.find((m) => m.id === net.mode);
   $("n-network").replaceChildren(
     el("option", { value: "" }, "Default: " + (def ? def.label : net.mode)),
@@ -245,6 +246,14 @@ function suggestSoon() {
   suggestTimer = setTimeout(suggestRepos, 600);
 }
 $("n-prompt").addEventListener("input", suggestSoon);
+
+// Grow the prompt box with its text, up to a limit; it scrolls after that.
+function autoGrowPrompt() {
+  const box = $("n-prompt");
+  box.style.height = "auto";
+  box.style.height = Math.min(Math.max(box.scrollHeight, 132), 360) + "px";
+}
+$("n-prompt").addEventListener("input", autoGrowPrompt);
 
 async function suggestRepos() {
   const box = $("n-suggest");

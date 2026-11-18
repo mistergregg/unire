@@ -250,6 +250,7 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
   color: var(--accent-text); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 16px 44px -14px var(--glow);
   animation: float 5s ease-in-out infinite;
 }
+.glyph svg { width: 28px; height: 28px; }
 .empty-hero h2 { font-size: 22px; margin: 0 0 6px; }
 
 /* ---- motion ---- */

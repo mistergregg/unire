@@ -78,6 +78,7 @@ type Result struct {
 	Name          string            // a title the agent asked for with the name tool; empty if none
 	PRTitle       string            // a pull request title the agent suggested with the pr tool; empty if none
 	PRBody        string            // a pull request description the agent wrote with the pr-body tool; empty if none
+	Shared        []Shared          // files the agent put in the chat with the share tool
 }
 
 const workspace = "/workspace"
@@ -271,6 +272,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	requestedName := tools.CleanName(w.requestedTool(ctx, tools.Name.Name))
 	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
 	prBody := w.requestedBody(ctx)
+	shared := w.requestedShares(ctx)
 
 	w.mu.Lock()
 	spec.Repos = append(spec.Repos, w.added...)
@@ -300,7 +302,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// The work is done and pushed. Tell the caller now, so the owner can carry on
 	// while the memory step below (which can take a while) finishes in the background.
 	if opt.OnWorkDone != nil {
-		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle, PRBody: prBody}, workErr)
+		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle, PRBody: prBody, Shared: shared}, workErr)
 	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
@@ -308,6 +310,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	res.Name = requestedName
 	res.PRTitle = prTitle
 	res.PRBody = prBody
+	res.Shared = shared
 	return res, workErr
 }
 

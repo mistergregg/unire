@@ -129,3 +129,14 @@ main.wide { max-width: 1280px; }
   .workspace:not(.chat-open) .pane { display: none; }
   .back { display: inline-block; }
 }
+
+/* files the agent shared: a card you expand to read, copy or download */
+.shares { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.shares:empty { display: none; }
+.share-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.share-card > summary { cursor: pointer; padding: 8px 12px; display: flex; gap: 8px; align-items: baseline; }
+.share-name { font-weight: 600; word-break: break-all; }
+.share-actions { display: flex; justify-content: flex-end; padding: 0 12px 6px; }
+.share-body { padding: 4px 12px 12px; max-height: 70vh; overflow: auto; }
+.share-body pre.log { margin: 0; white-space: pre-wrap; }
+.share-img { max-width: 100%; height: auto; border-radius: 6px; }

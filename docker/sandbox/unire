@@ -5,6 +5,7 @@
 #   unire ask "<question>"    ask the owner and wait for the answer
 #   unire wait <number>       keep waiting for the answer to an earlier question
 #   unire pr "<title>"        suggest a pull request title (read when the session ends)
+#   unire share <file>        show a file (text or image) to the owner in the chat
 #   unire pr-body <<EOF ... EOF   the pull request description, from standard input
 #   unire pr-status, pr-comments, pr-reply "<text>", memory "<words>", repo "<name>", parent   answered by Unire while the agent runs
 dir=/workspace/.unire-tools
@@ -40,6 +41,27 @@ case "$tool" in
     mkdir -p "$dir/ask" || exit 1
     printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     wait_for "$id"
+    ;;
+  share)
+    # Copy the file now (the agent may change or delete it later). Layout: name, kind, content.
+    f=$1
+    [ -f "$f" ] || { echo "unire share: no such file: $f" >&2; exit 2; }
+    name=$(basename -- "$f" | tr -d '\r\n')
+    case "$(printf '%s' "$name" | tr 'A-Z' 'a-z')" in
+      *.png|*.jpg|*.jpeg|*.gif|*.webp) kind=image; max=1048576 ;;
+      *) kind=text; max=204800 ;;
+    esac
+    size=$(wc -c < "$f")
+    [ "$size" -le "$max" ] || { echo "unire share: $name is $size bytes; the limit is $max for this kind of file" >&2; exit 2; }
+    if [ "$kind" = text ] && [ "$(head -c 8192 "$f" | tr -d '\000' | wc -c)" -ne "$(head -c 8192 "$f" | wc -c)" ]; then
+      echo "unire share: $name looks like a binary file; only text and png/jpg/gif/webp images can be shared" >&2; exit 2
+    fi
+    mkdir -p "$dir/share" || exit 1
+    [ "$(ls -1 "$dir/share" | grep -c '\.s$')" -lt 10 ] || { echo "unire share: at most 10 files per turn" >&2; exit 2; }
+    id=$(date +%s%N)
+    { printf '%s\n%s\n' "$name" "$kind"; if [ "$kind" = image ]; then base64 < "$f" | tr -d '\n'; else cat "$f"; fi; } > "$dir/share/$id.tmp" \
+      && mv "$dir/share/$id.tmp" "$dir/share/$id.s" \
+      && echo "ok: $name will be shown to the owner in the chat when your turn ends."
     ;;
   pr-body)
     # The description has several lines, so it is read from standard input.

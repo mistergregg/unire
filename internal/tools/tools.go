@@ -32,7 +32,7 @@ var Name = Tool{
 // ForNewConversation is the tool set for the first message of a conversation.
 // Other situations get their own sets (a reply keeps its conversation's
 // name, so it gets none of these).
-func ForNewConversation() []Tool { return []Tool{Name, Ask, PR, PRBody, Branches} }
+func ForNewConversation() []Tool { return []Tool{Name, Ask, PR, PRBody, Share, Branches} }
 
 // Prompt is the text added to the agent's prompt to describe a tool set. It is
 // empty for no tools.
@@ -54,6 +54,7 @@ func Prompt(set []Tool) string {
 // checking work (see docker/sandbox/Dockerfile). They are plain commands, not
 // requests to Unire.
 const checkingTools = "# Checking your work\n\nThe sandbox has these installed. Use them instead of guessing.\n\n" +
+	"- unire-diff [path] - review your changes before calling pr: lists changed and untracked files, and checks for conflict markers, secret-like text, scratch files and gofmt. Exits 1 if it finds a conflict marker or secret.\n" +
 	"- unire-shot <url> [out.png] [WIDTHxHEIGHT] - screenshot a page you are serving on localhost (only localhost and file:/// pages work), then look at the image. Use it after changing HTML or CSS.\n" +
 	"- unire-lsp refs|def <file>:<line> <name> and unire-lsp symbols <file> - find every use of a symbol, where it is defined, or what a file declares (Go, TypeScript and JavaScript). Better than grep for renames and impact checks.\n" +
 	"- go (with gopls), golangci-lint, gosec, semgrep - build, lint and scan. semgrep cannot download rule sets here, so give it rules in a file (--config rules.yml).\n" +
@@ -96,7 +97,7 @@ var Ask = Tool{
 }
 
 // ForReply is the tool set for a reply: the conversation already has its name.
-func ForReply() []Tool { return []Tool{Ask, PR, PRBody, Branches} }
+func ForReply() []Tool { return []Tool{Ask, PR, PRBody, Share, Branches} }
 
 // PR lets the agent suggest a title for a pull request. It cannot open one: when
 // it has pushed changes, Unire asks the owner whether to open a pull request, and
@@ -145,7 +146,7 @@ func IsCall(name string) bool {
 
 // ForReplyWithPR is the tool set for a reply in a conversation that has an open
 // pull request: the agent can read its checks and comments and answer.
-func ForReplyWithPR() []Tool { return append([]Tool{Ask, Branches}, PRTools()...) }
+func ForReplyWithPR() []Tool { return append([]Tool{Ask, Share, Branches}, PRTools()...) }
 
 // PRBody lets the agent write the description of a pull request. It is piped in,
 // because it has several lines.
@@ -211,3 +212,26 @@ var PRLogs = Tool{
 	Usage: `unire pr-logs - show why the failing checks of the pull request failed: which checks, and the error lines and the end of their logs. ` +
 		`Use it first when checks fail; do not try to open the job pages yourself, you cannot sign in to them.`,
 }
+
+// Share puts a file into the chat so the owner can read it there: a plan, a
+// report, a screenshot. The owner cannot open files inside the sandbox.
+var Share = Tool{
+	Name: "share",
+	Usage: `unire share <file> - show a file to the owner in the chat, as a card they can expand, copy and download. ` +
+		`Use it for what they should read but that is not part of the change: a plan, a report, notes, a screenshot (png, jpg, gif, webp). ` +
+		`Text files up to 200 KB (markdown reads best) and images up to 1 MB; at most 10 per turn. Put the file outside the repo, for example in /tmp, so it is not committed. ` +
+		`The owner cannot open files in the sandbox, so share anything you want them to read.`,
+}
+
+// Limits for a shared file, applied by the sandbox command and again by Unire.
+const (
+	ShareMaxText  = 200 * 1024
+	ShareMaxImage = 1 << 20
+	ShareMaxFiles = 10
+)
+
+// ShareKinds are the kinds of file a share can hold.
+const (
+	ShareText  = "text"
+	ShareImage = "image"
+)

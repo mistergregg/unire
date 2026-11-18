@@ -1,0 +1,82 @@
+#!/bin/sh
+# unire-diff: review your changes before you call `unire pr`.
+#   unire-diff [path]
+# Shows what changed against the base branch (committed, staged, unstaged and
+# untracked), then checks the added lines for conflict markers and secrets, and
+# the changed files for scratch files and Go formatting.
+# Exit 1 if a conflict marker or secret-like text was added, else 0.
+dir=${1:-.}
+cd "$dir" 2>/dev/null || { echo "unire-diff: no such directory: $dir" >&2; exit 2; }
+git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "unire-diff: not a git repository" >&2; exit 2; }
+cd "$(git rev-parse --show-toplevel)" || exit 2
+
+base=
+for ref in origin/main origin/master main master; do
+  if git rev-parse --verify -q "$ref" >/dev/null; then
+    base=$(git merge-base HEAD "$ref" 2>/dev/null) && [ -n "$base" ] && break
+    base=
+  fi
+done
+if [ -n "$base" ]; then label="merge-base with $ref ($(echo "$base" | cut -c1-8))"; else base=HEAD; label="HEAD (no base branch found)"; fi
+
+tmp=$(mktemp -d) || exit 2
+trap 'rm -rf "$tmp"' EXIT
+git ls-files --others --exclude-standard > "$tmp/untracked"
+git diff --name-only "$base" > "$tmp/changed"
+cat "$tmp/untracked" >> "$tmp/changed"
+sort -u "$tmp/changed" -o "$tmp/changed"
+
+# every added line, with its file name: tracked changes plus whole untracked files
+git diff -U0 --no-color "$base" > "$tmp/patch"
+while IFS= read -r f; do
+  [ -f "$f" ] && git diff --no-index --no-color -U0 /dev/null "$f" >> "$tmp/patch" 2>/dev/null
+done < "$tmp/untracked"
+awk '
+  /^\+\+\+ / { f = $2; sub(/^b\//, "", f); next }
+  /^\+/ { print f "\t" substr($0, 2) }
+' "$tmp/patch" > "$tmp/added"
+
+fail=0; warn=0
+echo "Comparing with $label"
+echo
+echo "== Changes =="
+if [ -s "$tmp/changed" ]; then
+  git diff --stat --no-color "$base" | tail -n 40
+  if [ -s "$tmp/untracked" ]; then
+    echo "Untracked (not yet in git; add them if they belong in the change):"
+    sed 's/^/  ? /' "$tmp/untracked"
+    warn=1
+  fi
+else
+  echo "No changes."
+fi
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "Uncommitted changes (commit them, or they are not on your branch):"
+  git status --porcelain --untracked-files=no | sed 's/^/  /'
+  warn=1
+fi
+
+echo
+echo "== Checks =="
+hits=$(grep -nE '^[^	]*	(<<<<<<< |>>>>>>> |<<<<<<<$|>>>>>>>$)' "$tmp/added" | cut -d: -f2- | cut -c1-120)
+if [ -n "$hits" ]; then echo "FAIL conflict markers added:"; echo "$hits" | sed 's/^/  /'; fail=1; else echo "ok   no conflict markers"; fi
+
+hits=$(grep -E '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' "$tmp/added" | cut -f1 | sort -u)
+if [ -n "$hits" ]; then echo "FAIL secret-like text added in (values not shown):"; echo "$hits" | sed 's/^/  /'; fail=1; else echo "ok   no secret-like text"; fi
+
+hits=$(grep -E '(\.orig|\.rej|\.swp|\.bak|~|\.DS_Store)$' "$tmp/changed")
+if [ -n "$hits" ]; then echo "WARN scratch files in the change:"; echo "$hits" | sed 's/^/  /'; warn=1; else echo "ok   no scratch files"; fi
+
+if command -v gofmt >/dev/null 2>&1; then
+  gofiles=$(grep '\.go$' "$tmp/changed" | while IFS= read -r f; do [ -f "$f" ] && echo "$f"; done)
+  if [ -n "$gofiles" ]; then
+    # shellcheck disable=SC2086
+    hits=$(echo "$gofiles" | xargs gofmt -l 2>&1)
+    if [ -n "$hits" ]; then echo "WARN gofmt -l lists (run gofmt -w):"; echo "$hits" | sed 's/^/  /'; warn=1; else echo "ok   gofmt"; fi
+  fi
+fi
+
+echo
+if [ $fail -ne 0 ]; then echo "FAIL: fix the items above before unire pr"; exit 1; fi
+if [ $warn -ne 0 ]; then echo "WARN: check the items above before unire pr"; exit 0; fi
+echo "PASS: ready for unire pr"

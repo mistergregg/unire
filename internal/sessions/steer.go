@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/mistergregg/unire/internal/agent"
@@ -46,7 +47,7 @@ func (m *Manager) finishLive(sessionID string, ch chan agent.Steer) {
 // Steer gives a running agent a message. now=true interrupts it and carries on
 // from the message; otherwise the agent reads it at its next step. It returns
 // an id the message's state is reported under.
-func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
+func (m *Manager) Steer(sessionID, text string, images []agent.Image, now bool) (string, error) {
 	m.mu.Lock()
 	ch, ok := m.live[sessionID]
 	m.mu.Unlock()
@@ -67,11 +68,12 @@ func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
 		mode = "now"
 	}
 	select {
-	case ch <- agent.Steer{ID: id, Text: text, Now: now}:
+	case ch <- agent.Steer{ID: id, Text: text, Images: images, Now: now}:
 	default:
 		return "", errors.New("too many messages are waiting for the agent")
 	}
-	_ = m.st.AddEvent(sessionID, "steer", id+"\n"+mode+"\n"+text)
+	encoded, _ := json.Marshal(images)
+	_ = m.st.AddEvent(sessionID, "steer", id+"\n"+mode+"\n"+text+"\n"+string(encoded))
 	_ = m.st.AddEvent(sessionID, "steerstate", id+"\n"+agent.MsgQueued)
 	return id, nil
 }

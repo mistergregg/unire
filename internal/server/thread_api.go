@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -333,17 +335,25 @@ func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Text string `json:"text"`
+		Images []agent.Image `json:"images"`
 		Now  bool   `json:"now"` // interrupt and carry on from the message
 	}
-	if !readJSON(w, r, &req) {
-		return
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { writeErr(w, http.StatusBadRequest, "invalid request body"); return }
 	req.Text = strings.TrimSpace(req.Text)
-	if req.Text == "" || len(req.Text) > 20000 {
-		writeErr(w, http.StatusBadRequest, "write a message (20,000 characters max)")
+	if len(req.Images) > 0 && x.Agent != "claude" { writeErr(w, http.StatusBadRequest, "image steering is currently supported for Claude sessions only"); return }
+	if (req.Text == "" && len(req.Images) == 0) || len(req.Text) > 20000 || len(req.Images) > 4 {
+		writeErr(w, http.StatusBadRequest, "write a message and attach up to 4 images")
 		return
 	}
-	id, err := s.sessions.Steer(x.ID, req.Text, req.Now)
+	total := 0
+	for _, img := range req.Images {
+		if img.MIME != "image/png" && img.MIME != "image/jpeg" && img.MIME != "image/gif" && img.MIME != "image/webp" { writeErr(w, http.StatusBadRequest, "images must be PNG, JPEG, GIF, or WebP"); return }
+		if img.Name == "" || strings.ContainsAny(img.Name, "\\/\r\n") { writeErr(w, http.StatusBadRequest, "invalid image name"); return }
+		b, e := base64.StdEncoding.DecodeString(img.Data); if e != nil { writeErr(w, http.StatusBadRequest, "invalid image data"); return }; if http.DetectContentType(b) != img.MIME { writeErr(w, http.StatusBadRequest, "image content does not match its type"); return }; total += len(b)
+	}
+	if total > 5<<20 { writeErr(w, http.StatusRequestEntityTooLarge, "images exceed 5 MB total"); return }
+	id, err := s.sessions.Steer(x.ID, req.Text, req.Images, req.Now)
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return

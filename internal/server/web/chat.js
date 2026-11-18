@@ -223,7 +223,10 @@ const STEER_STATES = {
 
 function steerCard(t, e) {
   const [id, rest] = splitEvent(e.text);
-  const [mode, text] = splitEvent(rest);
+  const [mode, payload] = splitEvent(rest);
+  let text = payload, images = [];
+  const extra = payload.indexOf("\n[");
+  if (extra >= 0) { text = payload.slice(0, extra); try { images = JSON.parse(payload.slice(extra + 1)); } catch (_) {} }
   if (t.steers[id]) return;
   const status = el("span", { class: "steer-state" }, STEER_STATES.queued);
   const note = mode === "now" ? "sent now: it stopped the agent" : "sent";
@@ -237,7 +240,7 @@ function steerCard(t, e) {
     now.hidden = true;
   }));
   const card = el("div", { class: "steer" },
-    el("div", { class: "bubble user" }, el("div", { class: "said" }, text)),
+    el("div", { class: "bubble user" }, el("div", { class: "said" }, text), ...images.map((im) => el("img", { src: "data:" + im.mime + ";base64," + im.data, alt: im.name, class: "attached-image" }))),
     el("div", { class: "time" }, note + " · ", status, " ", now));
   now.hidden = mode === "now";
   entry.card = card;
@@ -484,8 +487,8 @@ $("reply-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("reply-text").value.trim();
   const tail = thread[thread.length - 1];
-  if (!text || !tail) return;
-  if (!isFinished(tail.s.status)) { if (tail.s.canSteer) steer(text, false); return; }
+  if ((!text && !$("reply-images").files.length) || !tail) return;
+  if (!isFinished(tail.s.status)) { if (tail.s.canSteer) sendSteer(text, false); return; }
   sendReply(text);
 });
 
@@ -541,19 +544,27 @@ async function sendReply(text) {
 // Say something to the agent while it works. now=true stops what it is doing and
 // carries on from the message. The message appears in the conversation when the
 // server logs it (see steerCard).
-function steer(text, now) {
+async function readImages() {
+  const files = [...$("reply-images").files];
+  if (files.length > 4 || files.some(f => f.size > 5 * 1024 * 1024) || files.reduce((n,f)=>n+f.size,0) > 5*1024*1024) throw new Error("Attach up to 4 images, 5 MB total");
+  return Promise.all(files.map(f => new Promise((resolve,reject) => { const r=new FileReader(); r.onload=()=>resolve({name:f.name,mime:f.type,data:String(r.result).split(",")[1]}); r.onerror=()=>reject(new Error("Could not read image")); r.readAsDataURL(f); })));
+}
+function steer(text, now) { sendSteer(text, now); }
+async function sendSteer(text, now) {
   const tail = thread[thread.length - 1];
   const btn = now ? $("steer-now") : $("reply-send");
   const tempId = "pending-steer-" + Date.now();
-  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text });
+  const images = await readImages();
+  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text + (images.length ? "\n[" + JSON.stringify(images) + "]" : "") });
   $("reply-text").value = "";
+  $("reply-images").value = "";
   autoGrow();
   window.scrollTo(0, document.body.scrollHeight);
 
   const token = pollToken;
   guarded(btn, async () => {
     try {
-      const res = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now });
+      const res = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, images, now });
       if (res && res.id) {
         const pending = tail.steers[tempId];
         if (pending) {

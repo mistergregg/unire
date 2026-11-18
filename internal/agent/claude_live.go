@@ -48,11 +48,11 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func (d *claudeLive) write(text string, now bool, ownerID string) error {
+func (d *claudeLive) write(s Steer, now bool, ownerID string) error {
 	id := newUUID()
 	m := map[string]any{
 		"type":               "user",
-		"message":            map[string]any{"role": "user", "content": text},
+		"message":            map[string]any{"role": "user", "content": claudeContent(s)},
 		"parent_tool_use_id": nil,
 		"uuid":               id,
 	}
@@ -73,12 +73,23 @@ func (d *claudeLive) write(text string, now bool, ownerID string) error {
 	return err
 }
 
-func (d *claudeLive) Begin(in io.Writer, prompt string) error {
-	d.in = in
-	return d.write(prompt, false, "")
+func claudeContent(s Steer) []any {
+	out := []any{}
+	if s.Text != "" {
+		out = append(out, map[string]any{"type": "text", "text": s.Text})
+	}
+	for _, img := range s.Images {
+		out = append(out, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": img.MIME, "data": img.Data}})
+	}
+	return out
 }
 
-func (d *claudeLive) Send(s Steer) error { return d.write(s.Text, s.Now, s.ID) }
+func (d *claudeLive) Begin(in io.Writer, prompt string) error {
+	d.in = in
+	return d.write(Steer{Text:prompt}, false, "")
+}
+
+func (d *claudeLive) Send(s Steer) error { return d.write(s, s.Now, s.ID) }
 
 func (d *claudeLive) Line(line string) Event {
 	m, ok := parseObject(line)

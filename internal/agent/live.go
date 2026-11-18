@@ -22,10 +22,20 @@ import (
 type Steer struct {
 	ID   string // an identifier for showing the message's state
 	Text string
+	Images []Image // bounded, validated image attachments
 	Now  bool // interrupt, then carry on from this message (and anything waiting)
 	// Promote: the message with this ID was already sent and is waiting; make the
 	// agent take it now. Text is not used.
 	Promote bool
+}
+
+// Image is an image attachment encoded as base64 for adapter protocols.
+type Image struct { Name string `json:"name"`; MIME string `json:"mime"`; Data string `json:"data"` }
+
+func MessageText(s Steer) string {
+	text := s.Text
+	for _, img := range s.Images { text += "\n\n[Attached image: " + img.Name + "]" }
+	return text
 }
 
 // Message states, shown next to the message in the conversation.

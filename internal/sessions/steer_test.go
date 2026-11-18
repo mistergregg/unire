@@ -14,7 +14,7 @@ func TestAMessageToARunningAgentIsLoggedAndDelivered(t *testing.T) {
 	}
 	waitRunning(t, st, x.ID)
 
-	id, err := m.Steer(x.ID, "also add tests", false)
+	id, err := m.Steer(x.ID, "also add tests", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestSendNowIsLoggedAsNow(t *testing.T) {
 	m, st := setup(t, sb)
 	x, _ := m.Start(req(""))
 	waitRunning(t, st, x.ID)
-	id, err := m.Steer(x.ID, "stop and do X", true)
+	id, err := m.Steer(x.ID, "stop and do X", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,12 +52,12 @@ func TestSendNowIsLoggedAsNow(t *testing.T) {
 
 func TestSteeringNeedsARunningSession(t *testing.T) {
 	m, st := setup(t, &fakeSandbox{})
-	if _, err := m.Steer("nope", "hi", false); err == nil || !strings.Contains(err.Error(), "no such session") {
+	if _, err := m.Steer("nope", "hi", nil, false); err == nil || !strings.Contains(err.Error(), "no such session") {
 		t.Errorf("unknown session: %v", err)
 	}
 	x, _ := m.Start(req(""))
 	m.Wait()
-	if _, err := m.Steer(x.ID, "too late", false); err == nil || !strings.Contains(err.Error(), "finished") {
+	if _, err := m.Steer(x.ID, "too late", nil, false); err == nil || !strings.Contains(err.Error(), "finished") {
 		t.Errorf("a finished session should say so: %v", err)
 	}
 	_ = st
@@ -71,7 +71,7 @@ func TestMessagesTheAgentNeverReadAreMarkedFailed(t *testing.T) {
 	waitRunning(t, st, x.ID)
 	var ids []string
 	for i := 0; i < 3; i++ {
-		id, err := m.Steer(x.ID, "message", false)
+		id, err := m.Steer(x.ID, "message", nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +96,7 @@ func TestAWaitingMessageCanBePromoted(t *testing.T) {
 	m, st := setup(t, sb)
 	x, _ := m.Start(req(""))
 	waitRunning(t, st, x.ID)
-	id, err := m.Steer(x.ID, "do this sooner", false)
+	id, err := m.Steer(x.ID, "do this sooner", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

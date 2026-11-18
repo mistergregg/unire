@@ -1083,17 +1083,32 @@ func (f *fakeSandbox) shouldPanic(where string) bool {
 }
 
 type fakePulls struct {
+	mu         sync.Mutex
 	hasAny     bool
 	syncCalled bool
 	syncRootID string
 }
 
-func (f *fakePulls) HasAny(ctx context.Context, rootID string) bool             { return f.hasAny }
+func (f *fakePulls) HasAny(ctx context.Context, rootID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hasAny
+}
+
 func (f *fakePulls) Call(ctx context.Context, rootID, tool, args string) string { return "" }
+
 func (f *fakePulls) SyncUpdates(ctx context.Context, rootID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.syncCalled = true
 	f.syncRootID = rootID
 	return nil
+}
+
+func (f *fakePulls) called() (bool, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.syncCalled, f.syncRootID
 }
 
 func TestSyncPullUpdatesCalledWhenConversationHasPullRequest(t *testing.T) {
@@ -1119,12 +1134,13 @@ func TestSyncPullUpdatesCalledWhenConversationHasPullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFinished(t, st, x.ID)
+	m.Wait()
 
-	if !pulls.syncCalled {
+	called, rootID := pulls.called()
+	if !called {
 		t.Error("expected SyncUpdates to be called when conversation has open pull requests")
 	}
-	if pulls.syncRootID != x.ID {
-		t.Errorf("expected rootID %q, got %q", x.ID, pulls.syncRootID)
+	if rootID != x.ID {
+		t.Errorf("expected rootID %q, got %q", x.ID, rootID)
 	}
 }

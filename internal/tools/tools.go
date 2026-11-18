@@ -220,7 +220,7 @@ var Share = Tool{
 	Usage: `unire share <file> - show a file to the owner in the chat, as a card they can expand, copy and download. ` +
 		`Use it for what they should read but that is not part of the change: a plan, a report, notes, a screenshot (png, jpg, gif, webp). ` +
 		`Text files up to 200 KB (markdown reads best) and images up to 1 MB; at most 10 per turn. Put the file outside the repo, for example in /tmp, so it is not committed. ` +
-		`The owner cannot open files in the sandbox, so share anything you want them to read.`,
+		`The owner cannot open files in the sandbox, so share anything you want them to read. Do not output raw sandbox file:/// links; always share files with this command instead.`,
 }
 
 // Limits for a shared file, applied by the sandbox command and again by Unire.

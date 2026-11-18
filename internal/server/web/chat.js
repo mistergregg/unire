@@ -21,9 +21,28 @@ function inlineNodes(text) {
     else if (m[2]) out.push(el("strong", {}, ...inlineNodes(t.slice(2, -2))));
     else {
       const [, label, url] = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(t);
-      out.push(/^https?:\/\//i.test(url)
-        ? el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)
-        : el("code", {}, label.replace(/^`|`$/g, "")));
+      if (/^https?:\/\//i.test(url)) {
+        out.push(el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label));
+      } else if (/^file:\/\//i.test(url)) {
+        const cleanPath = url.replace(/^file:\/\//i, "").split(/[?#]/)[0];
+        const base = cleanPath.split("/").pop();
+        const a = el("a", { href: "#", class: "file-link", title: url }, label);
+        a.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          const cards = document.querySelectorAll(".share-card");
+          for (const c of cards) {
+            const nameEl = c.querySelector(".share-name");
+            if (nameEl && (nameEl.textContent === base || c.dataset.filename === base)) {
+              c.open = true;
+              c.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              return;
+            }
+          }
+        });
+        out.push(a);
+      } else {
+        out.push(el("code", {}, label.replace(/^`|`$/g, "")));
+      }
     }
     last = m.index + t.length;
   }
@@ -636,5 +655,6 @@ function shareCard(t, e) {
     el("summary", {}, el("span", { class: "share-name" }, name), el("span", { class: "muted" }, size)),
     el("div", { class: "share-actions" }, actions),
     el("div", { class: "share-body" }, body));
+  card.dataset.filename = name;
   t.shareBox.append(card);
 }

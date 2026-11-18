@@ -67,6 +67,38 @@ if [ -n "$hits" ]; then echo "FAIL secret-like text added in (values not shown):
 hits=$(grep -E '(\.orig|\.rej|\.swp|\.bak|~|\.DS_Store)$' "$tmp/changed")
 if [ -n "$hits" ]; then echo "WARN scratch files in the change:"; echo "$hits" | sed 's/^/  /'; warn=1; else echo "ok   no scratch files"; fi
 
+hits=$(grep -E '^[^	]*\.md	.*file:///' "$tmp/added" | cut -f1 | sort -u)
+if [ -n "$hits" ]; then echo "WARN sandbox file:/// URLs added to markdown files (use unire share instead):"; echo "$hits" | sed 's/^/  /'; warn=1; else echo "ok   no file:/// URLs in markdown"; fi
+
+brain_dir=
+if [ -n "$ANTIGRAVITY_CONVERSATION_ID" ] && [ -d "$HOME/.gemini/antigravity-cli/brain/$ANTIGRAVITY_CONVERSATION_ID" ]; then
+  brain_dir="$HOME/.gemini/antigravity-cli/brain/$ANTIGRAVITY_CONVERSATION_ID"
+fi
+if [ -n "$brain_dir" ]; then
+  unshared=$(find "$brain_dir" -maxdepth 1 -type f -name "*.md" 2>/dev/null)
+  if [ -n "$unshared" ]; then
+    need_warn=0
+    for uf in $unshared; do
+      ubase=$(basename "$uf")
+      found=0
+      for sf in /workspace/.unire-tools/share/*.s; do
+        if [ -f "$sf" ] && [ "$(head -n 1 "$sf" 2>/dev/null)" = "$ubase" ]; then
+          found=1
+          break
+        fi
+      done
+      if [ "$found" -eq 0 ]; then
+        if [ "$need_warn" -eq 0 ]; then
+          echo "WARN unshared artifacts in $brain_dir (run unire share <file>):"
+          need_warn=1
+          warn=1
+        fi
+        echo "  $uf"
+      fi
+    done
+  fi
+fi
+
 if command -v gofmt >/dev/null 2>&1; then
   gofiles=$(grep '\.go$' "$tmp/changed" | while IFS= read -r f; do [ -f "$f" ] && echo "$f"; done)
   if [ -n "$gofiles" ]; then

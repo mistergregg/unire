@@ -1065,3 +1065,55 @@ func TestFilesTheAgentSharesComeBackAsCards(t *testing.T) {
 		t.Errorf("a session without the tool ignores it: %v", res.Shared)
 	}
 }
+
+func TestAutoShareFileLinksInAgentOutput(t *testing.T) {
+	sb := &fakeSandbox{
+		agentOut: "Please check [plan.md](file:///workspace/docs/plan.md#L1-L20) and [shot.png](file:///tmp/shot.png) " +
+			"as well as duplicate [plan.md](file:///workspace/docs/plan.md?v=2) " +
+			"and forbidden [shadow](file:///etc/shadow) and missing [missing.txt](file:///tmp/missing.txt).",
+		outFiles: map[string]string{
+			"/workspace/docs/plan.md": "# Auto Shared Plan\n",
+			"/tmp/shot.png":           "raw-image-data",
+			"/etc/shadow":             "secret",
+		},
+	}
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Shared) != 2 {
+		t.Fatalf("expected 2 shared files, got %d: %+v", len(res.Shared), res.Shared)
+	}
+	if res.Shared[0].Name != "plan.md" || res.Shared[0].Kind != tools.ShareText || res.Shared[0].Content != "# Auto Shared Plan\n" {
+		t.Errorf("unexpected shared[0]: %+v", res.Shared[0])
+	}
+	if res.Shared[1].Name != "shot.png" || res.Shared[1].Kind != tools.ShareImage || res.Shared[1].Content != "cmF3LWltYWdlLWRhdGE=" {
+		t.Errorf("unexpected shared[1]: %+v", res.Shared[1])
+	}
+
+	// Verify duplicate prevention with explicit share
+	sbDup := &fakeSandbox{
+		agentOut: "See [plan.md](file:///workspace/docs/plan.md)",
+		outFiles: map[string]string{
+			tools.Dir + "/share/100.s": "plan.md\ntext\n# Explicit Plan\n",
+			"/workspace/docs/plan.md":  "# Auto Plan\n",
+		},
+	}
+	resDup, err := run(t, sbDup, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resDup.Shared) != 1 || resDup.Shared[0].Content != "# Explicit Plan\n" {
+		t.Errorf("explicit share should not be overwritten or duplicated: %+v", resDup.Shared)
+	}
+
+	// Verify session without share tool does not auto-share
+	oNoTools := opts(nil)
+	oNoTools.Tools = nil
+	resNoTool, _ := run(t, sb, baseSpec(), oNoTools)
+	if len(resNoTool.Shared) != 0 {
+		t.Errorf("session without share tool should have no shared items, got: %+v", resNoTool.Shared)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -102,7 +103,7 @@ func (s *Server) autoFixConversation(ctx context.Context, rootID string) bool {
 			v.Number, try, maxAutoFix, s.pulls.FailureMessage(ctx, v))
 		// Recorded first, so a start that is slow or fails is never repeated for this commit.
 		_ = s.store.RecordFixAttempt(rec.ServerID, rec.Repo, rec.Number, v.HeadSHA)
-		if _, err := s.startReply(ctx, last, prompt, ""); err != nil {
+		if _, err := s.startReply(ctx, last, prompt, "", nil); err != nil {
 			log.Printf("automatic fix of %s#%d could not start: %v", rec.Repo, rec.Number, err)
 			return false
 		}

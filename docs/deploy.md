@@ -79,3 +79,7 @@ Each chat's sandbox is limited to 4 GB of memory by default, so one runaway agen
 ## The Health page
 
 When something does not work, open **Health**. It checks, and says what to do about each problem: Docker is reachable, the sandbox image is on the host (and how old), the agent login volume exists, sandbox containers match the running chats, network protection, free disk space, the database (size, counts and SQLite's integrity check), the limits and the last cleanup, each agent's sign-in, and each git server's token. Anything broken or worth a look comes first. Nothing on the page changes anything; it only reads. The agent and git server checks ask over the network, so the page can take several seconds.
+
+## A push was refused ("Permission denied", 403)
+
+The token saved for a git server must be allowed to write to the repo. For GitHub that means a fine-grained token with Contents set to read and write for that repo (and Pull requests read and write, to open pull requests). When a push is refused, the chat fails with a message saying so. Replace the token on the **Git servers** page, press **Check pull requests** to see what it may do, then reply in the chat: Unire pushes commits an earlier push left behind, even when the new turn changes nothing, so you do not need the agent to redo the work.

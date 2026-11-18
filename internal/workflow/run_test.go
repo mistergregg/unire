@@ -23,11 +23,14 @@ import (
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
 // and "claude" behaves as the test configures.
 type fakeSandbox struct {
-	mu       sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
-	calls    []runner.ExecOpts
-	heads    int
-	noChange bool   // the agent changes nothing: HEAD stays where it was
-	refs     string // what `git for-each-ref` prints: local branches and their upstreams
+	mu         sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
+	calls      []runner.ExecOpts
+	heads      int
+	noChange   bool   // the agent changes nothing: HEAD stays where it was
+	refs       string // what `git for-each-ref` prints: local branches and their upstreams
+	branchName string // what `git rev-parse --abbrev-ref HEAD` prints
+	unpushed   bool   // the branch holds commits the server does not have
+	pushErr    string // if set, a push fails with this message
 
 	files     map[string]string // files the workflow wrote
 	outFiles  map[string]string // files the follow-up agent "writes"
@@ -117,6 +120,22 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			return errors.New("exit status 2")
 		}
 	case "git":
+		switch {
+		case contains(o.Argv, "--abbrev-ref"):
+			io.WriteString(o.Stdout, f.branchName+"\n")
+			return nil
+		case contains(o.Argv, "--verify"):
+			return nil // the server has no copy of the branch
+		case contains(o.Argv, "rev-list"):
+			if f.unpushed {
+				io.WriteString(o.Stdout, "3\n")
+			} else {
+				io.WriteString(o.Stdout, "0\n")
+			}
+			return nil
+		case contains(o.Argv, "push") && f.pushErr != "":
+			return errors.New(f.pushErr)
+		}
 		if contains(o.Argv, "rev-parse") {
 			f.heads++
 			// First call per repo is the start HEAD; later calls differ, so the
@@ -971,5 +990,48 @@ func TestARepoRequestWithoutTheToolIsRefused(t *testing.T) {
 	}
 	if _, err := run(t, sb, baseSpec(), o); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An earlier push can fail (a token that cannot write) and leave commits that exist
+// only in the workspace. A later turn that changes nothing must still push them, or a
+// reply asking to "push it" can never work.
+func TestCommitsLeftUnpushedByAnEarlierFailureArePushedByALaterTurn(t *testing.T) {
+	spec := baseSpec()
+	pushes := func(sb *fakeSandbox) (pushed bool, log string) {
+		var buf strings.Builder
+		o := opts(nil)
+		o.Err = &buf
+		if _, err := run(t, sb, spec, o); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range sb.calls {
+			if contains(c.Argv, "push") && contains(c.Argv, spec.Branch()) {
+				pushed = true
+			}
+		}
+		return pushed, buf.String()
+	}
+	got, log := pushes(&fakeSandbox{noChange: true, branchName: spec.Branch(), unpushed: true})
+	if !got || !strings.Contains(log, "api: pushed "+spec.Branch()) {
+		t.Errorf("work that never reached the server is pushed (pushed=%v): %q", got, log)
+	}
+	if got, _ := pushes(&fakeSandbox{noChange: true, branchName: spec.Branch(), unpushed: false}); got {
+		t.Error("a repo with nothing ahead of its base must not get a branch")
+	}
+	if got, _ := pushes(&fakeSandbox{noChange: true, branchName: "some-other-branch", unpushed: true}); got {
+		t.Error("only the session branch is pushed, and only when it is checked out")
+	}
+}
+
+func TestAPushRefusedForPermissionSaysWhatToDo(t *testing.T) {
+	sb := &fakeSandbox{pushErr: "remote: Permission to me/api.git denied to me. fatal: unable to access: The requested URL returned error: 403"}
+	_, err := run(t, sb, baseSpec(), opts(nil))
+	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "replace it with one that can write") {
+		t.Errorf("err = %v: it should say the token probably cannot write and how to fix that", err)
+	}
+	sb = &fakeSandbox{pushErr: "fatal: unable to access: Could not resolve host"}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err == nil || strings.Contains(err.Error(), "replace it with one that can write") {
+		t.Errorf("a network failure is not a token problem: %v", err)
 	}
 }

@@ -39,3 +39,18 @@ func TestRequestsSkipsBlankLines(t *testing.T) {
 		t.Errorf("Requests = %q", got)
 	}
 }
+
+func TestShareIsOfferedInEveryConversation(t *testing.T) {
+	for name, set := range map[string][]Tool{"new": ForNewConversation(), "reply": ForReply(), "reply with PR": ForReplyWithPR()} {
+		found := false
+		for _, tl := range set {
+			found = found || tl.Name == Share.Name
+		}
+		if !found {
+			t.Errorf("%s: the share tool is missing", name)
+		}
+	}
+	if !strings.Contains(Prompt(ForReply()), "unire share <file>") {
+		t.Error("the prompt does not describe share")
+	}
+}

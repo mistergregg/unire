@@ -349,6 +349,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		workDone.Store(time.Now().UnixNano())
 		out.Flush()
 		info.Flush()
+		for _, f := range res.Shared {
+			_ = m.st.AddEvent(spec.ID, "share", f.Event())
+		}
 		if res.PRBody != "" {
 			_ = m.st.AddEvent(spec.ID, "prbody", res.PRBody)
 		}

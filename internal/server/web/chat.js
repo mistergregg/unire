@@ -233,14 +233,15 @@ function makeTurn(s) {
   activity.open = !isFinished(s.status);
   const askBox = el("div", { class: "asks" });
   const steerBox = el("div", { class: "steers" });
+  const shareBox = el("div", { class: "shares" });
   const answer = el("div", { class: "agent-text" });
   const foot = el("div", { class: "turn-foot muted" });
   const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
   const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)), el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
   const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt)), el("div", { class: "time" }, ago(s.createdAt)));
-  const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, foot);
+  const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, shareBox, foot);
   const root = el("div", { class: "turn" }, user, el("div", { class: "msg agent" }, avatar, body));
-  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, answer, foot, avatar, asks: {}, steers: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
+  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, shareBox, answer, foot, avatar, asks: {}, steers: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
   renderSummary(t);
   renderAnswer(t);
   return t;
@@ -276,6 +277,7 @@ function addEvents(t, events) {
     if (e.kind === "out") { t.text += (t.text ? "\n" : "") + e.text; textChanged = true; continue; }
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
+    if (e.kind === "share") { shareCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
     if (e.kind === "prtitle" || e.kind === "prbody") continue; // what the agent suggests for a pull request, used when you are asked
@@ -503,3 +505,52 @@ $("s-delete").addEventListener("click", () => {
     await openSessions();
   });
 });
+
+// ---- files the agent shared with you ----
+// A "share" event is "<name>\n<text|image>\n<content>" (an image is base64). It
+// shows as a card you can expand, copy and download. Text goes through the same
+// markdown renderer as the reply, so nothing in it is ever run as HTML.
+const SHARE_IMAGES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+
+function download(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = el("a", { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+function shareCard(t, e) {
+  const [name, rest] = splitEvent(e.text);
+  const [kind, content] = splitEvent(rest);
+  const ext = name.split(".").pop().toLowerCase();
+  const mime = SHARE_IMAGES[ext];
+  const actions = el("span", { class: "actions" });
+  let body;
+  if (kind === "image" && mime) {
+    const src = "data:" + mime + ";base64," + content;
+    body = el("img", { class: "share-img", src, alt: name });
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", () => {
+      const bin = atob(content);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      download(name, new Blob([bytes], { type: mime }));
+    });
+    actions.append(save);
+  } else {
+    const isMd = /\.(md|markdown)$/i.test(name);
+    body = isMd ? el("div", { class: "md" }, renderMarkdown(content)) : el("pre", { class: "log" }, content);
+    const copy = el("button", { type: "button", class: "tiny" }, "Copy");
+    copy.addEventListener("click", () => copyText(content, copy));
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", () => download(name, new Blob([content], { type: "text/plain;charset=utf-8" })));
+    actions.append(copy, save);
+  }
+  const size = kind === "image" ? "" : " · " + Math.max(1, Math.round(content.length / 1024)) + " KB";
+  const card = el("details", { class: "share-card" },
+    el("summary", {}, el("span", { class: "share-name" }, name), el("span", { class: "muted" }, size)),
+    el("div", { class: "share-actions" }, actions),
+    el("div", { class: "share-body" }, body));
+  t.shareBox.append(card);
+}

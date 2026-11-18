@@ -18,15 +18,32 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 | Situation | Tools |
 |---|---|
-| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `branches`, `repo`, `memory` (with memory on), `parent` (if it follows a parent chat) |
-| A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
-| A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-logs`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
+| First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `share`, `branches`, `repo`, `memory` (with memory on), `parent` (if it follows a parent chat) |
+| A reply in a conversation | `ask`, `pr`, `pr-body`, `share` (the conversation keeps its name) |
+| A reply, in a conversation with a pull request | `ask`, `share`, `pr-status`, `pr-logs`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
 ## `name`
 
 Gives the conversation a short title. Only the title changes; the branch was
 named when the session started and keeps its name. The last request wins and is
 cleaned up (one line, at most 80 characters) before it is shown.
+
+## `share`
+
+`unire share <file>` puts a file in the chat so you can read it where you
+already are: a plan, a report, notes or a screenshot. The sandbox is not
+somewhere you can open files, so without this the agent can only summarise
+them.
+
+When the turn ends, each shared file appears under the reply as a card. Open
+it to read it (markdown is rendered, other text is shown as written, images
+are shown as images); **Copy** and **Download** are on the card. Limits: text
+files up to 200 KB and images (png, jpg, gif, webp) up to 1 MB, at most 10 per
+turn. The sandbox command copies the file at once, so changing it afterwards
+changes nothing, and Unire checks the copies again before showing them (a
+binary file, a wrong type or a bad image is dropped). Agents are told to keep
+shared files outside the repo, for example in `/tmp`, so they are not
+committed.
 
 ## Pull requests
 

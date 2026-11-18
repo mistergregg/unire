@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/store"
 )

@@ -186,7 +186,8 @@ func TestSandboxMemoryHasADefaultAndCanBeChangedOrRemoved(t *testing.T) {
 			t.Errorf("saving memory %q = %d, want %d", body, code, want)
 		}
 	}
-	if cfg := e.srv.sessionConfig(); cfg.Memory != "4g" { // the last save was empty: the default
+	e.do("PUT", "/api/sandbox", map[string]any{"image": "unire-sandbox", "credsVolume": "unire-creds-claude", "memory": ""})
+	if cfg := e.srv.sessionConfig(); cfg.Memory != "4g" { // empty: the default
 		t.Errorf("a sandbox with no setting starts with %q, want 4g", cfg.Memory)
 	}
 	e.do("PUT", "/api/sandbox", map[string]any{"image": "unire-sandbox", "credsVolume": "unire-creds-claude", "memory": "0"})

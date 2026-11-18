@@ -20,6 +20,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # folder; here it cannot, so the version in the image is the version that runs.
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
     && agy --version
+# Developer tools, so an agent can check its work instead of guessing. The image is pulled
+# once and reused, so its size is a one-time cost. Every version is pinned on purpose;
+# bump them together and let the sandbox-smoke job confirm each one still runs.
+#   - Go toolchain, copied from the official image (also what gopls and the linters need)
+#   - golangci-lint, gosec, semgrep: static analysis, plain commands with no daemon
+#   - gopls and typescript-language-server, wrapped by unire-lsp (find references, definitions)
+#   - Chromium, used by unire-shot to screenshot a page served on localhost
+COPY --from=golang:1.26-bookworm /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
+ARG GOLANGCI_LINT_VERSION=v2.5.0
+ARG GOSEC_VERSION=v2.22.9
+ARG GOPLS_VERSION=v0.20.0
+ARG SEMGREP_VERSION=1.100.0
+ARG TS_LSP_VERSION=4.3.4
+ARG TYPESCRIPT_VERSION=5.8.3
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && GOPATH=/tmp/gopath GOBIN=/usr/local/bin go install \
+         github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} \
+         github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} \
+         golang.org/x/tools/gopls@${GOPLS_VERSION} \
+    && chmod -R u+w /tmp/gopath && rm -rf /tmp/gopath /root/.cache \
+    && python3 -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-cache-dir semgrep==${SEMGREP_VERSION} \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
+    && npm install -g typescript@${TYPESCRIPT_VERSION} typescript-language-server@${TS_LSP_VERSION}
+# No telemetry, no version check: the sandbox network does not allow them anyway.
+ENV SEMGREP_SEND_METRICS=off SEMGREP_ENABLE_VERSION_CHECK=0
+COPY --chmod=755 unire-shot /usr/local/bin/unire-shot
+COPY --chmod=755 unire-lsp /usr/local/bin/unire-lsp
 # The command an agent runs to ask Unire for something (see internal/tools).
 COPY --chmod=755 unire /usr/local/bin/unire
 USER node

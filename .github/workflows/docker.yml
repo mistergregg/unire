@@ -87,6 +87,20 @@ jobs:
       - run: docker build -t sandbox-smoke docker/sandbox
       - name: Versions
         run: docker run --rm sandbox-smoke sh -c 'claude --version; codex --version; agy --version'
+      - name: Developer tools
+        run: |
+          docker run --rm sandbox-smoke sh -c '
+            set -e
+            go version; golangci-lint --version; gosec -version; gopls version
+            semgrep --version; chromium --version; typescript-language-server --version
+            # unire-lsp finds a use through the real gopls
+            mkdir /tmp/p && cd /tmp/p && printf "module x\n\ngo 1.22\n" > go.mod
+            printf "package x\n\nfunc Foo() {}\n\nfunc Bar() { Foo() }\n" > a.go
+            unire-lsp refs a.go:3 Foo | grep -q "a.go:5"
+            # unire-shot takes a screenshot, and refuses anything but localhost
+            printf "<h1>hi</h1>" > /tmp/p/i.html
+            unire-shot file:///tmp/p/i.html /tmp/p/o.png && test -s /tmp/p/o.png
+            ! unire-shot https://example.com /tmp/p/x.png 2>/dev/null'
       - name: The unire tool script
         run: |
           docker run --rm sandbox-smoke sh -c '

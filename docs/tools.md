@@ -155,3 +155,15 @@ into it.
 ### `parent`
 
 In a chat that follows a parent chat, `unire parent` shows where the parent stands now. See [linking-chats.md](linking-chats.md).
+
+## Checking tools in the sandbox
+
+Separate from the `unire` tools above, the sandbox image carries programs an agent can run to check its work. The agent is told about them in its prompt (`checkingTools` in `internal/tools`).
+
+| Command | What it does |
+|---|---|
+| `unire-shot <url> [out.png] [WxH]` | Screenshot of a page served inside the sandbox (headless Chromium). Only `localhost`, `127.0.0.1` and `file:///` are accepted, and the browser cannot resolve any other name. |
+| `unire-lsp refs\|def\|symbols` | References, definition and symbol list from `gopls` (Go) or `typescript-language-server` (TS/JS). |
+| `go`, `golangci-lint`, `gosec`, `semgrep` | Build, lint and scan. `semgrep` needs rules in a local file because the sandbox cannot reach its rule registry. |
+
+All versions are pinned in `docker/sandbox/Dockerfile`, and the `sandbox-smoke` CI job runs each one.

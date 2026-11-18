@@ -169,7 +169,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
-		return store.Session{}, errors.New("Unire is shutting down")
+		return store.Session{}, errors.New("unire is shutting down")
 	}
 	if err := m.st.CreateSession(rec); err != nil {
 		m.mu.Unlock()
@@ -558,8 +558,6 @@ type logWriter struct {
 	id      string
 	kind    string
 	secrets []string
-	parent  string // the session this one continues, or empty
-	root    string // the first session of the conversation: its id names the workspace
 
 	mu  sync.Mutex
 	buf []byte

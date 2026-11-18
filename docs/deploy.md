@@ -71,3 +71,7 @@ delete Unire's data by hand, you can remove leftover volumes with
 - **Remove idle workspaces after** (default 14 days). The workspace volume of a conversation with nothing running for this long is removed; a reply clones the repos again from the branch that was pushed. Anything that was never pushed is lost, so push before leaving work idle.
 
 Cleanup runs a couple of minutes after start-up and then every six hours.
+
+## Memory limit
+
+Each chat's sandbox is limited to 4 GB of memory by default, so one runaway agent cannot use all of the host's RAM and take down the other containers on it. Change it under Settings, Sandbox, **Memory limit per chat** (for example `8g` or `512m`); `0` means no limit and empty means the default. It applies to chats that start after the change.

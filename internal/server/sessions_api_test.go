@@ -620,15 +620,6 @@ func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
 	}
 }
 
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
 func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	e := newEnv(t)
 	base := withServer(t, e, "tok")

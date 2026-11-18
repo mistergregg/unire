@@ -1,0 +1,17 @@
+# Weekly pull requests for out-of-date dependencies: Go modules, the base images in the
+# Dockerfiles, and the GitHub Actions the workflow uses. (The agent CLIs pinned in
+# docker/sandbox/Dockerfile are updated by hand: see docs/adding-an-agent.md.)
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /docker/sandbox
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

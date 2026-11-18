@@ -141,7 +141,6 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 func (f *fakeSandbox) Stop(context.Context) error { return nil }
 
 type fakeRunner struct {
-	mu sync.Mutex
 	sb *fakeSandbox
 }
 

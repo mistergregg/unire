@@ -206,10 +206,10 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 	}
 	// The terminal shows an error, a link and a code.
 	deadline := time.Now().Add(3 * time.Second)
-	for len(*started) == 0 && time.Now().Before(deadline) {
+	for started.count() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	(*started)[0].in <- []byte("\x1b[31mFailed to sign in. Message: needs GOOGLE_CLOUD_PROJECT\x1b[0m\r\nhttps://accounts.google.com/o/oauth2/v2/auth?state=SECRETSTATE\r\ncode 4/0AeanS0Zq2x9abcDEFghiJKL\r\n")
+	started.get(0).in <- []byte("\x1b[31mFailed to sign in. Message: needs GOOGLE_CLOUD_PROJECT\x1b[0m\r\nhttps://accounts.google.com/o/oauth2/v2/auth?state=SECRETSTATE\r\ncode 4/0AeanS0Zq2x9abcDEFghiJKL\r\n")
 	if _, _, err := c.Read(ctx); err != nil { // wait until the browser has received it
 		t.Fatal(err)
 	}
@@ -299,21 +299,38 @@ func (p *echoProc) isClosed() bool {
 	}
 }
 
+// startedProcs are the echoProcs the server started, safe to read while it starts more.
+type startedProcs struct {
+	mu   sync.Mutex
+	list []*echoProc
+}
+
+func (s *startedProcs) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.list)
+}
+
+func (s *startedProcs) get(i int) *echoProc {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.list[i]
+}
+
 // withTerminal makes the server start echoProcs instead of Docker containers.
-func withTerminal(e *env) *[]*echoProc {
-	var started []*echoProc
-	var mu sync.Mutex
+func withTerminal(e *env) *startedProcs {
+	started := &startedProcs{}
 	e.srv.terminalFor = func(Sandbox) terminal.Starter {
 		return func(argv []string, cols, rows uint16) (terminal.Process, error) {
 			p := newEchoProc(argv)
 			p.sizes = append(p.sizes, [2]uint16{cols, rows})
-			mu.Lock()
-			started = append(started, p)
-			mu.Unlock()
+			started.mu.Lock()
+			started.list = append(started.list, p)
+			started.mu.Unlock()
 			return p, nil
 		}
 	}
-	return &started
+	return started
 }
 
 func (e *env) wsURL(path string) string { return "ws" + strings.TrimPrefix(e.ts.URL, "http") + path }
@@ -352,7 +369,7 @@ func TestLoginTerminalCarriesKeystrokesAndRunsOnlyTheFixedCommand(t *testing.T) 
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"resize","cols":60000,"rows":1}`))
 	time.Sleep(150 * time.Millisecond)
 
-	p := (*started)[0]
+	p := started.get(0)
 	want, _ := agent.Get("codex")
 	if strings.Join(p.argv, " ") != strings.Join(want.Info().LoginArgv, " ") {
 		t.Errorf("ran %v, want the agent's own sign-in command %v", p.argv, want.Info().LoginArgv)

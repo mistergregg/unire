@@ -12,8 +12,7 @@ func TestAPanicInAGoroutineIsRecoveredAndReported(t *testing.T) {
 	go func() {
 		defer close(done)
 		defer Recover("a run", func(err error) { got = err })
-		var m map[string]int
-		m["x"] = 1 // panics: assignment to a nil map
+		panic("boom")
 	}()
 	<-done
 	if got == nil || !strings.Contains(got.Error(), "internal error in a run") {

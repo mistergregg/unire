@@ -114,7 +114,7 @@ func TestTheTokenCanBeCheckedForPullRequestAccess(t *testing.T) {
 		case "/api/v1/repos/greg/api":
 			w.Write([]byte(`{"permissions":{"push":true}}`))
 		case "/api/v1/repos/greg/api/issues":
-			http.Error(w, `{"message":"token does not have issue scope"}`, 403) // too few permissions
+			http.Error(w, `{"message":"token does not have issue scope"}`, http.StatusForbidden) // too few permissions
 		case "/api/v1/repos/greg/api/commits":
 			w.Write([]byte(`[{"sha":"abc"}]`))
 		default:
@@ -169,5 +169,28 @@ func TestMemoryStatsEndpoint(t *testing.T) {
 	code, body := e.do("GET", "/api/memory/stats", nil)
 	if code != 200 || !strings.Contains(body, `"days":90`) || strings.Count(body, `"memory":`) != 2 {
 		t.Errorf("stats = %d %s", code, body)
+	}
+}
+
+func TestSandboxMemoryHasADefaultAndCanBeChangedOrRemoved(t *testing.T) {
+	for in, want := range map[string]string{"": "4g", "8g": "8g", "512m": "512m", "0": ""} {
+		if got := (Sandbox{Memory: in}).EffectiveMemory(); got != want {
+			t.Errorf("EffectiveMemory(%q) = %q, want %q", in, got, want)
+		}
+	}
+	e := newEnv(t)
+	e.setup()
+	for body, want := range map[string]int{"0": 200, "4g": 200, "": 200, "lots": 400, "-1": 400} {
+		code, _ := e.do("PUT", "/api/sandbox", map[string]any{"image": "unire-sandbox", "credsVolume": "unire-creds-claude", "memory": body})
+		if code != want {
+			t.Errorf("saving memory %q = %d, want %d", body, code, want)
+		}
+	}
+	if cfg := e.srv.sessionConfig(); cfg.Memory != "4g" { // the last save was empty: the default
+		t.Errorf("a sandbox with no setting starts with %q, want 4g", cfg.Memory)
+	}
+	e.do("PUT", "/api/sandbox", map[string]any{"image": "unire-sandbox", "credsVolume": "unire-creds-claude", "memory": "0"})
+	if cfg := e.srv.sessionConfig(); cfg.Memory != "" {
+		t.Errorf("0 means no limit, got %q", cfg.Memory)
 	}
 }

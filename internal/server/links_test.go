@@ -148,7 +148,7 @@ func TestAChatThatFollowsAParentHearsWhatTheParentDid(t *testing.T) {
 	e.box.mu.Lock()
 	e.box.prompts = nil
 	e.box.mu.Unlock()
-	code, raw = e.do("POST", "/api/sessions/"+c2["id"].(string)+"/reply", map[string]any{"prompt": "and again"})
+	_, raw = e.do("POST", "/api/sessions/"+c2["id"].(string)+"/reply", map[string]any{"prompt": "and again"})
 	var c3 map[string]any
 	json.Unmarshal([]byte(raw), &c3)
 	e.waitStatus(c3["id"].(string), "done")

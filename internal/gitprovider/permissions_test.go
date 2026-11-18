@@ -34,7 +34,7 @@ func TestPermissionCheckSaysWhatATokenIsMissing(t *testing.T) {
 		t.Run(c.typ, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if c.denied != "" && r.URL.Path == c.denied {
-					http.Error(w, `{"message":"no"}`, 403)
+					http.Error(w, `{"message":"no"}`, http.StatusForbidden)
 					return
 				}
 				body, ok := c.routes[r.URL.Path]

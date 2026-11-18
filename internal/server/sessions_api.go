@@ -39,7 +39,7 @@ func dockerRunner(sb Sandbox) runner.Runner {
 
 var (
 	dockerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}$`)
-	memoryRe   = regexp.MustCompile(`^[1-9][0-9]*[kKmMgG]?$`)
+	memoryRe   = regexp.MustCompile(`^(0|[1-9][0-9]*[kKmMgG]?)$`)
 	cpusRe     = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 	branchRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$`)
 )
@@ -51,7 +51,7 @@ func (sb Sandbox) validate() error {
 	case !dockerName.MatchString(sb.CredsVolume):
 		return fmt.Errorf("credentials volume name looks invalid")
 	case sb.Memory != "" && !memoryRe.MatchString(sb.Memory):
-		return fmt.Errorf("memory limit should look like 4g or 512m")
+		return fmt.Errorf("memory limit should look like 4g or 512m (0 for no limit, empty for the default)")
 	case sb.CPUs != "" && !cpusRe.MatchString(sb.CPUs):
 		return fmt.Errorf("CPU limit should be a number like 2 or 1.5")
 	}
@@ -81,7 +81,7 @@ func (s *Server) sessionConfig() sessions.Config {
 	sb := s.sandbox()
 	allow, _ := egress.ParseEntries(s.allowList()) // saved entries were validated when saved
 	return sessions.Config{
-		Runner: s.runnerFactory(sb), Memory: sb.Memory, CPUs: sb.CPUs,
+		Runner: s.runnerFactory(sb), Memory: sb.EffectiveMemory(), CPUs: sb.CPUs,
 		Egress:   sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
 		Pulls:    s.pulls,
 		Upstream: s,
@@ -668,4 +668,21 @@ func taskNameFrom(prompt string) string {
 		name = next
 	}
 	return name
+}
+
+// DefaultSandboxMemory is the memory limit of a chat's sandbox when none is set. One
+// runaway agent can otherwise use all of the host's memory and take down everything
+// else running on it. Set the limit in Settings, or 0 for no limit.
+const DefaultSandboxMemory = "4g"
+
+// EffectiveMemory is the limit a sandbox is started with: the setting, the default when
+// it is empty, and no limit at all when it is 0.
+func (sb Sandbox) EffectiveMemory() string {
+	switch sb.Memory {
+	case "":
+		return DefaultSandboxMemory
+	case "0":
+		return ""
+	}
+	return sb.Memory
 }

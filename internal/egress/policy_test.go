@@ -2,6 +2,7 @@ package egress
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -129,5 +130,35 @@ func TestParseMode(t *testing.T) {
 	}
 	if _, ok := ParseMode("none"); ok {
 		t.Error("unknown mode accepted")
+	}
+}
+
+func TestTheSandboxsOwnLocalhostNeverGoesThroughTheProxy(t *testing.T) {
+	env := Info{ProxyURL: "http://unire-egress:3128"}.ProxyEnv()
+	for _, k := range []string{"NO_PROXY", "no_proxy"} {
+		for _, want := range []string{"localhost", "127.0.0.1", "::1"} {
+			if !strings.Contains(env[k], want) {
+				t.Errorf("%s = %q, should keep %s off the proxy", k, env[k], want)
+			}
+		}
+	}
+	if env["HTTPS_PROXY"] != "http://unire-egress:3128" {
+		t.Errorf("everything else still goes through the proxy: %v", env)
+	}
+}
+
+// Allowing loopback would not let a sandbox reach its own localhost (that never goes
+// through the proxy): it would let it reach the proxy's own services. Link-local is where
+// cloud metadata services live. A LAN address the owner chose is still fine.
+func TestLoopbackAndMetadataAddressesCannotBeAllowed(t *testing.T) {
+	for _, bad := range []string{"127.0.0.1", "127.0.0.1:8888", "[::1]:80", "localhost", "app.localhost", "0.0.0.0", "169.254.169.254", "169.254.0.0/16", "127.0.0.0/8", "0.0.0.0/0"} {
+		if e, err := ParseEntry(bad); err == nil && e.Refusal() == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+	for _, ok := range []string{"192.168.1.20", "192.168.1.0/24:443", "10.0.0.5:8080", "git.example.com", "example.com:443"} {
+		if e, err := ParseEntry(ok); err != nil || e.Refusal() != nil {
+			t.Errorf("%q should be allowed", ok)
+		}
 	}
 }

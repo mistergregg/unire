@@ -53,3 +53,9 @@ Verified with a real session through a real container setup (Gitea on the LAN, C
 - Agent only: Claude Code worked, example.com blocked, the git server reachable.
 - Full access: everything reachable, including the router.
 - After allowing the router's address, a new Internet only session could reach it.
+
+## A server running inside the sandbox
+
+An agent often starts a server in its sandbox to try its work (`unire serve`, a dev server) and then calls it on `localhost`. That traffic never leaves the sandbox, so it does not go through the proxy: the sandbox sets `NO_PROXY=localhost,127.0.0.1,::1`, and tools reach it directly. (Before, the proxy was told to proxy everything, refused it as a "private network address", and the Allow button could only ever open the *proxy's* own localhost.)
+
+Because of that, loopback (`127.x`, `::1`, `localhost`), `0.0.0.0` and link-local addresses (`169.254.x.x`, where cloud metadata services live) **cannot be added to the allowed list**: the Allow button is not offered for them, the server refuses them with the reason, and entries saved by older versions are ignored. A LAN address you choose (for example your own git server) can still be allowed.

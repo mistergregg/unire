@@ -30,7 +30,10 @@ func (i Info) ProxyEnv() map[string]string {
 	u := i.ProxyURL
 	return map[string]string{
 		"HTTP_PROXY": u, "HTTPS_PROXY": u, "http_proxy": u, "https_proxy": u,
-		"NO_PROXY": "", "no_proxy": "",
+		// The sandbox's own localhost never goes through the proxy: a server the agent starts in
+		// the sandbox (to test its work) is reached directly. Through the proxy it would be
+		// refused, and even if allowed it would mean the proxy's localhost, not the sandbox's.
+		"NO_PROXY": "localhost,127.0.0.1,::1,[::1]", "no_proxy": "localhost,127.0.0.1,::1,[::1]",
 	}
 }
 

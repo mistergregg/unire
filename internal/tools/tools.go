@@ -56,7 +56,8 @@ func Prompt(set []Tool) string {
 const checkingTools = "# Checking your work\n\nThe sandbox has these installed. Use them instead of guessing.\n\n" +
 	"- unire-shot <url> [out.png] [WIDTHxHEIGHT] - screenshot a page you are serving on localhost (only localhost and file:/// pages work), then look at the image. Use it after changing HTML or CSS.\n" +
 	"- unire-lsp refs|def <file>:<line> <name> and unire-lsp symbols <file> - find every use of a symbol, where it is defined, or what a file declares (Go, TypeScript and JavaScript). Better than grep for renames and impact checks.\n" +
-	"- go (with gopls), golangci-lint, gosec, semgrep - build, lint and scan. semgrep cannot download rule sets here, so give it rules in a file (--config rules.yml).\n"
+	"- go (with gopls), golangci-lint, gosec, semgrep - build, lint and scan. semgrep cannot download rule sets here, so give it rules in a file (--config rules.yml).\n" +
+	"- To try a server you wrote (for example `unire serve`), start it in the background (`cmd > /tmp/server.log 2>&1 &`), wait a moment, then use it on localhost: that works directly. Never run a server in the foreground: the command never ends and your turn waits for it.\n"
 
 // Requests are the lines the agent wrote for a tool, newest last.
 func Requests(content string) []string {

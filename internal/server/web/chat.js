@@ -111,7 +111,15 @@ function logLine(e) {
   if (e.kind === "blocked") {
     const m = /^blocked (\S+) \(/.exec(e.text);
     const line = el("div", { class: "l-blocked" }, "⛔ " + e.text + " ");
-    if (m) {
+    // Loopback and metadata addresses cannot be allowed (the server refuses): a server the
+    // agent runs in its own sandbox is reached directly, not through the proxy.
+    const raw = m ? m[1] : "";
+    const addr = raw.startsWith("[") ? raw.replace(/^\[|\](:\d+)?$/g, "") // [::1]:80
+      : (raw.match(/:/g) || []).length === 1 ? raw.replace(/:\d+$/, "") : raw; // 127.0.0.1:80, or a bare IPv6
+    const never = /^(localhost|127\.|0\.0\.0\.0|::1|169\.254\.)/.test(addr) || addr.endsWith(".localhost");
+    if (m && never) {
+      line.append(el("span", { class: "muted" }, "(a sandbox's own address: it cannot be allowed, and a tool should reach its own localhost directly)"));
+    } else if (m) {
       const btn = el("button", { type: "button", class: "small" }, "Allow " + m[1]);
       btn.addEventListener("click", () => guarded(btn, async () => {
         await api("POST", "/api/network/allow", { address: m[1] });

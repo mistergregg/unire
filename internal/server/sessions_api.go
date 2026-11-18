@@ -79,7 +79,7 @@ func (s *Server) sandbox() Sandbox {
 
 func (s *Server) sessionConfig() sessions.Config {
 	sb := s.sandbox()
-	allow, _ := egress.ParseEntries(s.allowList()) // saved entries were validated when saved
+	allow := allowedEntries(s.allowList())
 	return sessions.Config{
 		Runner: s.runnerFactory(sb), Memory: sb.EffectiveMemory(), CPUs: sb.CPUs,
 		Egress:   sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
@@ -127,6 +127,9 @@ func cleanAllowList(in []string) ([]string, error) {
 		}
 		e, err := egress.ParseEntry(l)
 		if err != nil {
+			return nil, err
+		}
+		if err := e.Refusal(); err != nil {
 			return nil, err
 		}
 		if !seen[e.String()] {
@@ -685,4 +688,19 @@ func (sb Sandbox) EffectiveMemory() string {
 		return ""
 	}
 	return sb.Memory
+}
+
+// allowedEntries are the saved allowed addresses the proxy may honour. An entry that
+// names loopback or a metadata address is dropped: older versions let the owner press
+// "Allow" on one, which could only ever open the proxy's own services.
+func allowedEntries(saved []string) []egress.Entry {
+	var out []egress.Entry
+	for _, l := range saved {
+		e, err := egress.ParseEntry(l)
+		if err != nil || e.Refusal() != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

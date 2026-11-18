@@ -195,3 +195,24 @@ func TestSandboxMemoryHasADefaultAndCanBeChangedOrRemoved(t *testing.T) {
 		t.Errorf("0 means no limit, got %q", cfg.Memory)
 	}
 }
+
+func TestLoopbackCannotBeAllowedAndStaleEntriesAreIgnored(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	for _, bad := range []string{"127.0.0.1:8888", "localhost", "169.254.169.254"} {
+		if code, body := e.do("POST", "/api/network/allow", map[string]any{"address": bad}); code != http.StatusBadRequest || !strings.Contains(body, "cannot be allowed") {
+			t.Errorf("allowing %q = %d %s, want 400 with the reason", bad, code, body)
+		}
+	}
+	if code, _ := e.do("POST", "/api/network/allow", map[string]any{"address": "192.168.1.20:443"}); code != 200 {
+		t.Errorf("a LAN address is the owner's to allow, got %d", code)
+	}
+	// An entry saved before this rule (the Allow button used to offer loopback) is not honoured.
+	if err := e.srv.store.SetSetting("network_allow", "127.0.0.1:8888\n192.168.1.20:443"); err != nil {
+		t.Fatal(err)
+	}
+	got := allowedEntries(e.srv.allowList())
+	if len(got) != 1 || got[0].String() != "192.168.1.20:443" {
+		t.Errorf("allowed entries = %v, want only the LAN address", got)
+	}
+}

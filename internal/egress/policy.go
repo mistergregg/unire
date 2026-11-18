@@ -95,6 +95,27 @@ func ParseEntry(s string) (Entry, error) {
 	return e, nil
 }
 
+// refusedAddress reports whether the entry names loopback, an unspecified address or a
+// link-local address (169.254.x.x, where cloud metadata services live). Allowing one would
+// not let a sandbox reach its own localhost (that traffic never goes through the proxy);
+// it would let it reach the proxy's own services or the host's metadata endpoint.
+func (e Entry) refusedAddress() bool {
+	bad := func(ip net.IP) bool { return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() }
+	switch {
+	case e.Host != "":
+		return e.Host == "localhost" || strings.HasSuffix(e.Host, ".localhost")
+	case e.IP != nil:
+		return bad(e.IP)
+	case e.Net != nil:
+		for _, probe := range []string{"127.0.0.1", "::1", "169.254.169.254"} {
+			if e.Net.Contains(net.ParseIP(probe)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func parsePort(p string) (int, error) {
 	n, err := strconv.Atoi(p)
 	if err != nil || n < 1 || n > 65535 {
@@ -235,4 +256,14 @@ func isPublic(ip net.IP) bool {
 		}
 	}
 	return true
+}
+
+// Refusal is why the owner may not add this entry to the allowed list, or nil. It is
+// checked where the owner adds entries (the proxy itself still honours any entry, so its
+// own tests can allow a local test server).
+func (e Entry) Refusal() error {
+	if e.refusedAddress() {
+		return fmt.Errorf("%q cannot be allowed: it is the proxy's own address (or one a sandbox must never reach, such as a cloud metadata service), not the sandbox's. A server running inside the sandbox on localhost needs no permission: tools reach it directly", e.text)
+	}
+	return nil
 }

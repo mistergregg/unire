@@ -139,6 +139,7 @@ func (g github) GetPR(ctx context.Context, repo string, number int) (PullRequest
 }
 
 func (g github) Checks(ctx context.Context, repo string, pr PullRequest) ([]Check, error) {
+	var out []Check
 	var runs struct {
 		CheckRuns []struct {
 			Name       string `json:"name"`
@@ -147,21 +148,16 @@ func (g github) Checks(ctx context.Context, repo string, pr PullRequest) ([]Chec
 			HTMLURL    string `json:"html_url"`
 		} `json:"check_runs"`
 	}
-	if err := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", repo, pr.HeadSHA), &runs); err != nil {
-		return nil, err
-	}
-	var out []Check
-	for _, r := range runs.CheckRuns {
-		state := CheckPending
-		if r.Status == "completed" {
-			switch r.Conclusion {
-			case "success", "neutral", "skipped":
-				state = CheckSuccess
-			default:
-				state = CheckFailure
-			}
+	runsErr := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", repo, pr.HeadSHA), &runs)
+	if runsErr == nil {
+		for _, r := range runs.CheckRuns {
+			out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL})
 		}
-		out = append(out, Check{Name: r.Name, State: state, URL: r.HTMLURL})
+	} else if wf, err := g.workflowRunChecks(ctx, repo, pr.HeadSHA); err == nil {
+		// A fine-grained token has no Checks permission, so the check runs are refused;
+		// the workflow runs (Actions, read-only) say the same for GitHub Actions.
+		out = append(out, wf...)
+		runsErr = nil
 	}
 	// Older integrations report commit statuses rather than check runs.
 	var st struct {
@@ -171,12 +167,48 @@ func (g github) Checks(ctx context.Context, repo string, pr PullRequest) ([]Chec
 			TargetURL string `json:"target_url"`
 		} `json:"statuses"`
 	}
-	if err := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/status", repo, pr.HeadSHA), &st); err == nil {
+	statusErr := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/status", repo, pr.HeadSHA), &st)
+	if statusErr == nil {
 		for _, s := range st.Statuses {
 			out = append(out, Check{Name: s.Context, State: statusState(s.State), URL: s.TargetURL})
 		}
 	}
+	if runsErr != nil && statusErr != nil {
+		return nil, runsErr
+	}
 	return out, nil
+}
+
+// workflowRunChecks reads a commit's GitHub Actions workflow runs as checks.
+func (g github) workflowRunChecks(ctx context.Context, repo, sha string) ([]Check, error) {
+	var res struct {
+		Runs []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+		} `json:"workflow_runs"`
+	}
+	if err := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/actions/runs?head_sha=%s&per_page=30", repo, sha), &res); err != nil {
+		return nil, err
+	}
+	var out []Check
+	for _, r := range res.Runs {
+		out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL})
+	}
+	return out, nil
+}
+
+// runState maps a check run's (or workflow run's) status and conclusion to a check state.
+func runState(status, conclusion string) string {
+	if status != "completed" {
+		return CheckPending
+	}
+	switch conclusion {
+	case "success", "neutral", "skipped":
+		return CheckSuccess
+	}
+	return CheckFailure
 }
 
 // statusState maps a commit status ("success", "pending", "failure", "error")

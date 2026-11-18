@@ -400,7 +400,9 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 		if err != nil {
 			return outcomes, err
 		}
-		if strings.TrimSpace(head) == startHeads[repo.Name] {
+		// Nothing new this turn. But an earlier push may have failed (a token that cannot
+		// write, a network error) and left commits that were never pushed: push those.
+		if strings.TrimSpace(head) == startHeads[repo.Name] && !w.hasUnpushedWork(ctx, dir, &repo, spec) {
 			if extras > 0 {
 				outcomes[repo.Name] = outcome{changed: true, pushed: true}
 			}
@@ -413,7 +415,7 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 			continue
 		}
 		if _, err := w.git(ctx, dir, &repo, "push", "-u", "origin", spec.Branch()); err != nil {
-			return outcomes, fmt.Errorf("push %s: %w", repo.Name, err)
+			return outcomes, fmt.Errorf("push %s: %w%s", repo.Name, err, pushHint(err))
 		}
 		o.pushed = true
 		outcomes[repo.Name] = o
@@ -697,4 +699,44 @@ func (w *worker) addRepo(ctx context.Context, query string) string {
 	w.addedHeads[r.Dir] = strings.TrimSpace(head)
 	w.mu.Unlock()
 	return fmt.Sprintf("Cloned into %s on branch %s. It is pushed with your other changes when you finish.", dir, spec.Branch())
+}
+
+// hasUnpushedWork reports whether the session branch holds commits that are not on the
+// git server: it is checked out, it is ahead of the repo's base, and the server does not
+// have it (or has an older copy). It never says yes for an untouched repo, so a chat that
+// changed nothing does not create a branch.
+func (w *worker) hasUnpushedWork(ctx context.Context, dir string, repo *session.Repo, spec session.Spec) bool {
+	if spec.NoPush {
+		return false
+	}
+	branch := spec.Branch()
+	if cur, err := w.git(ctx, dir, repo, "rev-parse", "--abbrev-ref", "HEAD"); err != nil || strings.TrimSpace(cur) != branch {
+		return false
+	}
+	head, err := w.git(ctx, dir, repo, "rev-parse", "HEAD")
+	if err != nil {
+		return false
+	}
+	if remote, err := w.git(ctx, dir, repo, "rev-parse", "-q", "--verify", "refs/remotes/origin/"+branch); err == nil && strings.TrimSpace(remote) == strings.TrimSpace(head) {
+		return false // the server has exactly this
+	}
+	base := "origin/HEAD"
+	if repo.Base != "" {
+		base = "origin/" + repo.Base
+	}
+	n, err := w.git(ctx, dir, repo, "rev-list", "--count", base+"..HEAD")
+	if err != nil {
+		return false
+	}
+	ahead, err := strconv.Atoi(strings.TrimSpace(n))
+	return err == nil && ahead > 0
+}
+
+// pushHint says what is probably wrong when a push is refused for lack of permission.
+func pushHint(err error) string {
+	m := err.Error()
+	if strings.Contains(m, "403") || strings.Contains(m, "Permission to") || strings.Contains(m, "denied") || strings.Contains(m, "401") {
+		return ". The token saved for this git server probably cannot write to this repo: on the Git servers page, replace it with one that can write (for GitHub: Contents set to read and write for this repo), and use Check pull requests to see what it may do"
+	}
+	return ""
 }

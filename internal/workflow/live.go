@@ -209,6 +209,8 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 					w.opt.OnMessage(s.ID, agent.MsgFailed)
 				}
 				fmt.Fprintf(w.opt.Err, "the agent could not take the message: %v\n", err)
+			case !s.Promote:
+				fmt.Fprintln(w.opt.Err, "gave the agent your message")
 			}
 		}
 	}

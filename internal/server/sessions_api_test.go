@@ -644,7 +644,7 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	// that has already finished is "not delivered", which is correct but not what this tests.
 	for i := 0; i < 300; i++ {
 		_, l := e.do("GET", "/api/sessions/"+id+"/logs", nil)
-		if strings.Contains(l, `"kind":"steerstate"`) && strings.Contains(l, "queued") {
+		if strings.Contains(l, "gave the agent your message") {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -676,7 +676,7 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 		for i, p := range told {
 			short[i] = fmt.Sprintf("%.60q", p)
 		}
-		t.Errorf("the agent was told %d messages: %v", len(told), short)
+		t.Errorf("the agent was told %d messages: %v; logs: %.2500s", len(told), short, logs)
 	}
 	// Once it has finished, a message has to be a reply.
 	if code, _ := e.do("POST", "/api/sessions/"+id+"/steer", map[string]any{"text": "late"}); code != http.StatusConflict {

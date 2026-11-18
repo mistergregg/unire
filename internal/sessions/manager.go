@@ -64,6 +64,7 @@ type Repo struct {
 // Request is what the owner asks for.
 type Request struct {
 	Task, Agent, Prompt, Mode string
+	Images                    []agent.Image
 	Network                   egress.Mode // empty means internet only
 	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
@@ -146,6 +147,9 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	}
 	used := map[string]bool{}
 	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Preamble + req.Prompt, Mode: req.Mode}
+	for _, img := range req.Images {
+		spec.Images = append(spec.Images, session.Image{Name: img.Name, MIME: img.MIME, Data: img.Data})
+	}
 	if req.Branch != "" {
 		spec.BranchName = req.Branch
 	} else {

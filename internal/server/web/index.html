@@ -72,7 +72,8 @@
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
       <div class="card">
-        <textarea id="n-prompt" required rows="5" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+        <textarea id="n-prompt" rows="5" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+        <input id="n-images" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-label="Attach images">
 
         <div id="n-selected" class="chips"></div>
         <div id="n-suggest" class="suggest" hidden></div>

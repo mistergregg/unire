@@ -100,8 +100,11 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
-func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string) (store.Session, error) {
+func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, images []agent.Image) (store.Session, error) {
 	prompt = strings.TrimSpace(prompt)
+	if prompt == "" && len(images) > 0 {
+		prompt = "Inspect the attached image or images and use them as context for this task."
+	}
 	switch {
 	case prompt == "" || len(prompt) > 20000:
 		return store.Session{}, replyFail(http.StatusBadRequest, "write a message (20,000 characters max)")
@@ -171,6 +174,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	}
 	started, err := s.sessions.Start(sessions.Request{
 		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
+		Images: images,
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 	})
 	if err != nil {
@@ -178,6 +182,10 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	}
 	if rootSession.UpstreamID != "" && upSeen != rootSession.UpstreamSeen {
 		_ = s.store.SetUpstreamSeen(rootSession.ID, upSeen)
+	}
+	if len(images) > 0 {
+		b, _ := json.Marshal(images)
+		_ = s.store.AddEvent(started.ID, "userimages", string(b))
 	}
 	return started, nil
 }
@@ -190,11 +198,18 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
 		Agent  string `json:"agent"` // empty: the same agent
+		Images []agent.Image `json:"images"`
 	}
-	if !readJSON(w, r, &req) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent)
+	if err := validateImages(req.Images); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent, req.Images)
 	if err != nil {
 		var re replyError
 		if errors.As(err, &re) {
@@ -205,6 +220,33 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toView(started))
+}
+
+func validateImages(images []agent.Image) error {
+	if len(images) > 4 {
+		return errors.New("attach up to 4 images")
+	}
+	total := 0
+	for _, img := range images {
+		if img.MIME != "image/png" && img.MIME != "image/jpeg" && img.MIME != "image/gif" && img.MIME != "image/webp" {
+			return errors.New("images must be PNG, JPEG, GIF, or WebP")
+		}
+		if img.Name == "" || strings.ContainsAny(img.Name, "\\/\r\n") {
+			return errors.New("invalid image name")
+		}
+		b, err := base64.StdEncoding.DecodeString(img.Data)
+		if err != nil {
+			return errors.New("invalid image data")
+		}
+		if http.DetectContentType(b) != img.MIME {
+			return errors.New("image content does not match its type")
+		}
+		total += len(b)
+	}
+	if total > 5<<20 {
+		return errors.New("images exceed 5 MB total")
+	}
+	return nil
 }
 
 // Sizes of what a reply tells the agent about the conversation so far, in

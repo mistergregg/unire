@@ -6,6 +6,7 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -233,9 +234,25 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// there; or, for an agent whose file loading is unverified, at the start of
 	// the prompt, which works for any agent.
 	prompt := spec.Prompt
+	if len(spec.Images) > 0 {
+		var refs []string
+		for i, img := range spec.Images {
+			ext := map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}[img.MIME]
+			path := fmt.Sprintf("/workspace/.unire-images/%d.%s", i+1, ext)
+			encoded, err := base64.StdEncoding.DecodeString(img.Data)
+			if err != nil {
+				return res, fmt.Errorf("decode attached image data: %w", err)
+			}
+			if _, err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"sh", "-c", `mkdir -p /workspace/.unire-images && cat > "$1"`, "sh", path}, Stdin: bytes.NewReader(encoded)}); err != nil {
+				return res, fmt.Errorf("save attached image: %w", err)
+			}
+			refs = append(refs, fmt.Sprintf("- %s (%s)", path, img.Name))
+		}
+		prompt += "\n\nThe owner attached these images. Inspect them as needed:\n" + strings.Join(refs, "\n")
+	}
 	if opt.Mem != nil && opt.Mem.Context != "" {
 		if adapter.MemoryMode() == agent.MemoryPrompt && prompt != "" {
-			prompt = opt.Mem.Context + "\n\n---\n\n# Your task\n\n" + spec.Prompt
+			prompt = opt.Mem.Context + "\n\n---\n\n# Your task\n\n" + prompt
 			fmt.Fprintf(opt.Err, "memory: gave the agent project memory (%d characters, at the start of its prompt)\n", len(opt.Mem.Context))
 		} else if err := w.writeFile(ctx, workspace+"/"+adapter.MemoryFile(), opt.Mem.Context); err != nil {
 			fmt.Fprintf(opt.Err, "memory: could not give the agent its memory: %v\n", err)

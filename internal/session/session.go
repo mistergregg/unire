@@ -28,6 +28,7 @@ type Spec struct {
 	Task   string // human label, used in the branch name
 	Agent  string // adapter name, e.g. "claude"
 	Prompt string // empty means interactive
+	Images []Image
 	Mode   string // "hands-off" or "ask-first"
 	Repos  []Repo
 	NoPush bool
@@ -35,6 +36,10 @@ type Spec struct {
 	// agent and task. A reply uses its conversation's branch; a new conversation
 	// gets a name that no other conversation has.
 	BranchName string
+}
+
+type Image struct {
+	Name, MIME, Data string
 }
 
 // Branch returns the branch every repo in the session is checked out on.

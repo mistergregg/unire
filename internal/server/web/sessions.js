@@ -227,8 +227,11 @@ $("n-ws-save").addEventListener("click", () => guarded($("n-ws-save"), async () 
 $("new-form").addEventListener("submit", (e) => {
   e.preventDefault();
   guarded($("n-submit"), async () => {
+    const images = await readImages("n-images");
+    if (!$("n-prompt").value.trim() && !images.length) throw new Error("Write a message or attach an image");
     const s = await api("POST", "/api/sessions", {
       task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
+      images,
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
       forkFrom, parent: $("n-parent").value,
     });

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -420,16 +421,22 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		Task     string          `json:"task"`
 		Agent    string          `json:"agent"`
 		Prompt   string          `json:"prompt"`
+		Images   []agent.Image   `json:"images"`
 		Network  string          `json:"network"` // empty means the saved default
 		Memory   *bool           `json:"memory"`  // omitted means on
 		Repos    []store.RepoRef `json:"repos"`
 		ForkFrom string          `json:"forkFrom"` // start from this conversation: it is told what happened there
 		Parent   string          `json:"parent"`   // follow this conversation: it is told what happens there
 	}
-	if !readJSON(w, r, &req) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.Task, req.Prompt = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt)
+	if req.Prompt == "" && len(req.Images) > 0 {
+		req.Prompt = "Inspect the attached image or images and use them as context for this task."
+	}
 	if req.Task == "" {
 		req.Task = taskNameFrom(req.Prompt) // the name is made from what was asked
 	}
@@ -437,8 +444,12 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	case len(req.Task) > 80:
 		writeErr(w, http.StatusBadRequest, "task name is too long (80 characters max)")
 		return
-	case req.Prompt == "" || len(req.Prompt) > 20000:
+	case (req.Prompt == "" && len(req.Images) == 0) || len(req.Prompt) > 20000:
 		writeErr(w, http.StatusBadRequest, "tell the agent what to do (20,000 characters max)")
+		return
+	}
+	if err := validateImages(req.Images); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ad, err := agent.Get(req.Agent)
@@ -533,13 +544,17 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Images: req.Images, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if upstreamID != "" {
 		_ = s.store.SetUpstreamSeen(x.ID, upstreamSeen)
+	}
+	if len(req.Images) > 0 {
+		b, _ := json.Marshal(req.Images)
+		_ = s.store.AddEvent(x.ID, "userimages", string(b))
 	}
 	writeJSON(w, http.StatusCreated, toView(x))
 }

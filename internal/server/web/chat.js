@@ -322,6 +322,7 @@ function addEvents(t, events) {
     if (e.kind === "answer") { answerCard(t, e); continue; }
     if (e.kind === "share") { shareCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
+    if (e.kind === "userimages") { userImagesCard(t, e.text); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
     if (e.kind === "prtitle" || e.kind === "prbody") continue; // what the agent suggests for a pull request, used when you are asked
     t.steps.append(logLine(e));
@@ -332,6 +333,13 @@ function addEvents(t, events) {
   if (events.length) t.steps.scrollTop = t.steps.scrollHeight;
   renderSummary(t);
   if (textChanged) renderAnswer(t);
+}
+
+function userImagesCard(t, raw) {
+  try {
+    const images = JSON.parse(raw);
+    t.root.append(el("div", { class: "bubble user" }, ...images.map(im => el("img", { src: "data:" + im.mime + ";base64," + im.data, alt: im.name, class: "attached-image" }))));
+  } catch (_) {}
 }
 
 // After a turn ends: what it pushed, why it failed, and what it saved to memory.
@@ -494,6 +502,7 @@ $("reply-form").addEventListener("submit", (e) => {
 
 // Sends a message as the next turn of the conversation and starts following it.
 async function sendReply(text) {
+  const images = await readImages();
   const tail = thread[thread.length - 1];
   const agent = $("reply-agent").value;
   const nowUnix = Math.floor(Date.now() / 1000);
@@ -520,7 +529,8 @@ async function sendReply(text) {
   const token = pollToken;
   guarded($("reply-send"), async () => {
     try {
-      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent });
+      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent, images });
+      $("reply-images").value = "";
       t.s = s;
       if (pollToken !== token || currentView !== "session") return;
       setComposer();
@@ -544,8 +554,8 @@ async function sendReply(text) {
 // Say something to the agent while it works. now=true stops what it is doing and
 // carries on from the message. The message appears in the conversation when the
 // server logs it (see steerCard).
-async function readImages() {
-  const files = [...$("reply-images").files];
+async function readImages(inputID = "reply-images") {
+  const files = [...$(inputID).files];
   if (files.length > 4 || files.some(f => f.size > 5 * 1024 * 1024) || files.reduce((n,f)=>n+f.size,0) > 5*1024*1024) throw new Error("Attach up to 4 images, 5 MB total");
   return Promise.all(files.map(f => new Promise((resolve,reject) => { const r=new FileReader(); r.onload=()=>resolve({name:f.name,mime:f.type,data:String(r.result).split(",")[1]}); r.onerror=()=>reject(new Error("Could not read image")); r.readAsDataURL(f); })));
 }

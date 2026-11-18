@@ -377,3 +377,66 @@ func TestSyncUpdatesUpdatesPullRequestOnGitServer(t *testing.T) {
 		t.Errorf("after SyncUpdates, nothing more is offered: %+v", ups)
 	}
 }
+
+func TestSyncUpdatesSkipsBuildFixUnlessCompleteChange(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x", Title: "Feature: Add user profile", Body: "Initial profile feature"}); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	second := store.Session{ID: "s2", Task: "Add user profile", Agent: "antigravity", Mode: "hands-off", Prompt: "fix build issue", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}
+	if err := st.CreateSession(second); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "prtitle", "Fix: Build issue")
+	st.AddEvent("s2", "out", "Fixed the syntax error in profile.go")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	st.MarkFinished("s2", store.StatusDone, "")
+
+	if err := svc.SyncUpdates(ctx, "s1"); err != nil {
+		t.Fatalf("SyncUpdates failed: %v", err)
+	}
+
+	if sent, ok := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]; ok && sent != "" {
+		t.Errorf("expected build fix not to update PR text on git server, but got: %q", sent)
+	}
+
+	second, _, _ = st.Session("s2")
+	thread = append(thread, second)
+	if ups, _ := svc.Updates(thread); len(ups) != 0 {
+		t.Errorf("expected no updates offered for routine build fix, got: %+v", ups)
+	}
+}
+
+func TestSyncUpdatesUpdatesWhenBuildFixCompletelyChanges(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x", Title: "Feature: Add user profile", Body: "Initial profile feature"}); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	second := store.Session{ID: "s2", Task: "Add user profile", Agent: "antigravity", Mode: "hands-off", Prompt: "fix build issue", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}
+	if err := st.CreateSession(second); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "prtitle", "Feature: Complete OAuth rewrite")
+	st.AddEvent("s2", "prbody", "Completely rewrote auth to use standard OAuth2 provider.")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	st.MarkFinished("s2", store.StatusDone, "")
+
+	if err := svc.SyncUpdates(ctx, "s1"); err != nil {
+		t.Fatalf("SyncUpdates failed: %v", err)
+	}
+
+	sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]
+	if !strings.Contains(sent, "Feature: Complete OAuth rewrite") || !strings.Contains(sent, "Completely rewrote auth to use standard OAuth2 provider.") {
+		t.Errorf("expected PATCH to update PR when completely changed, got: %q", sent)
+	}
+}

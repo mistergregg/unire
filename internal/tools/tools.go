@@ -183,6 +183,112 @@ func isFixSubject(s string) bool {
 	return false
 }
 
+// IsBuildFixTitle reports whether a pull request title indicates a routine
+// build, test, CI, check, compiler, or linter fix rather than a substantive
+// feature or functional bug fix.
+func IsBuildFixTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return false
+	}
+	subject := stripConventional(title)
+	if colon := strings.Index(subject, ":"); colon >= 0 {
+		subject = subject[colon+1:]
+	}
+	subject = strings.TrimSpace(subject)
+	lowerSubject := strings.ToLower(subject)
+	for {
+		trimmed := false
+		for _, pref := range []string{"the ", "this ", "a ", "fix ", "fixes ", "fixing ", "fixed "} {
+			if strings.HasPrefix(lowerSubject, pref) {
+				lowerSubject = strings.TrimSpace(strings.TrimPrefix(lowerSubject, pref))
+				trimmed = true
+			}
+		}
+		if !trimmed {
+			break
+		}
+	}
+
+	buildSubjects := []string{
+		"build issue", "build error", "build failure", "build fix", "build fail", "broken build", "failing build", "build",
+		"broken test", "broken tests", "failing test", "failing tests", "failed test", "failed tests", "test failure", "test failures", "test error", "test errors", "tests fail", "tests failing", "tests",
+		"failing check", "failing checks", "failed check", "failed checks", "check failure", "check failures", "checks",
+		"ci failure", "ci error", "ci issue", "ci fail", "broken ci", "failing ci", "ci",
+		"pipeline failure", "pipeline error", "pipeline fail", "pipeline",
+		"compile error", "compile failure", "compiler error", "compilation error", "compilation failure", "compile", "compilation",
+		"syntax error", "syntax errors", "syntax",
+		"lint error", "lint failure", "linter error", "lint issue", "lint", "linter",
+	}
+
+	for _, bs := range buildSubjects {
+		if lowerSubject == bs || strings.HasPrefix(lowerSubject, bs+" ") || strings.HasPrefix(lowerSubject, bs+":") || strings.HasPrefix(lowerSubject, bs+"-") || strings.HasPrefix(lowerSubject, bs+" in ") || strings.HasPrefix(lowerSubject, bs+" on ") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsBuildFixPrompt reports whether a turn's prompt or instruction indicates
+// that the turn is fixing routine build, test, CI, check, compilation, or lint failures.
+func IsBuildFixPrompt(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return false
+	}
+	lower := strings.ToLower(prompt)
+	// System-generated autofix prompt or failure message.
+	if strings.Contains(lower, "because the checks on pull request") ||
+		strings.Contains(lower, "find the cause from the log, fix it on this branch") {
+		return true
+	}
+
+	// Clean leading polite prefixes or greetings.
+	p := lower
+	for _, pref := range []string{
+		"please ", "can you ", "could you ", "would you ", "hey ", "hi ", "hello ",
+		"the ", "our ", "this ",
+	} {
+		if strings.HasPrefix(p, pref) {
+			p = strings.TrimSpace(strings.TrimPrefix(p, pref))
+		}
+	}
+
+	buildPrefixes := []string{
+		"fix build", "fixes build", "fixing build", "fixed build",
+		"fix the build", "fixes the build",
+		"fix checks", "fixes checks", "fixing checks", "fixed checks",
+		"fix the checks", "fixes the checks",
+		"fix check", "fixes check",
+		"fix tests", "fixes tests", "fixing tests", "fixed tests",
+		"fix the tests", "fixes the tests",
+		"fix test", "fixes test",
+		"fix failing", "fixes failing", "fixing failing",
+		"fix the failing",
+		"fix broken", "fixes broken", "fixing broken",
+		"fix the broken",
+		"fix ci", "fixes ci", "fixing ci",
+		"fix the ci",
+		"fix compile", "fixes compile", "fixing compile",
+		"fix compilation", "fixes compilation",
+		"fix compiler",
+		"fix syntax", "fixes syntax",
+		"fix lint", "fixes lint",
+		"fix linter", "fixes linter",
+		"build issue", "build error", "build failure", "build is broken", "build is failing", "build failed", "broken build",
+		"checks failing", "checks failed", "failing checks", "checks are failing",
+		"tests failing", "tests failed", "failing tests", "broken tests", "tests are failing",
+		"ci failing", "ci failed", "ci is failing", "ci failure",
+		"compile error", "compilation error", "syntax error", "lint error", "linter error",
+	}
+	for _, bp := range buildPrefixes {
+		if strings.HasPrefix(p, bp) {
+			return true
+		}
+	}
+	return false
+}
+
 // Ask lets the agent put a question to the owner and wait for the answer.
 var Ask = Tool{
 	Name: "ask",

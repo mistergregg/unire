@@ -671,8 +671,11 @@ func (s *Service) Updates(thread []store.Session) ([]Update, error) {
 		if t == nil || !t.FinishedAt.After(rec.DescribedAt) {
 			continue
 		}
+		if !s.isUpdateNecessary(rec, *t, thread) {
+			continue
+		}
 		title := titleOf(s.Store, thread, *t)
-		if !hasPRTitle(s.Store, t.ID) && rec.Title != "" {
+		if (!hasPRTitle(s.Store, t.ID) || tools.IsBuildFixTitle(title)) && rec.Title != "" {
 			title = tools.FormatPRTitle(rec.Title)
 		}
 		out = append(out, Update{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: title, Body: bodyOf(s.Store, *t, thread[0].Task)})
@@ -680,31 +683,109 @@ func (s *Service) Updates(thread []store.Session) ([]Update, error) {
 	return out, nil
 }
 
-func hasPRTitle(st *store.Store, sessionID string) bool {
+func prTitleOf(st *store.Store, sessionID string) string {
 	if events, err := st.Events(sessionID, 0, 5000); err == nil {
 		for _, e := range events {
 			if e.Kind == "prtitle" && strings.TrimSpace(e.Text) != "" {
-				return true
+				return strings.TrimSpace(e.Text)
 			}
 		}
+	}
+	return ""
+}
+
+func prBodyOf(st *store.Store, sessionID string) string {
+	if events, err := st.Events(sessionID, 0, 5000); err == nil {
+		for _, e := range events {
+			if e.Kind == "prbody" && strings.TrimSpace(e.Text) != "" {
+				return strings.TrimSpace(e.Text)
+			}
+		}
+	}
+	return ""
+}
+
+func hasPRTitle(st *store.Store, sessionID string) bool {
+	return prTitleOf(st, sessionID) != ""
+}
+
+// isBuildFixTurn reports whether turn t is fixing routine build, test, check,
+// compilation, or CI failures.
+func (s *Service) isBuildFixTurn(t store.Session) bool {
+	if tools.IsBuildFixPrompt(t.Prompt) {
+		return true
+	}
+	if prTitle := prTitleOf(s.Store, t.ID); prTitle != "" && tools.IsBuildFixTitle(prTitle) {
+		return true
 	}
 	return false
 }
 
+// isCompleteChange reports whether a build fix turn completely changed the
+// pull request's subject, feature, or description.
+func (s *Service) isCompleteChange(rec store.PullRequest, t store.Session) bool {
+	prTitle := prTitleOf(s.Store, t.ID)
+	if prTitle != "" && !tools.IsBuildFixTitle(prTitle) {
+		formatted := tools.FormatPRTitle(prTitle)
+		if formatted != rec.Title {
+			return true
+		}
+	}
+	prBody := prBodyOf(s.Store, t.ID)
+	if prBody != "" && !tools.IsBuildFixPrompt(prBody) && len(prBody) > 40 {
+		return true
+	}
+	return false
+}
+
+// isUpdateNecessary reports whether later changes pushed by turn t warrant
+// updating the pull request's title and description on the git server.
+// Routine build, test, and CI fixes do not update the pull request unless
+// the changes completely revise the pull request.
+func (s *Service) isUpdateNecessary(rec store.PullRequest, t store.Session, thread []store.Session) bool {
+	if s.isBuildFixTurn(t) {
+		return s.isCompleteChange(rec, t)
+	}
+	return true
+}
+
 // SyncUpdates updates open pull requests that have new commits pushed by a later turn,
 // changing their title and description on the git server to match what has changed.
+// It only updates when necessary, skipping routine build and check fixes unless the
+// pull request was completely changed.
 func (s *Service) SyncUpdates(ctx context.Context, rootID string) error {
 	thread, err := s.Store.Thread(rootID)
 	if err != nil || len(thread) == 0 {
 		return err
 	}
 	ups, err := s.Updates(thread)
-	if err != nil || len(ups) == 0 {
+	if err != nil {
 		return err
 	}
 	for _, u := range ups {
 		if _, err := s.SetText(ctx, rootID, u.ServerID, u.Repo, u.Number, u.Title, u.Body); err != nil {
 			return err
+		}
+	}
+	// For pull requests with pushes that were not considered necessary updates
+	// (e.g. routine build fixes), advance described_at so they are recorded as handled.
+	recs, err := s.Store.PullRequests(rootID)
+	if err != nil {
+		return err
+	}
+	_, last := s.pushes(thread)
+	for _, rec := range recs {
+		var t *store.Session
+		for p, turn := range last {
+			if p.serverID == rec.ServerID && p.repo == rec.Repo && p.branch == rec.Branch {
+				turn := turn
+				if t == nil || turn.FinishedAt.After(t.FinishedAt) {
+					t = &turn
+				}
+			}
+		}
+		if t != nil && t.FinishedAt.After(rec.DescribedAt) && !s.isUpdateNecessary(rec, *t, thread) {
+			_ = s.Store.SetPullRequestDescribed(rec.ServerID, rec.Repo, rec.Number, rec.Title)
 		}
 	}
 	return nil

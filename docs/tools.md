@@ -66,8 +66,9 @@ Unire opens pull requests only when you say so, and follows them afterwards.
 titles follow the `Feature: <description>` or `Fix: <description>` naming subject
 convention. The agent cannot open the pull request; the last suggestion wins.
 When later turns push to a branch with an open pull request, Unire automatically
-updates the pull request's title and description on the git server to describe
-what has changed.
+updates the pull request's title and description on the git server when necessary
+to describe what has changed. Routine build, test, and CI fixes do not update the
+pull request details unless the changes completely revise the pull request.
 
 ### `pr-body`
 

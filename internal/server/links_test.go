@@ -216,3 +216,25 @@ func TestTheParentToolGivesTheLatestAndCountsItAsSeen(t *testing.T) {
 		t.Errorf("a chat without a parent: %q", got)
 	}
 }
+
+// A conversation is one branch and so one pull request: a reply answered by a different
+// agent adds commits to that branch instead of starting a second branch to open a second
+// pull request from.
+func TestAReplyByAnotherAgentContinuesTheSameBranch(t *testing.T) {
+	e, base := pickEnv(t)
+	code, a, raw := startChat(e, "build it", []map[string]any{repoRef(base, "Gbreed/echotalk-mobile")})
+	if code != http.StatusCreated {
+		t.Fatalf("start = %d %s", code, raw)
+	}
+	aid := a["id"].(string)
+	e.waitStatus(aid, "done")
+	code, raw = e.do("POST", "/api/sessions/"+aid+"/reply", map[string]any{"prompt": "now review it", "agent": "antigravity"})
+	var b map[string]any
+	json.Unmarshal([]byte(raw), &b)
+	if code != http.StatusCreated {
+		t.Fatalf("reply = %d %s", code, raw)
+	}
+	if b["agent"] != "antigravity" || b["branch"] != a["branch"] {
+		t.Errorf("the second agent continues branch %v, got agent %v on branch %v", a["branch"], b["agent"], b["branch"])
+	}
+}

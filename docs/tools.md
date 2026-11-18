@@ -198,3 +198,9 @@ Separate from the `unire` tools above, the sandbox image carries programs an age
 | `go`, `golangci-lint`, `gosec`, `semgrep` | Build, lint and scan. `semgrep` needs rules in a local file because the sandbox cannot reach its rule registry. |
 
 All versions are pinned in `docker/sandbox/Dockerfile`, and the `sandbox-smoke` CI job runs each one.
+
+### One conversation, one branch, one pull request
+
+A conversation works on one branch. A reply continues it, whichever agent answers (a different agent used to get a branch of its own, which produced a second pull request repeating the first one's changes). Commits pushed by a later turn therefore update the same pull request on their own.
+
+What can go stale is its **title and description**. The text offered for a pull request is always written from the turn that pushed the branch (that turn's `unire pr`/`unire pr-body`, else the end of its answer), never from an earlier turn. When a later turn pushes to a branch that already has a pull request, its card shows **Later work was added to this branch. Update the title and description to match?** with the new text for you to edit and apply. Nothing changes until you press the button.

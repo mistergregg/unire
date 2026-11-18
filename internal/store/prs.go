@@ -14,8 +14,9 @@ type PullRequest struct {
 	Title       string
 	URL         string
 	CreatedAt   time.Time
-	FixAttempts int    // times a fix was started by itself for failing checks
-	FixSHA      string // the commit that was last tried (a new commit may be tried again)
+	FixAttempts int       // times a fix was started by itself for failing checks
+	FixSHA      string    // the commit that was last tried (a new commit may be tried again)
+	DescribedAt time.Time // when its title and description were last set (the time it was opened, until updated)
 }
 
 // AddPullRequest records a pull request a conversation opened.
@@ -27,7 +28,7 @@ func (s *Store) AddPullRequest(p PullRequest) error {
 
 // PullRequests lists a conversation's pull requests, oldest first.
 func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
-	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, fix_attempts, fix_sha FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, fix_attempts, fix_sha, described_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,11 +36,15 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 	var out []PullRequest
 	for rows.Next() {
 		var p PullRequest
-		var at int64
-		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.FixAttempts, &p.FixSHA); err != nil {
+		var at, described int64
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.FixAttempts, &p.FixSHA, &described); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.Unix(at, 0)
+		p.DescribedAt = p.CreatedAt
+		if described > 0 {
+			p.DescribedAt = time.Unix(described, 0)
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -76,4 +81,10 @@ func (s *Store) ConversationsWithOpenPullRequests() ([]string, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// SetPullRequestDescribed records a new title for a pull request and that its description was just set.
+func (s *Store) SetPullRequestDescribed(serverID, repo string, number int, title string) error {
+	_, err := s.db.Exec(`UPDATE pull_requests SET title = ?, described_at = ? WHERE server_id = ? AND repo = ? AND number = ?`, title, s.now().Unix(), serverID, repo, number)
+	return err
 }

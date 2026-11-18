@@ -9,6 +9,7 @@ let pullsData = { proposals: [], pulls: [] };
 let pullsFor = ""; // the conversation pullsData belongs to
 const openPulls = new Set(); // pull requests whose details are open, by key
 const proposalEls = new Map(); // a proposal card is kept between refreshes, so what you typed in it stays
+const updateEls = new Map(); // the same for the form that updates a pull request's text
 
 // "Not now" is remembered in this browser, per conversation and branch.
 const DISMISSED = "unire.pr.dismissed";
@@ -27,6 +28,7 @@ function resetPulls() {
   pullsData = { proposals: [], pulls: [] };
   pullsFor = "";
   proposalEls.clear();
+  updateEls.clear();
   $("pulls").replaceChildren();
 }
 
@@ -111,7 +113,8 @@ function pullCard(p) {
   if (p.state === "open") actions.append(stateButton(p, false, "Close pull request"));
   else if (p.state === "closed") actions.append(stateButton(p, true, "Reopen pull request"));
   if (actions.children.length) details.append(actions);
-  return el("div", { class: "pr-card" }, head, details);
+  const up = (pullsData.updates || []).find((u) => u.serverId === p.serverId && u.repo === p.repo && u.number === p.number);
+  return el("div", { class: "pr-card" }, head, details, up ? updateForm(p, up) : "");
 }
 
 function handButton(label, message, free) {
@@ -306,4 +309,28 @@ function autoFixRow() {
   return el("label", { class: "pr-auto" }, box,
     el("span", {}, " Fix failing checks automatically"),
     el("span", { class: "muted" }, " · Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request."));
+}
+
+// A later turn pushed to this pull request's branch, so the pull request already has the
+// new commits; its title and description are what went stale. This offers the new text,
+// written from the turn that pushed, for you to look at and apply.
+function updateForm(p, up) {
+  const key = pullKey(p) + "/" + up.title + "/" + up.body.length;
+  if (updateEls.has(key)) return updateEls.get(key);
+  const title = el("input", { type: "text", value: up.title, maxlength: "250", "aria-label": "New pull request title" });
+  const body = el("textarea", { rows: "6", maxlength: "20000", "aria-label": "New pull request description" });
+  body.value = up.body;
+  const apply = el("button", { type: "button", class: "primary small" }, "Update the pull request's text");
+  apply.addEventListener("click", () => guarded(apply, async () => {
+    const tail = thread[thread.length - 1];
+    await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/pulls/update",
+      { serverId: p.serverId, repo: p.repo, number: p.number, title: title.value, body: body.value });
+    updateEls.delete(key);
+    await refreshPulls();
+  }));
+  const box = el("details", { class: "pr-update" },
+    el("summary", {}, "Later work was added to this branch. Update the title and description to match?"),
+    title, body, el("div", { class: "pr-actions" }, apply));
+  updateEls.set(key, box);
+  return box;
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mistergregg/unire/internal/gitprovider"
 	"github.com/mistergregg/unire/internal/store"
@@ -262,5 +263,82 @@ func TestTheAgentCanCloseAndReopenItsPullRequest(t *testing.T) {
 	}
 	if !svc.HasAny(ctx, "s1") {
 		t.Error("a closed pull request keeps the tools, so it can be reopened")
+	}
+}
+
+// A later turn that pushes the same branch updates the same pull request, and its text is
+// written from that turn, not copied from the first turn's description.
+func TestTheDescriptionComesFromTheTurnThatPushedNotAnEarlierOne(t *testing.T) {
+	svc, thread, _ := setup(t)
+	st := svc.Store
+	st.AddEvent("s1", "prbody", "Description of the FIRST piece of work.")
+	second := store.Session{ID: "s2", Task: "Fix the login", Agent: "antigravity", Mode: "hands-off", Prompt: "now also add tests", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}
+	if err := st.CreateSession(second); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "out", "I added the tests for the redirect.")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	st.MarkFinished("s2", store.StatusDone, "")
+	thread = append(thread, second)
+
+	props, err := svc.Proposals(thread)
+	if err != nil || len(props) != 1 {
+		t.Fatalf("one branch, one proposal: %+v %v", props, err)
+	}
+	if strings.Contains(props[0].Body, "FIRST piece") || !strings.Contains(props[0].Body, "I added the tests for the redirect.") {
+		t.Errorf("the offered description describes the turn that pushed: %q", props[0].Body)
+	}
+	if props[0].Title == "" || strings.Contains(props[0].Title, "FIRST") {
+		t.Errorf("title = %q", props[0].Title)
+	}
+}
+
+func TestALaterTurnOffersToUpdateThePullRequestsText(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if ups, _ := svc.Updates(thread); len(ups) != 0 {
+		t.Fatalf("nothing has changed since it was opened: %+v", ups)
+	}
+
+	time.Sleep(1200 * time.Millisecond) // the next turn finishes after the pull request's text was set
+	second := store.Session{ID: "s2", Task: "Fix the login", Agent: "antigravity", Mode: "hands-off", Prompt: "also tests", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}
+	if err := st.CreateSession(second); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "prtitle", "Fix the login redirect and add tests")
+	st.AddEvent("s2", "prbody", "Adds tests for the redirect.")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	st.MarkFinished("s2", store.StatusDone, "")
+	second, _, _ = st.Session("s2") // as the server loads it: with the time it finished
+	thread = append(thread, second)
+
+	ups, err := svc.Updates(thread)
+	if err != nil || len(ups) != 1 {
+		t.Fatalf("the branch was pushed again, so its text can be updated: %+v %v", ups, err)
+	}
+	u := ups[0]
+	if u.Number != 4 || u.Title != "Fix the login redirect and add tests" || !strings.Contains(u.Body, "Adds tests for the redirect.") {
+		t.Errorf("update = %+v", u)
+	}
+	if _, err := svc.SetText(ctx, "s1", u.ServerID, u.Repo, u.Number, u.Title, u.Body); err != nil {
+		t.Fatal(err)
+	}
+	sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]
+	if !strings.Contains(sent, "Fix the login redirect and add tests") || !strings.Contains(sent, "Adds tests for the redirect.") {
+		t.Errorf("the server was sent %q", sent)
+	}
+	if ups, _ := svc.Updates(thread); len(ups) != 0 {
+		t.Errorf("once updated, nothing more is offered: %+v", ups)
+	}
+	if _, err := svc.SetText(ctx, "s1", u.ServerID, u.Repo, 99, "x", "y"); err == nil {
+		t.Error("a pull request this conversation did not open must not be changed")
+	}
+	if _, err := svc.SetText(ctx, "s1", u.ServerID, u.Repo, 4, " ", "y"); err == nil {
+		t.Error("a title is required")
 	}
 }

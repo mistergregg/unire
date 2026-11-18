@@ -39,7 +39,11 @@ func (s *Server) getPulls(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []pulls.View{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"proposals": props, "pulls": list, "autoFix": thread[0].AutoFix, "maxFix": maxAutoFix})
+	ups, _ := s.pulls.Updates(thread)
+	if ups == nil {
+		ups = []pulls.Update{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": props, "pulls": list, "updates": ups, "autoFix": thread[0].AutoFix, "maxFix": maxAutoFix})
 }
 
 // openPull opens a pull request for a branch the conversation pushed, after the
@@ -165,6 +169,34 @@ func (s *Server) setPullOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.pulls.SetOpen(r.Context(), thread[0].ID, req.ServerID, req.Repo, req.Number, req.Open)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// updatePull changes the title and description of a pull request the conversation opened,
+// after the owner looked at what the latest turn would put there.
+func (s *Server) updatePull(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	var req pulls.Update
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Title) > 250 || len(req.Body) > 20000 {
+		writeErr(w, http.StatusBadRequest, "the title or description is too long")
+		return
+	}
+	thread, err := s.threadOf(x.ID)
+	if err != nil || len(thread) == 0 {
+		serverError(w)
+		return
+	}
+	v, err := s.pulls.SetText(r.Context(), thread[0].ID, req.ServerID, req.Repo, req.Number, req.Title, req.Body)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

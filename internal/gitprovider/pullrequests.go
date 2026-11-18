@@ -72,6 +72,8 @@ type PullRequests interface {
 	// SetPROpen closes a pull request (open false) or reopens it. Nothing is merged
 	// or deleted.
 	SetPROpen(ctx context.Context, repo string, number int, open bool) error
+	// UpdatePR changes a pull request's title and description.
+	UpdatePR(ctx context.Context, repo string, number int, title, body string) error
 }
 
 // ErrNoPullRequests is returned by AsPullRequests for a provider without them.
@@ -496,4 +498,18 @@ func openWord(open bool) string {
 		return "open"
 	}
 	return "closed"
+}
+
+// ---- changing the title and description ----
+
+func (g github) UpdatePR(ctx context.Context, repo string, number int, title, body string) error {
+	return g.c.doJSON(ctx, "PATCH", fmt.Sprintf("/repos/%s/pulls/%d", repo, number), map[string]string{"title": title, "body": body}, nil)
+}
+
+func (g gitea) UpdatePR(ctx context.Context, repo string, number int, title, body string) error {
+	return g.c.doJSON(ctx, "PATCH", fmt.Sprintf("/repos/%s/pulls/%d", repo, number), map[string]string{"title": title, "body": body}, nil)
+}
+
+func (g gitlab) UpdatePR(ctx context.Context, repo string, number int, title, body string) error {
+	return g.c.doJSON(ctx, "PUT", fmt.Sprintf("%s/merge_requests/%d", g.project(repo), number), map[string]string{"title": title, "description": body}, nil)
 }

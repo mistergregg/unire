@@ -168,7 +168,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		}
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: sameAgentBranch(x, agentID),
+		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 	})
 	if err != nil {
@@ -319,15 +319,11 @@ func (s *Server) answerQuestion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// sameAgentBranch is the branch a reply continues on: its conversation's own,
-// when the same agent carries on. A different agent starts a new branch from
-// the same work.
-func sameAgentBranch(prev store.Session, agentID string) string {
-	if agentID == prev.Agent {
-		return prev.Branch
-	}
-	return ""
-}
+// replyBranch is the branch a reply continues on: the conversation's own, whichever agent
+// answers. A conversation is one branch and so one pull request: a later turn (even by a
+// different agent) adds commits to it, which updates the pull request, instead of starting
+// a second branch and a second pull request that repeats the first one's changes.
+func replyBranch(prev store.Session) string { return prev.Branch }
 
 // steerSession gives a running agent a message (see sessions.Manager.Steer).
 func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {

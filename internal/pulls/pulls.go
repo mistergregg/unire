@@ -135,7 +135,7 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 	for _, p := range have {
 		opened[target{p.ServerID, p.Repo, p.Branch, p.Base}] = true
 	}
-	title := suggestedTitle(s.Store, thread)
+
 	order, last := s.pushes(thread)
 	var out []Proposal
 	for _, p := range order {
@@ -146,11 +146,11 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 		if opened[target{p.serverID, p.repo, p.branch, base}] {
 			continue
 		}
-		t := title
+		t := titleOf(s.Store, thread, last[p])
 		if p.base != "" {
-			t = title + " (into " + p.base + ")" // an extra branch is told apart from the main one
+			t += " (into " + p.base + ")" // an extra branch is told apart from the main one
 		}
-		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: base, Title: t, Body: bodyOf(s.Store, thread, last[p], thread[0].Task)})
+		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: base, Title: t, Body: bodyOf(s.Store, last[p], thread[0].Task)})
 	}
 	return out, nil
 }
@@ -166,15 +166,12 @@ func baseOf(first store.Session, p pushed) string {
 	return ""
 }
 
-// suggestedTitle is the title the agent suggested with `unire pr`, else the
-// conversation's title.
-func suggestedTitle(st *store.Store, thread []store.Session) string {
+// titleOf is the title offered for a pull request: the one the agent suggested (pr tool)
+// in the turn that pushed the branch, else the conversation's title. Only that turn counts:
+// a title or description from an earlier turn describes earlier work.
+func titleOf(st *store.Store, thread []store.Session, t store.Session) string {
 	title := thread[0].Task
-	for _, t := range thread {
-		events, err := st.Events(t.ID, 0, 5000)
-		if err != nil {
-			continue
-		}
+	if events, err := st.Events(t.ID, 0, 5000); err == nil {
 		for _, e := range events {
 			if e.Kind == "prtitle" && strings.TrimSpace(e.Text) != "" {
 				title = strings.TrimSpace(e.Text)
@@ -184,38 +181,34 @@ func suggestedTitle(st *store.Store, thread []store.Session) string {
 	return title
 }
 
-// bodyOf is the description offered for a pull request. The agent's own
-// (pr-body) is used when it wrote one; otherwise the end of its final answer, which
-// usually says what it did. The owner sees and can edit it before anything is opened.
-func bodyOf(st *store.Store, thread []store.Session, t store.Session, task string) string {
+// bodyOf is the description offered for a pull request, written from the turn that pushed
+// the branch: the agent's own (pr-body) when it wrote one in that turn, else the end of its
+// final answer there, which usually says what it did. It is never taken from another turn:
+// a later turn's work would be described by the first turn's text. The owner sees and can
+// edit it before anything is opened.
+func bodyOf(st *store.Store, t store.Session, task string) string {
 	footer := "\n\n---\n_Opened from a Unire conversation: " + task + "_"
+	events, err := st.Events(t.ID, 0, 5000)
+	if err != nil {
+		return strings.TrimSpace(footer[5:])
+	}
 	var written string
-	for _, s := range thread {
-		events, err := st.Events(s.ID, 0, 5000)
-		if err != nil {
-			continue
-		}
-		for _, e := range events {
-			if e.Kind == "prbody" && strings.TrimSpace(e.Text) != "" {
-				written = strings.TrimSpace(e.Text) // the newest one wins
+	var answer strings.Builder
+	for _, e := range events {
+		switch {
+		case e.Kind == "prbody" && strings.TrimSpace(e.Text) != "":
+			written = strings.TrimSpace(e.Text)
+		case e.Kind == "out":
+			if answer.Len() > 0 {
+				answer.WriteString("\n")
 			}
+			answer.WriteString(e.Text)
 		}
 	}
 	if written != "" {
 		return written + footer
 	}
-	var b strings.Builder
-	if events, err := st.Events(t.ID, 0, 5000); err == nil {
-		for _, e := range events {
-			if e.Kind == "out" {
-				if b.Len() > 0 {
-					b.WriteString("\n")
-				}
-				b.WriteString(e.Text)
-			}
-		}
-	}
-	text := strings.TrimSpace(b.String())
+	text := strings.TrimSpace(answer.String())
 	if r := []rune(text); len(r) > 3000 {
 		text = strings.TrimSpace(string(r[len(r)-3000:])) // the end of the answer is its summary
 	}
@@ -262,13 +255,13 @@ func (s *Service) Open(ctx context.Context, thread []store.Session, want Proposa
 	}
 	title, body := strings.TrimSpace(want.Title), want.Body
 	if title == "" {
-		title = suggestedTitle(s.Store, thread)
+		title = titleOf(s.Store, thread, last[*found])
 		if found.base != "" {
 			title += " (into " + found.base + ")"
 		}
 	}
 	if body == "" {
-		body = bodyOf(s.Store, thread, last[*found], thread[0].Task)
+		body = bodyOf(s.Store, last[*found], thread[0].Task)
 	}
 	prs, _, err := s.prsFor(found.serverID)
 	if err != nil {
@@ -637,4 +630,78 @@ func (s *Service) ClearCache() {
 	s.mu.Lock()
 	s.cache = nil
 	s.mu.Unlock()
+}
+
+// Update is the new title and description a later turn would give an existing pull request.
+type Update struct {
+	ServerID string `json:"serverId"`
+	Repo     string `json:"repo"`
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+}
+
+// Updates lists the pull requests whose branch was pushed to again by a turn that
+// finished after the pull request's text was last set, with the text that turn would
+// give it. The branch itself needs nothing: more commits update a pull request by
+// themselves; its title and description are what go stale.
+func (s *Service) Updates(thread []store.Session) ([]Update, error) {
+	if len(thread) == 0 {
+		return nil, nil
+	}
+	recs, err := s.Store.PullRequests(thread[0].ID)
+	if err != nil {
+		return nil, err
+	}
+	_, last := s.pushes(thread)
+	var out []Update
+	for _, rec := range recs {
+		var t *store.Session
+		for p, turn := range last {
+			if p.serverID == rec.ServerID && p.repo == rec.Repo && p.branch == rec.Branch {
+				turn := turn
+				if t == nil || turn.FinishedAt.After(t.FinishedAt) {
+					t = &turn
+				}
+			}
+		}
+		if t == nil || !t.FinishedAt.After(rec.DescribedAt) {
+			continue
+		}
+		out = append(out, Update{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: titleOf(s.Store, thread, *t), Body: bodyOf(s.Store, *t, thread[0].Task)})
+	}
+	return out, nil
+}
+
+// SetText changes the title and description of one of the conversation's pull requests.
+func (s *Service) SetText(ctx context.Context, rootID, serverID, repo string, number int, title, body string) (View, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return View{}, errors.New("a pull request needs a title")
+	}
+	recs, err := s.Store.PullRequests(rootID)
+	if err != nil {
+		return View{}, err
+	}
+	for _, rec := range recs {
+		if rec.ServerID != serverID || rec.Repo != repo || rec.Number != number {
+			continue
+		}
+		prs, _, err := s.prsFor(serverID)
+		if err != nil {
+			return View{}, err
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if err := prs.UpdatePR(cctx, repo, number, title, body); err != nil {
+			return View{}, err
+		}
+		if err := s.Store.SetPullRequestDescribed(serverID, repo, number, title); err != nil {
+			return View{}, err
+		}
+		rec.Title = title
+		s.forget(rec)
+		return s.view(ctx, rec), nil
+	}
+	return View{}, errors.New("this conversation did not open that pull request")
 }

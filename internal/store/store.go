@@ -133,6 +133,9 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN auto_fix INTEGER NOT NULL DEFAULT 1;
 	ALTER TABLE pull_requests ADD COLUMN fix_attempts INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE pull_requests ADD COLUMN fix_sha TEXT NOT NULL DEFAULT '';`,
+	// 11: when a pull request's title and description were last set (0: when it was opened), so a later turn that
+	// pushes to its branch can offer to update them
+	`ALTER TABLE pull_requests ADD COLUMN described_at INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // DBFileName is the database file inside the data directory.

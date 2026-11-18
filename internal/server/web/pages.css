@@ -242,4 +242,8 @@ table.stats th { color: var(--muted); font-weight: 600; }
 .health-fix { margin-top: 4px; color: var(--muted); font-size: 14px; }
 
 .pr-auto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; margin: 0; padding: 2px 4px; font-weight: 500; }
-.pr-auto input { width: auto; margin: 0; }
+.pr-auto input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; }
+
+.pr-update { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.pr-update summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.pr-update input, .pr-update textarea { width: 100%; margin: 6px 0 0; }

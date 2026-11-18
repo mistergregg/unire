@@ -194,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/pulls", s.auth(s.getPulls))
 	mux.HandleFunc("POST /api/sessions/{id}/pulls", s.auth(s.openPull))
 	mux.HandleFunc("POST /api/sessions/{id}/pulls/state", s.auth(s.setPullOpen))
+	mux.HandleFunc("POST /api/sessions/{id}/pulls/update", s.auth(s.updatePull))
 	mux.HandleFunc("POST /api/sessions/{id}/autofix", s.auth(s.setAutoFix))
 	mux.HandleFunc("GET /api/sessions/{id}/pulls/failure", s.auth(s.getPullFailure))
 	mux.HandleFunc("POST /api/sessions/{id}/answer", s.auth(s.answerQuestion))

@@ -281,3 +281,27 @@ func TestGiteaAdmitsItHasNoLogs(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestAPullRequestsTitleAndDescriptionCanBeUpdatedOnEveryProvider(t *testing.T) {
+	cases := []struct{ typ, route, titleKey, bodyKey string }{
+		{"github", "PATCH /api/v3/repos/o/r/pulls/7", `"title":"New title"`, `"body":"New body"`},
+		{"gitea", "PATCH /api/v1/repos/o/r/pulls/7", `"title":"New title"`, `"body":"New body"`},
+		{"gitlab", "PUT /api/v4/projects/o%2Fr/merge_requests/7", `"title":"New title"`, `"description":"New body"`},
+	}
+	for _, c := range cases {
+		t.Run(c.typ, func(t *testing.T) {
+			api := &fakeAPI{routes: map[string]string{c.route: `{}`}, sent: map[string]string{}}
+			srv := httptest.NewServer(api)
+			defer srv.Close()
+			p, _ := New(Config{Type: c.typ, BaseURL: srv.URL, Token: "t"})
+			prs, _ := AsPullRequests(p)
+			if err := prs.UpdatePR(context.Background(), "o/r", 7, "New title", "New body"); err != nil {
+				t.Fatal(err)
+			}
+			sent := api.sent[c.route]
+			if !strings.Contains(sent, c.titleKey) || !strings.Contains(sent, c.bodyKey) {
+				t.Errorf("sent %q, want %s and %s", sent, c.titleKey, c.bodyKey)
+			}
+		})
+	}
+}

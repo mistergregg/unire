@@ -36,15 +36,19 @@ ARG SEMGREP_VERSION=1.100.0
 ARG TS_LSP_VERSION=4.3.4
 ARG TYPESCRIPT_VERSION=5.8.3
 RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation python3 python3-venv \
-    && rm -rf /var/lib/apt/lists/* \
-    && GOPATH=/tmp/gopath GOBIN=/usr/local/bin go install \
-         github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} \
-         github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} \
-         golang.org/x/tools/gopls@${GOPLS_VERSION} \
-    && chmod -R u+w /tmp/gopath && rm -rf /tmp/gopath /root/.cache \
-    && python3 -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-cache-dir semgrep==${SEMGREP_VERSION} \
-    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
-    && npm install -g typescript@${TYPESCRIPT_VERSION} typescript-language-server@${TS_LSP_VERSION}
+    && rm -rf /var/lib/apt/lists/*
+# One go install per tool: go refuses several modules in one command. Each is its own layer,
+# so a bump of one version rebuilds only that tool, and the module cache is removed (it is
+# read-only, hence the chmod) so it does not stay in the image.
+RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} \
+    && chmod -R u+w /tmp/gopath && rm -rf /tmp/gopath /root/.cache
+RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} \
+    && chmod -R u+w /tmp/gopath && rm -rf /tmp/gopath /root/.cache
+RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@${GOPLS_VERSION} \
+    && chmod -R u+w /tmp/gopath && rm -rf /tmp/gopath /root/.cache
+RUN python3 -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-cache-dir --default-timeout=120 --retries 5 semgrep==${SEMGREP_VERSION} \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
+RUN npm install -g typescript@${TYPESCRIPT_VERSION} typescript-language-server@${TS_LSP_VERSION}
 # No telemetry, no version check: the sandbox network does not allow them anyway.
 ENV SEMGREP_SEND_METRICS=off SEMGREP_ENABLE_VERSION_CHECK=0
 # Caches go to /tmp, which is thrown away with each sandbox. The home folder is the shared

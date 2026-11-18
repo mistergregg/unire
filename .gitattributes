@@ -1,3 +1,11 @@
 # Shell scripts that run inside Linux containers must keep LF line endings.
 docker/sandbox/unire text eol=lf
 *.sh text eol=lf
+*.go text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
+docker/sandbox/* text eol=lf

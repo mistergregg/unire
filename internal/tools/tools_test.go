@@ -28,7 +28,7 @@ func TestPromptListsOnlyTheToolsGiven(t *testing.T) {
 	if !strings.Contains(p, `unire name "<title>"`) {
 		t.Errorf("prompt does not describe the name tool: %q", p)
 	}
-	if !strings.Contains(p, "unire-shot") || !strings.Contains(p, "unire-lsp") {
+	if !strings.Contains(p, "unire-shot") || !strings.Contains(p, "unire-lsp") || !strings.Contains(p, "unire-diff") {
 		t.Errorf("prompt does not mention the checking tools: %q", p)
 	}
 }

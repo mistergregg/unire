@@ -58,6 +58,7 @@ ENV GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod GOPATH=/tmp/gopath \
     GOLANGCI_LINT_CACHE=/tmp/golangci-lint XDG_CACHE_HOME=/tmp/cache
 COPY --chmod=755 unire-shot /usr/local/bin/unire-shot
 COPY --chmod=755 unire-lsp /usr/local/bin/unire-lsp
+COPY --chmod=755 unire-diff /usr/local/bin/unire-diff
 # The command an agent runs to ask Unire for something (see internal/tools).
 COPY --chmod=755 unire /usr/local/bin/unire
 USER node

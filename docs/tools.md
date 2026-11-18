@@ -192,6 +192,7 @@ Separate from the `unire` tools above, the sandbox image carries programs an age
 
 | Command | What it does |
 |---|---|
+| `unire-diff [path]` | Self-review before `unire pr`: diff stat against the base branch, untracked and uncommitted files, then checks added lines for conflict markers and secret-like text (exit 1, values never printed), and changed files for scratch files (`.orig`, `.swp`, `~`) and `gofmt -l` (warnings only). Ends with PASS, WARN or FAIL. |
 | `unire-shot <url> [out.png] [WxH]` | Screenshot of a page served inside the sandbox (headless Chromium). Only `localhost`, `127.0.0.1` and `file:///` are accepted, and the browser cannot resolve any other name. |
 | `unire-lsp refs\|def\|symbols` | References, definition and symbol list from `gopls` (Go) or `typescript-language-server` (TS/JS). |
 | `go`, `golangci-lint`, `gosec`, `semgrep` | Build, lint and scan. `semgrep` needs rules in a local file because the sandbox cannot reach its rule registry. |

@@ -29,8 +29,9 @@ h2 { letter-spacing: -.01em; }
 .tiles > p { grid-column: 1 / -1; }
 .tile { display: flex; flex-direction: column; gap: 12px; padding: 16px; transition: transform .15s, border-color .15s, box-shadow .2s; }
 .tile:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); box-shadow: 0 16px 38px -24px var(--glow); }
-.tile-head { display: flex; align-items: center; gap: 12px; }
-.tile-title { min-width: 0; flex: 1; }
+.tile-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tile-title { min-width: 0; flex: 1 1 140px; }
+.tile-head .badge { margin-left: auto; }
 .tile-title .name { display: block; font-size: 15.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-body { font-size: 13.5px; color: var(--muted); line-height: 1.5; }

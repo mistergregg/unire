@@ -78,6 +78,13 @@ func (g github) CheckPullRequestAccess(ctx context.Context, repo string) ([]Capa
 	if checks == nil && len(commits) > 0 {
 		var runs any
 		checks = g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=1", repo, commits[0].SHA), &runs)
+		if checks != nil {
+			// A fine-grained token has no Checks permission; the workflow runs (Actions,
+			// read-only) show GitHub Actions results instead.
+			if _, werr := g.workflowRunChecks(ctx, repo, commits[0].SHA); werr == nil {
+				checks = nil
+			}
+		}
 	}
 	caps = append(caps, probe(CapChecks, checks))
 	caps = append(caps, probe(CapComments, g.c.getJSON(ctx, "/repos/"+repo+"/issues/comments?per_page=1", &list)))

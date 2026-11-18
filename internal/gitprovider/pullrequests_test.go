@@ -181,3 +181,49 @@ func TestClosingAndReopeningAPullRequestOnEveryProvider(t *testing.T) {
 		})
 	}
 }
+
+// A fine-grained GitHub token has no Checks permission, so the check runs are refused;
+// the GitHub Actions workflow runs (Actions, read-only) stand in for them.
+func TestGitHubChecksFallBackToWorkflowRunsWithoutTheChecksPermission(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/repos/o/r/commits/abc/check-runs":
+			http.Error(w, `{"message":"Resource not accessible by personal access token"}`, http.StatusForbidden)
+		case "/api/v3/repos/o/r/actions/runs":
+			w.Write([]byte(`{"workflow_runs":[{"name":"Build images","status":"completed","conclusion":"failure","html_url":"http://x/1"},{"name":"Lint","status":"in_progress","conclusion":null,"html_url":"http://x/2"},{"name":"Docs","status":"completed","conclusion":"success","html_url":"http://x/3"}]}`))
+		case "/api/v3/repos/o/r/commits/abc/status":
+			w.Write([]byte(`{"statuses":[]}`))
+		case "/api/v3/repos/o/r/commits":
+			w.Write([]byte(`[{"sha":"abc"}]`))
+		case "/api/v3/repos/o/r/pulls", "/api/v3/repos/o/r/issues/comments":
+			w.Write([]byte(`[]`))
+		case "/api/v3/repos/o/r":
+			w.Write([]byte(`{"permissions":{"push":true}}`))
+		default:
+			http.Error(w, "{}", 404)
+		}
+	}))
+	defer srv.Close()
+	p, _ := New(Config{Type: "github", BaseURL: srv.URL, Token: "t"})
+	prs, _ := AsPullRequests(p)
+	checks, err := prs.Checks(context.Background(), "o/r", PullRequest{HeadSHA: "abc"})
+	if err != nil || len(checks) != 3 {
+		t.Fatalf("checks = %+v, %v", checks, err)
+	}
+	states := map[string]string{}
+	for _, c := range checks {
+		states[c.Name] = c.State
+	}
+	if states["Build images"] != CheckFailure || states["Lint"] != CheckPending || states["Docs"] != CheckSuccess {
+		t.Errorf("states = %v", states)
+	}
+	caps, err := p.(PermissionChecker).CheckPullRequestAccess(context.Background(), "o/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range caps {
+		if c.Name == CapChecks && !c.OK {
+			t.Errorf("checks are readable through the workflow runs, so the check should pass: %+v", c)
+		}
+	}
+}

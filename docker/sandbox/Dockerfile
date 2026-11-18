@@ -47,6 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-
     && npm install -g typescript@${TYPESCRIPT_VERSION} typescript-language-server@${TS_LSP_VERSION}
 # No telemetry, no version check: the sandbox network does not allow them anyway.
 ENV SEMGREP_SEND_METRICS=off SEMGREP_ENABLE_VERSION_CHECK=0
+# Caches go to /tmp, which is thrown away with each sandbox. The home folder is the shared
+# login volume (every chat uses it), so Go's module and build caches, golangci-lint's and
+# the rest would otherwise pile up there for ever.
+ENV GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod GOPATH=/tmp/gopath \
+    GOLANGCI_LINT_CACHE=/tmp/golangci-lint XDG_CACHE_HOME=/tmp/cache
 COPY --chmod=755 unire-shot /usr/local/bin/unire-shot
 COPY --chmod=755 unire-lsp /usr/local/bin/unire-lsp
 # The command an agent runs to ask Unire for something (see internal/tools).

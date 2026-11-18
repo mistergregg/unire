@@ -20,7 +20,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 |---|---|
 | First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `branches`, `repo`, `memory` (with memory on), `parent` (if it follows a parent chat) |
 | A reply in a conversation | `ask`, `pr` (the conversation keeps its name) |
-| A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
+| A reply, in a conversation with a pull request | `ask`, `pr-status`, `pr-logs`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
 ## `name`
 
@@ -77,6 +77,19 @@ The agent cannot merge. You can do the same with the **Close pull request** and
   that branch in the repo's git config (`branch.<name>.unire-base`), because pushing
   replaces the upstream.
 - **Several repos** already work: each repo the chat pushed has its own card.
+
+### `pr-logs`
+
+`unire pr-logs` shows why the failing checks of the pull request failed: which checks, the failed step, the error lines and the end of the log. Only Unire holds the token that can read a git server's job logs, so the agent asks Unire (it cannot sign in to the job page itself). Logs come from GitHub (job and workflow run logs; the token needs Actions read-only) and GitLab (job traces); Gitea and Forgejo give none through their API, so the agent is pointed at the check's link.
+
+### Fixing failing checks by itself
+
+When a pull request a chat opened has checks that have finished and failed, Unire starts a turn in that chat on its own: it reads why from the CI log and tells the agent (the same text the pr-logs tool shows), and the agent fixes the cause and pushes to the same branch, which updates the pull request. The turn's message starts "Unire is starting this turn by itself" and says which try it is, so it is never a surprise.
+
+- It waits until every check has finished (the logs would be incomplete otherwise), only starts when the chat is idle and its last turn finished normally, and never tries the same commit twice.
+- It stops after **3 tries per pull request**, so a failure the agent cannot fix (a missing secret, a service that is down) does not loop. The agent is told to say so plainly in that case.
+- It is **on by default** for each chat and can be turned off with **Fix failing checks automatically** above the pull request cards. **Ask the agent to fix the checks** on a card does the same once, whenever you press it, with the log included.
+- It looks every minute, so a fix starts within a minute or two of the checks finishing.
 
 ### `pr-status`, `pr-comments`, `pr-reply`
 

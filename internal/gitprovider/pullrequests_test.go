@@ -227,3 +227,57 @@ func TestGitHubChecksFallBackToWorkflowRunsWithoutTheChecksPermission(t *testing
 		}
 	}
 }
+
+func TestAFailedChecksLogIsReadAndShortened(t *testing.T) {
+	var logAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/repos/o/r/actions/runs/77/jobs":
+			w.Write([]byte(`{"jobs":[{"id":1,"name":"lint","conclusion":"success"},{"id":2,"name":"test","conclusion":"failure"}]}`))
+		case "/api/v3/repos/o/r/actions/jobs/2":
+			w.Write([]byte(`{"name":"test","steps":[{"name":"Run go vet","conclusion":"success"},{"name":"Run go test -race ./...","conclusion":"failure"}]}`))
+		case "/api/v3/repos/o/r/actions/jobs/2/logs":
+			logAuth = r.Header.Get("Authorization")
+			var b strings.Builder
+			b.WriteString("2026-11-17T01:00:00.0000000Z ##[error]early problem in setup\n")
+			for i := 0; i < 300; i++ {
+				b.WriteString("2026-11-17T01:00:01.0000000Z \x1b[32mok\x1b[0m   package " + strings.Repeat("x", 10) + "\n")
+			}
+			b.WriteString("2026-11-17T01:00:09.0000000Z --- FAIL: TestSteering (0.20s)\n2026-11-17T01:00:09.0000000Z     steer_test.go:12: the agent was told 1 messages\n")
+			w.Write([]byte(b.String()))
+		default:
+			http.Error(w, "{}", 404)
+		}
+	}))
+	defer srv.Close()
+	p, _ := New(Config{Type: "github", BaseURL: srv.URL, Token: "secret-token"})
+	lp, ok := p.(LogProvider)
+	if !ok {
+		t.Fatal("GitHub gives failure logs")
+	}
+	got, err := lp.FailureLog(context.Background(), "o/r", Check{Name: "Build images", State: CheckFailure, RunID: 77})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Failed: job test, step Run go test -race ./...", "--- FAIL: TestSteering", "the agent was told 1 messages", "##[error]early problem in setup"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the failure log should contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[") || strings.Contains(got, "2026-11-17T") {
+		t.Errorf("colour codes and timestamps are removed:\n%.300s", got)
+	}
+	if len(got) > logMaxChars+500 {
+		t.Errorf("the excerpt is capped, got %d characters", len(got))
+	}
+	if logAuth != "Bearer secret-token" {
+		t.Errorf("the log is asked for with the token, got %q", logAuth)
+	}
+}
+
+func TestGiteaAdmitsItHasNoLogs(t *testing.T) {
+	p, _ := New(Config{Type: "gitea", BaseURL: "http://x", Token: "t"})
+	if _, err := p.(LogProvider).FailureLog(context.Background(), "o/r", Check{}); err != ErrNoLogs {
+		t.Errorf("err = %v", err)
+	}
+}

@@ -239,3 +239,6 @@ table.stats th { color: var(--muted); font-weight: 600; }
 .health-name { font-weight: 650; }
 .health-summary { overflow-wrap: anywhere; }
 .health-fix { margin-top: 4px; color: var(--muted); font-size: 14px; }
+
+.pr-auto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; margin: 0; padding: 2px 4px; font-weight: 500; }
+.pr-auto input { width: auto; margin: 0; }

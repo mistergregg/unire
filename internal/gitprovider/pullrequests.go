@@ -41,6 +41,9 @@ type Check struct {
 	Name  string `json:"name"`
 	State string `json:"state"` // CheckPending, CheckSuccess or CheckFailure
 	URL   string `json:"url"`
+	// JobID or RunID identify the job (or workflow run) behind the check, so its log can be read.
+	JobID int64 `json:"-"`
+	RunID int64 `json:"-"`
 }
 
 // Comment is something said on a pull request: a conversation comment, a
@@ -146,12 +149,13 @@ func (g github) Checks(ctx context.Context, repo string, pr PullRequest) ([]Chec
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
 			HTMLURL    string `json:"html_url"`
+			ID         int64  `json:"id"`
 		} `json:"check_runs"`
 	}
 	runsErr := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", repo, pr.HeadSHA), &runs)
 	if runsErr == nil {
 		for _, r := range runs.CheckRuns {
-			out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL})
+			out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL, JobID: r.ID})
 		}
 	} else if wf, err := g.workflowRunChecks(ctx, repo, pr.HeadSHA); err == nil {
 		// A fine-grained token has no Checks permission, so the check runs are refused;
@@ -187,6 +191,7 @@ func (g github) workflowRunChecks(ctx context.Context, repo, sha string) ([]Chec
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
 			HTMLURL    string `json:"html_url"`
+			ID         int64  `json:"id"`
 		} `json:"workflow_runs"`
 	}
 	if err := g.c.getJSON(ctx, fmt.Sprintf("/repos/%s/actions/runs?head_sha=%s&per_page=30", repo, sha), &res); err != nil {
@@ -194,7 +199,7 @@ func (g github) workflowRunChecks(ctx context.Context, repo, sha string) ([]Chec
 	}
 	var out []Check
 	for _, r := range res.Runs {
-		out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL})
+		out = append(out, Check{Name: r.Name, State: runState(r.Status, r.Conclusion), URL: r.HTMLURL, RunID: r.ID})
 	}
 	return out, nil
 }
@@ -408,6 +413,7 @@ func (g gitlab) Checks(ctx context.Context, repo string, pr PullRequest) ([]Chec
 		Name   string `json:"name"`
 		Status string `json:"status"`
 		WebURL string `json:"web_url"`
+		ID     int64  `json:"id"`
 	}
 	if err := g.c.getJSON(ctx, fmt.Sprintf("%s/pipelines/%d/jobs?per_page=100", g.project(repo), pr.pipeline), &jobs); err != nil {
 		return nil, err
@@ -421,7 +427,7 @@ func (g gitlab) Checks(ctx context.Context, repo string, pr PullRequest) ([]Chec
 		case "failed", "canceled":
 			state = CheckFailure
 		}
-		out = append(out, Check{Name: j.Name, State: state, URL: j.WebURL})
+		out = append(out, Check{Name: j.Name, State: state, URL: j.WebURL, JobID: j.ID})
 	}
 	return out, nil
 }

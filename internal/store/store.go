@@ -128,6 +128,11 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT '';
 	ALTER TABLE sessions ADD COLUMN upstream_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE sessions ADD COLUMN upstream_seen INTEGER NOT NULL DEFAULT 0;`,
+	// 10: fixing a pull request's failing checks by itself (a setting of the conversation, on by default), and how
+	// many times that has been tried for each pull request, and for which commit
+	`ALTER TABLE sessions ADD COLUMN auto_fix INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE pull_requests ADD COLUMN fix_attempts INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE pull_requests ADD COLUMN fix_sha TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

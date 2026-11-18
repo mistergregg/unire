@@ -103,23 +103,26 @@ type Session struct {
 	ForkedFrom   string // the conversation (its first session) this one was started from, or empty
 	UpstreamID   string // the conversation (its first session) it keeps getting updates from, or empty
 	UpstreamSeen int    // how many finished turns of that conversation it has been told about
+	AutoFix      bool   // start a fix by itself when the conversation's pull request has failing checks (kept on the first session)
+	AutoFixSet   bool   // CreateSession: AutoFix was chosen on purpose (otherwise the default, on, applies)
 	Repos        []RepoRef
 	CreatedAt    time.Time
 	StartedAt    time.Time // zero until it starts
 	FinishedAt   time.Time // zero until it ends
 }
 
-const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen`
+const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen, auto_fix`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var repos string
 	var created, started, finished int64
-	var mem int
-	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen); err != nil {
+	var mem, autoFix int
+	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen, &autoFix); err != nil {
 		return x, err
 	}
 	x.Memory = mem != 0
+	x.AutoFix = autoFix != 0
 	if err := json.Unmarshal([]byte(repos), &x.Repos); err != nil {
 		return x, err
 	}
@@ -146,8 +149,8 @@ func (s *Store) CreateSession(x Session) error {
 	if x.Memory {
 		mem = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)`,
-		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen)
+	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen, autoFixInt(x))
 	return err
 }
 
@@ -369,4 +372,24 @@ func (s *Store) ConversationsLinkedTo(upstreamID string) ([]Session, error) {
 		out = append(out, x)
 	}
 	return out, rows.Err()
+}
+
+// autoFixInt is 1 for a new session unless the caller said otherwise. A reply or a
+// session made by code that never heard of the setting gets the default (on); the setting
+// that counts is the one on the conversation's first session.
+func autoFixInt(x Session) int {
+	if x.AutoFix || !x.AutoFixSet {
+		return 1
+	}
+	return 0
+}
+
+// SetAutoFix turns fixing failing checks by itself on or off for a conversation.
+func (s *Store) SetAutoFix(rootID string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := s.db.Exec(`UPDATE sessions SET auto_fix = ? WHERE id = ?`, v, rootID)
+	return err
 }

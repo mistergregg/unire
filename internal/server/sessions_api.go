@@ -446,7 +446,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	// Fail fast, with a way forward, when the agent is known not to be signed in.
 	// Only for agents whose sign-in check has been verified: a guess must never
 	// block someone who is in fact signed in.
-	if msg := s.requireSignedIn(r, ad); msg != "" {
+	if msg := s.requireSignedIn(r.Context(), ad); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}

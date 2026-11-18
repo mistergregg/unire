@@ -65,12 +65,6 @@ function summaryLine(p) {
 
 // What the agent is told when you hand it a problem: the facts, and to push to the
 // same branch so the pull request updates.
-function failingChecksMessage(p) {
-  const list = p.checks.filter((c) => c.state === "failure").map((c) => "- " + c.name + (c.url ? " (" + c.url + ")" : "")).join("\n");
-  return "The checks on the pull request for " + p.repo + " (#" + p.number + ") are failing:\n" + list +
-    "\n\nFind out why (you can run `unire pr-status`), fix what is wrong, and push to the same branch so the pull request updates.";
-}
-
 function commentsMessage(p) {
   const list = p.comments.slice(-10).map((c) => {
     const where = c.path ? " on " + c.path + (c.line ? ":" + c.line : "") : "";
@@ -84,7 +78,7 @@ function commentsMessage(p) {
 function pullCard(p) {
   const key = pullKey(p);
   const state = el("span", { class: "pr-state " + (p.state || "unknown") }, p.state || "unknown");
-  const checks = el("span", { class: "pr-checks " + p.summary }, summaryLine(p));
+  const checks = el("span", { class: "pr-checks " + p.summary }, summaryLine(p) + (p.fixTries ? " · auto-fix tried " + p.fixTries + (p.fixTries === 1 ? " time" : " times") : ""));
   const title = el("a", { class: "pr-title", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "#" + p.number + " " + p.title);
   const head = el("div", { class: "pr-head" }, title, state);
   const details = el("details", { class: "pr-details" });
@@ -109,7 +103,7 @@ function pullCard(p) {
   const free = tail && isFinished(tail.s.status);
   const actions = el("div", { class: "pr-actions" });
   if (p.state === "open") {
-    if (p.summary === "failure") actions.append(handButton("Ask the agent to fix the checks", failingChecksMessage(p), free));
+    if (p.summary === "failure") actions.append(handButton("Ask the agent to fix the checks", async () => (await api("GET", "/api/sessions/" + encodeURIComponent(thread[thread.length - 1].s.id) + "/pulls/failure?serverId=" + encodeURIComponent(p.serverId) + "&repo=" + encodeURIComponent(p.repo) + "&number=" + p.number)).message, free));
     if (p.comments.length) actions.append(handButton("Ask the agent to address the comments", commentsMessage(p), free));
   }
   // Closing or reopening is done on the git server, not by the agent. Nothing is merged.
@@ -123,7 +117,7 @@ function pullCard(p) {
 function handButton(label, message, free) {
   const b = el("button", { type: "button", class: "small", title: free ? "" : "Available when the agent is not working" }, label);
   b.disabled = !free;
-  b.addEventListener("click", () => guarded(b, async () => { await sendReply(message); }));
+  b.addEventListener("click", () => guarded(b, async () => { await sendReply(typeof message === "function" ? await message() : message); }));
   return b;
 }
 
@@ -176,6 +170,7 @@ function renderPulls() {
   const tail = thread && thread[thread.length - 1];
   const idle = tail && isFinished(tail.s.status);
   const cards = pullsData.pulls.map(pullCard);
+  if (pullsData.pulls.length) cards.unshift(autoFixRow());
   const later = [];
   for (const p of pullsData.proposals) {
     if (!idle) continue; // ask once the agent has stopped, not while it works
@@ -297,3 +292,18 @@ $("s-fork").addEventListener("click", () => guarded($("s-fork"), async () => {
     note: "Starting from “" + f.title + "”: the new chat is told what happened there and starts from the branches it pushed.",
   });
 }));
+
+// Whether Unire starts a fix by itself when this conversation's pull request fails its
+// checks: it reads why from the CI log, tells the agent, and the agent pushes a fix.
+function autoFixRow() {
+  const box = el("input", { type: "checkbox", id: "autofix-box" });
+  box.checked = pullsData.autoFix !== false;
+  box.addEventListener("change", () => guarded(box, async () => {
+    const tail = thread[thread.length - 1];
+    const r = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/autofix", { on: box.checked });
+    pullsData.autoFix = r.autoFix;
+  }));
+  return el("label", { class: "pr-auto" }, box,
+    el("span", {}, " Fix failing checks automatically"),
+    el("span", { class: "muted" }, " · Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request."));
+}

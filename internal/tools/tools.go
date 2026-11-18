@@ -126,11 +126,11 @@ var (
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
 func CallTools() []Tool {
-	return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen, Memory, Repo}
+	return []Tool{PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent}
 }
 
 // PRTools are the call tools for a conversation with an open pull request.
-func PRTools() []Tool { return []Tool{PRStatus, PRComments, PRReply, PRClose, PRReopen} }
+func PRTools() []Tool { return []Tool{PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen} }
 
 // IsCall reports whether name is one of CallTools.
 func IsCall(name string) bool {
@@ -201,4 +201,12 @@ var Parent = Tool{
 	Name: "parent",
 	Usage: `unire parent - show where the parent chat (the one this chat follows) stands now: what it has done and where its work is. ` +
 		`You are told about its updates when the owner writes to you; use this to check in the middle of your work.`,
+}
+
+// PRLogs tells the agent why checks failed. Only Unire holds the token that can read a
+// git server's job logs, so the agent asks Unire.
+var PRLogs = Tool{
+	Name: "pr-logs",
+	Usage: `unire pr-logs - show why the failing checks of the pull request failed: which checks, and the error lines and the end of their logs. ` +
+		`Use it first when checks fail; do not try to open the job pages yourself, you cannot sign in to them.`,
 }

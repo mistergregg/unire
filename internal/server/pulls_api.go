@@ -39,7 +39,7 @@ func (s *Server) getPulls(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []pulls.View{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"proposals": props, "pulls": list})
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": props, "pulls": list, "autoFix": thread[0].AutoFix, "maxFix": maxAutoFix})
 }
 
 // openPull opens a pull request for a branch the conversation pushed, after the

@@ -62,6 +62,9 @@ type View struct {
 	Comments []gitprovider.Comment `json:"comments"`
 	Summary  string                `json:"summary"` // "success", "failure", "pending" or "none"
 	Error    string                `json:"error,omitempty"`
+	HeadSHA  string                `json:"headSha,omitempty"`
+	Pending  bool                  `json:"pending,omitempty"`  // some check has not finished
+	FixTries int                   `json:"fixTries,omitempty"` // fixes Unire started by itself for this pull request
 }
 
 const maxComments = 40
@@ -344,7 +347,7 @@ func (s *Service) view(ctx context.Context, rec store.PullRequest) View {
 		v.Error = err.Error()
 		return v
 	}
-	v.State, v.Base, v.Draft = pr.State, pr.Base, pr.Draft
+	v.State, v.Base, v.Draft, v.HeadSHA, v.FixTries = pr.State, pr.Base, pr.Draft, pr.HeadSHA, rec.FixAttempts
 	_ = s.Store.SetPullRequestState(rec.ServerID, rec.Repo, rec.Number, pr.State)
 	if pr.Title != "" {
 		v.Title = pr.Title
@@ -356,6 +359,9 @@ func (s *Service) view(ctx context.Context, rec store.PullRequest) View {
 		v.Checks = checks
 	}
 	v.Summary = summarize(v.Checks)
+	for _, c := range v.Checks {
+		v.Pending = v.Pending || c.State == gitprovider.CheckPending
+	}
 	if comments, err := prs.Comments(ctx, rec.Repo, rec.Number); err == nil && comments != nil {
 		if len(comments) > maxComments {
 			comments = comments[len(comments)-maxComments:]
@@ -405,6 +411,7 @@ const (
 	ToolComments = "pr-comments"
 	ToolReply    = "pr-reply"
 	ToolClose    = "pr-close"
+	ToolLogs     = "pr-logs"
 	ToolReopen   = "pr-reopen"
 )
 
@@ -446,6 +453,17 @@ func (s *Service) Call(ctx context.Context, rootID, tool, args string) string {
 			}
 		}
 		return strings.TrimSpace(b.String())
+	case ToolLogs:
+		var parts []string
+		for _, v := range views {
+			if m := s.FailureMessage(ctx, v); m != "" {
+				parts = append(parts, m)
+			}
+		}
+		if len(parts) == 0 {
+			return "No check is failing right now. Run unire pr-status to see where they stand."
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
 	case ToolComments:
 		var b strings.Builder
 		for _, v := range views {
@@ -562,4 +580,61 @@ func (s *Service) SetOpen(ctx context.Context, rootID, serverID, repo string, nu
 		return s.view(ctx, rec), nil
 	}
 	return View{}, errors.New("this conversation did not open that pull request")
+}
+
+// FailureMessage tells an agent why a pull request's checks are failing: which ones, and
+// the end of the log of the first two (the error lines, and what the log ended with). It
+// is what the owner's "fix the checks" button and the automatic fix send, and what the
+// pr-logs tool prints. Without logs (a server that gives none) it names the checks and
+// their links.
+func (s *Service) FailureMessage(ctx context.Context, v View) string {
+	var failed []gitprovider.Check
+	for _, c := range v.Checks {
+		if c.State == gitprovider.CheckFailure {
+			failed = append(failed, c)
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "The checks on the pull request for %s (#%d, branch %s) are failing:\n", v.Repo, v.Number, v.Branch)
+	for _, c := range failed {
+		fmt.Fprintf(&b, "- %s", c.Name)
+		if c.URL != "" {
+			fmt.Fprintf(&b, " (%s)", c.URL)
+		}
+		b.WriteString("\n")
+	}
+	prs, _, err := s.prsFor(v.ServerID)
+	lp, canLog := prs.(gitprovider.LogProvider)
+	if err != nil || !canLog {
+		return b.String()
+	}
+	for i, c := range failed {
+		if i >= 2 {
+			b.WriteString("\n(" + fmt.Sprint(len(failed)-2) + " more failing checks are not shown; run `unire pr-status` for all of them.)\n")
+			break
+		}
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		text, lerr := lp.FailureLog(cctx, v.Repo, c)
+		cancel()
+		switch {
+		case lerr == nil:
+			fmt.Fprintf(&b, "\nWhy %q failed:\n%s\n", c.Name, text)
+		case errors.Is(lerr, gitprovider.ErrNoLogs):
+			fmt.Fprintf(&b, "\n(This git server does not give job logs through its API, so open the link above to read why %q failed.)\n", c.Name)
+		default:
+			fmt.Fprintf(&b, "\n(Could not read the log of %q: %v)\n", c.Name, lerr)
+		}
+	}
+	return b.String()
+}
+
+// ClearCache forgets what was remembered about pull requests, so the next look asks the
+// git servers again (what a pull request looks like is otherwise reused for a few seconds).
+func (s *Service) ClearCache() {
+	s.mu.Lock()
+	s.cache = nil
+	s.mu.Unlock()
 }

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -75,56 +77,51 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request) {
 
 // requireSignedIn refuses when an agent whose sign-in check is verified is
 // known to be signed out. A guess never blocks anyone.
-func (s *Server) requireSignedIn(r *http.Request, ad agent.Adapter) string {
+func (s *Server) requireSignedIn(ctx context.Context, ad agent.Adapter) string {
 	if ad.Info().Verified.Status {
-		if st := s.agentStatus(r.Context(), ad); st.known && !st.loggedIn {
+		if st := s.agentStatus(ctx, ad); st.known && !st.loggedIn {
 			return ad.Info().Label + " is not signed in. Open the Agents page and sign in first."
 		}
 	}
 	return ""
 }
 
-func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
-	x, ok := s.lookupSession(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		Prompt string `json:"prompt"`
-		Agent  string `json:"agent"` // empty: the same agent
-	}
-	if !readJSON(w, r, &req) {
-		return
-	}
-	req.Prompt = strings.TrimSpace(req.Prompt)
+// replyError is why a reply could not be started, with the HTTP status to report it with.
+type replyError struct {
+	code int
+	msg  string
+}
+
+func (e replyError) Error() string { return e.msg }
+
+func replyFail(code int, msg string) error { return replyError{code, msg} }
+
+// startReply starts the next turn of the conversation that x ends. It is the one path
+// for a reply the owner types and for one Unire starts itself (see autofix.go).
+func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string) (store.Session, error) {
+	prompt = strings.TrimSpace(prompt)
 	switch {
-	case req.Prompt == "" || len(req.Prompt) > 20000:
-		writeErr(w, http.StatusBadRequest, "write a message (20,000 characters max)")
-		return
+	case prompt == "" || len(prompt) > 20000:
+		return store.Session{}, replyFail(http.StatusBadRequest, "write a message (20,000 characters max)")
 	case !store.Finished(x.Status):
-		writeErr(w, http.StatusConflict, "wait until the agent has finished, or stop it")
-		return
+		return store.Session{}, replyFail(http.StatusConflict, "wait until the agent has finished, or stop it")
 	}
 	if _, has, _ := s.store.ChildOf(x.ID); has {
-		writeErr(w, http.StatusConflict, "this conversation has already moved on")
-		return
+		return store.Session{}, replyFail(http.StatusConflict, "this conversation has already moved on")
 	}
 	thread, err := s.threadOf(x.ID)
 	if err != nil {
-		serverError(w)
-		return
+		return store.Session{}, err
 	}
-	if req.Agent == "" {
-		req.Agent = x.Agent
+	if agentID == "" {
+		agentID = x.Agent
 	}
-	ad, err := agent.Get(req.Agent)
+	ad, err := agent.Get(agentID)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
 	}
-	if msg := s.requireSignedIn(r, ad); msg != "" {
-		writeErr(w, http.StatusBadRequest, msg)
-		return
+	if msg := s.requireSignedIn(ctx, ad); msg != "" {
+		return store.Session{}, replyFail(http.StatusBadRequest, msg)
 	}
 	// Build on the branch the last turn pushed; a repo it left alone starts as before.
 	pushed := map[string]bool{}
@@ -144,7 +141,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	// the conversation. The repos already in it stay.
 	var picked []repopick.Candidate
 	if len(refs) < 10 {
-		picked = repopick.Auto(s.rankRepos(r.Context(), req.Prompt, refs))
+		picked = repopick.Auto(s.rankRepos(ctx, prompt, refs))
 		if room := 10 - len(refs); len(picked) > room {
 			picked = picked[:room]
 		}
@@ -154,8 +151,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	}
 	repos, err := s.resolveRepos(refs)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
 	}
 	mode, ok := egress.ParseMode(x.Network)
 	if !ok {
@@ -166,21 +162,45 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	rootSession := thread[0]
 	upSeen := rootSession.UpstreamSeen
 	if rootSession.UpstreamID != "" {
-		if text, n := s.upstreamUpdate(r.Context(), rootSession, false); text != "" {
+		if text, n := s.upstreamUpdate(ctx, rootSession, false); text != "" {
 			preamble = text + "\n" + preamble
 			upSeen = n
 		}
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: req.Agent, Prompt: req.Prompt, Preamble: preamble, Branch: sameAgentBranch(x, req.Agent),
+		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: sameAgentBranch(x, agentID),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 	})
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
 	}
 	if rootSession.UpstreamID != "" && upSeen != rootSession.UpstreamSeen {
 		_ = s.store.SetUpstreamSeen(rootSession.ID, upSeen)
+	}
+	return started, nil
+}
+
+func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+		Agent  string `json:"agent"` // empty: the same agent
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent)
+	if err != nil {
+		var re replyError
+		if errors.As(err, &re) {
+			writeErr(w, re.code, re.msg)
+		} else {
+			serverError(w)
+		}
+		return
 	}
 	writeJSON(w, http.StatusCreated, toView(started))
 }

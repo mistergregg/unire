@@ -21,6 +21,7 @@ import (
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/tools"
@@ -226,6 +227,11 @@ type job struct {
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
+	// Whatever goes wrong below, only this chat fails.
+	defer safe.Recover("chat "+j.spec.ID, func(err error) {
+		_ = m.st.AddEvent(j.spec.ID, "log", err.Error())
+		m.finish(context.Background(), j.spec.ID, err, j.secrets)
+	})
 	spec, network, tokens, secrets := j.spec, j.network, j.tokens, j.secrets
 	defer m.wg.Done()
 	defer func() {
@@ -358,8 +364,12 @@ func (m *Manager) run(ctx context.Context, j job) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		res, err := workflow.Run(ctx, rn, spec, wo)
-		done <- outcome{res, err}
+		var res workflow.Result
+		var err error
+		// A panic inside the run must fail this chat, not end the server.
+		defer func() { done <- outcome{res, err} }()
+		defer safe.Recover("run "+spec.ID, func(e error) { err = e })
+		res, err = workflow.Run(ctx, rn, spec, wo)
 	}()
 	var res workflow.Result
 	var err error

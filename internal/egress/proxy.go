@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mistergregg/unire/internal/safe"
 	"io"
 	"net"
 	"net/http"
@@ -226,6 +227,7 @@ func (p *Proxy) connect(w http.ResponseWriter, req *http.Request, r *registratio
 	}
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	go func() {
+		defer safe.Recover("proxy copy", nil)
 		_, _ = io.Copy(upstream, client)
 		closeWrite(upstream)
 	}()

@@ -33,6 +33,7 @@ import (
 	"github.com/mistergregg/unire/internal/gitprovider"
 	"github.com/mistergregg/unire/internal/pulls"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 	"github.com/mistergregg/unire/internal/vault"
@@ -120,7 +121,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.stopCleanup = make(chan struct{})
-	go s.runCleanup(s.stopCleanup)
+	safe.Go("cleanup", func() { s.runCleanup(s.stopCleanup) })
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()

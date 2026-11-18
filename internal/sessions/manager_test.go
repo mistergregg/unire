@@ -27,6 +27,7 @@ type fakeSandbox struct {
 	block       chan struct{} // if set, the agent waits on it or on ctx
 	memoryGate  chan struct{} // if set, the memory step waits on it (or on ctx)
 	stuck       chan struct{} // if set, the agent ignores being stopped until it is closed
+	panicOn     string        // if set, running this command (agent, or the first word of a command) panics
 	heads       int           // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
 	mu       sync.Mutex
@@ -38,6 +39,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	if inner, isAgent, isSignal := agenttest.Unwrap(o.Argv); isSignal {
 		return nil
 	} else if isAgent {
+		if f.shouldPanic("agent") {
+			panic("boom in the agent")
+		}
 		if f.stuck != nil {
 			<-f.stuck // a process that cannot be stopped
 		}
@@ -70,6 +74,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	if len(o.Argv) > 0 {
 		switch o.Argv[0] {
 		case "git":
+			if f.shouldPanic("git") {
+				panic("boom in git")
+			}
 			for _, a := range o.Argv {
 				if a == "rev-parse" {
 					f.mu.Lock()
@@ -1038,4 +1045,40 @@ func TestOldActivityIsPrunedButAnswersAndPushedBranchesStay(t *testing.T) {
 	if roots, _ := st.IdleConversations(time.Now().Add(-time.Hour)); len(roots) != 0 {
 		t.Errorf("none has been idle that long: %v", roots)
 	}
+}
+
+// A panic while running one chat must fail that chat, with the reason, and leave the
+// server and every other chat alone.
+func TestAPanicInOneChatFailsThatChatOnly(t *testing.T) {
+	for _, where := range []string{"git", "agent"} {
+		t.Run(where, func(t *testing.T) {
+			sb := &fakeSandbox{panicOn: where}
+			m, st := setup(t, sb)
+			x, err := m.Start(req("tok"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := waitFinished(t, st, x.ID)
+			if got.Status != store.StatusFailed || !strings.Contains(got.Error, "internal error") || !strings.Contains(got.Error, "boom") {
+				t.Errorf("status = %q, error = %q: the chat fails and says why", got.Status, got.Error)
+			}
+			// The manager still works: a chat that does not panic runs to the end.
+			sb.mu.Lock()
+			sb.panicOn = ""
+			sb.mu.Unlock()
+			y, err := m.Start(req("tok"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := waitFinished(t, st, y.ID); got.Status != store.StatusDone {
+				t.Errorf("the next chat should run normally, got %q (%s)", got.Status, got.Error)
+			}
+		})
+	}
+}
+
+func (f *fakeSandbox) shouldPanic(where string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.panicOn == where
 }

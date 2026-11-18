@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/tools"
 )
 
@@ -89,6 +90,7 @@ func (w *worker) serveQuestions(ctx context.Context) {
 			wg.Add(1)
 			go func(id, question string) {
 				defer wg.Done()
+				defer safe.Recover("answer a tool call", nil)
 				var answer string
 				var ok bool
 				if strings.HasPrefix(question, callPrefix) {

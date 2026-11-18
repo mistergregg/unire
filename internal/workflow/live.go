@@ -11,6 +11,7 @@ import (
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/session"
 )
 
@@ -148,6 +149,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	var execErr error
 	go func() {
 		defer close(exited)
+		defer safe.Recover("run the agent", func(e error) { execErr = e })
 		execErr = w.sb.Exec(execCtx, runner.ExecOpts{Argv: wrapped, Dir: workspace, Stdin: pr, Stdout: sw, Stderr: &stderr})
 		_ = pr.Close() // anything still writing to the agent's input stops waiting
 	}()
@@ -157,6 +159,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	begun := make(chan struct{})
 	go func() {
 		defer close(begun)
+		defer safe.Recover("start the agent", func(error) { closeInput() })
 		if err := drv.Begin(pw, prompt); err != nil {
 			closeInput()
 		} else if w.opt.OnMessage != nil {

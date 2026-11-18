@@ -16,6 +16,7 @@ import (
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/terminal"
 )
 
@@ -119,6 +120,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer safe.Recover("agent status", nil)
 			ad, _ := agent.Get(in.ID)
 			st := s.agentStatus(r.Context(), ad)
 			v := agentView{Info: in, StatusNote: st.note}
@@ -252,6 +254,7 @@ func (s *Server) loginTerminal(w http.ResponseWriter, r *http.Request) {
 	id := ad.Info().ID
 	s.transcripts.start(id)
 	go func() { // command output to the browser
+		defer safe.Recover("terminal output", nil)
 		buf := make([]byte, 4096)
 		for {
 			n, err := proc.Read(buf)

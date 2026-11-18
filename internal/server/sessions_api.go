@@ -14,6 +14,7 @@ import (
 	"github.com/mistergregg/unire/internal/egress"
 	"github.com/mistergregg/unire/internal/repopick"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -641,7 +642,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	default:
 		if found && x.ParentID == "" {
 			// The first message of a conversation owns its workspace (the cloned repos).
-			go s.sessions.ForgetWorkspace(id)
+			safe.Go("remove a workspace", func() { s.sessions.ForgetWorkspace(id) })
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mistergregg/unire/internal/safe"
 )
 
 // The sandbox image is pulled once by Docker and then never refreshed, so after
@@ -92,6 +94,7 @@ func EnsureFresh(ctx context.Context, image string) {
 	inflight[image] = true
 	stateMu.Unlock()
 	go func() {
+		defer safe.Recover("refresh the sandbox image", nil)
 		Refresh(context.Background(), image)
 		stateMu.Lock()
 		delete(inflight, image)

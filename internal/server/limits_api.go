@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/mistergregg/unire/internal/safe"
 	"net/http"
 	"strconv"
 	"time"
@@ -71,6 +72,7 @@ const cleanupEvery = 6 * time.Hour
 // every few hours, until the server closes.
 func (s *Server) runCleanup(stop <-chan struct{}) {
 	do := func() {
+		defer safe.Recover("cleanup", nil)
 		l := s.limits()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()

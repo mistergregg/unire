@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mistergregg/unire/internal/gitprovider"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
 	"github.com/mistergregg/unire/internal/store"
 )
@@ -311,6 +312,7 @@ func (s *Service) List(ctx context.Context, rootID string) ([]View, error) {
 		wg.Add(1)
 		go func(i int, rec store.PullRequest) {
 			defer wg.Done()
+			defer safe.Recover("pull request status", nil)
 			out[i] = s.view(ctx, rec)
 		}(i, rec)
 	}

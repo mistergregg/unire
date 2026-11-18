@@ -18,6 +18,7 @@ import (
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/memory"
 	"github.com/mistergregg/unire/internal/runner"
+	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/session"
 	"github.com/mistergregg/unire/internal/tools"
 )
@@ -251,6 +252,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	asksDone := make(chan struct{})
 	go func() {
 		defer close(asksDone)
+		defer safe.Recover("serve questions", nil)
 		if w.asking() {
 			w.serveQuestions(askCtx)
 		}

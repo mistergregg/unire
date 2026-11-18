@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/creack/pty"
+	"github.com/mistergregg/unire/internal/safe"
 )
 
 // Process is a running interactive command.
@@ -66,6 +67,7 @@ func (p *ptyProcess) Close() error {
 		}
 		_ = p.f.Close()
 		go func() {
+			defer safe.Recover("terminal", nil)
 			_ = p.cmd.Wait() // reap the process
 			if p.cleanup != nil {
 				p.cleanup()

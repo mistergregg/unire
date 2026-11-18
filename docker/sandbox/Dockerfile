@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:26-slim
 # git and curl for the work; every supported agent CLI so any of them can be
 # chosen per session. To add an agent, install its CLI here (see docs/adding-an-agent.md).
 #

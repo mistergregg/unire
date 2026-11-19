@@ -23,10 +23,13 @@ const (
 	autoFixEvery = time.Minute
 )
 
-// runAutoFix looks for failing checks a little after start-up and then every minute,
-// until the server closes.
+// runAutoFix checks existing pull requests as soon as the server is ready, then looks
+// again every minute until the server closes.
 func (s *Server) runAutoFix(stop <-chan struct{}) {
-	t := time.NewTimer(90 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	s.autoFixOnce(ctx)
+	cancel()
+	t := time.NewTicker(autoFixEvery)
 	defer t.Stop()
 	for {
 		select {
@@ -39,7 +42,6 @@ func (s *Server) runAutoFix(stop <-chan struct{}) {
 				defer cancel()
 				s.autoFixOnce(ctx)
 			}()
-			t.Reset(autoFixEvery)
 		}
 	}
 }

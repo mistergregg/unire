@@ -124,13 +124,13 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.stopCleanup = make(chan struct{})
 	s.probe = dockerProbe{}
-	safe.Go("automatic fix", func() { s.runAutoFix(s.stopCleanup) })
 	safe.Go("cleanup", func() { s.runCleanup(s.stopCleanup) })
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
 		st.Close()
 		return nil, err
 	}
+	safe.Go("automatic fix", func() { s.runAutoFix(s.stopCleanup) })
 	return s, nil
 }
 

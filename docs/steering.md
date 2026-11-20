@@ -13,6 +13,29 @@ the agent, the agent has it, or not delivered. A message that is still waiting h
 its own **Send now** button: the agent is stopped and given it, together with
 anything else that is waiting, all at once as one message.
 
+## Attaching images
+
+Any message can carry images: the first one, a reply, or a message sent while
+the agent works, for every agent. Use the paperclip, or paste an image into the
+message box. PNG, JPEG, GIF and WebP are accepted, up to 5 MB each and 5 per
+message; the server checks the type from the content, the size and the count
+again (`sessions.CheckAttachments`).
+
+- Each image is saved under `<data dir>/attachments/<session id>/` and deleted
+  with the session. The log keeps only a reference, an `attach` event
+  (`<message>\n<file> <name>…`, where `<message>` is empty for the turn's prompt
+  or the id of a message sent while the agent works), so `steer` events and the
+  text shown in the chat are unchanged. The chat shows the images as thumbnails
+  under the message (served from `/api/sessions/{id}/attachments/{file}`).
+- Before the agent reads the message, Unire copies the images into the sandbox
+  at `/workspace/.unire/attachments/<id>.<ext>` (outside every repo, so nothing is
+  committed) and adds a line to the text the agent gets: "The owner attached:
+  <path> (<name>), … — open them to look." Every agent can open an image file,
+  so this works the same way for all of them; how a message is sent to an agent
+  (for Claude, a stream-json message whose content is a string) is unchanged.
+- A message to a working agent has its images copied just before it is handed
+  over; if that fails, the message is marked not delivered.
+
 ## How each agent does it
 
 An agent that can be steered runs as a process that stays open and reads your

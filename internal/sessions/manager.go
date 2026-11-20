@@ -45,6 +45,9 @@ type Config struct {
 	Repos RepoFinder
 	// Upstream tells a chat that follows a parent where the parent stands. Nil: no parent tool.
 	Upstream Upstream
+	// Attachments is the folder images the owner attaches are kept in, one folder per
+	// session. Empty: messages cannot carry attachments.
+	Attachments string
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -67,14 +70,15 @@ type Request struct {
 	Network                   egress.Mode // empty means internet only
 	Memory                    bool        // give the agent project memory and save what it learns
 	Repos                     []Repo
-	Parent                    string   // the session this one continues (a reply), or empty
-	Branch                    string   // the branch to continue on (a reply, same agent); empty means a new, unused one
-	Preamble                  string   // told to the agent before the prompt; not shown as part of what the owner wrote
-	Notes                     []string // lines for the activity log (for example why repos were picked)
-	Resume                    string   // the agent's own conversation to carry on (a reply by the same agent)
-	FallbackPreamble          string   // told to a fresh agent instead of Preamble if that conversation is gone
-	ForkedFrom                string   // the conversation this one was started from (information only)
-	UpstreamID                string   // the parent conversation it keeps getting updates from
+	Parent                    string       // the session this one continues (a reply), or empty
+	Branch                    string       // the branch to continue on (a reply, same agent); empty means a new, unused one
+	Preamble                  string       // told to the agent before the prompt; not shown as part of what the owner wrote
+	Notes                     []string     // lines for the activity log (for example why repos were picked)
+	Resume                    string       // the agent's own conversation to carry on (a reply by the same agent)
+	FallbackPreamble          string       // told to a fresh agent instead of Preamble if that conversation is gone
+	ForkedFrom                string       // the conversation this one was started from (information only)
+	UpstreamID                string       // the parent conversation it keeps getting updates from
+	Attachments               []Attachment // images sent with the prompt
 }
 
 // Manager runs sessions.
@@ -146,8 +150,14 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	if cfg := m.config(); req.Network != egress.ModeFull && !cfg.Egress.Info.Available {
 		return store.Session{}, fmt.Errorf("network protection is not available (%s). Choose \"full\" network access to run without it", cfg.Egress.Info.Reason)
 	}
+	id := newID()
+	saved, err := m.saveAttachments(id, req.Attachments)
+	if err != nil {
+		return store.Session{}, err
+	}
+	note := attachNote(saved) // the agent is told where the images are; the owner's words are kept as written
 	used := map[string]bool{}
-	spec := session.Spec{ID: newID(), Task: req.Task, Agent: req.Agent, Prompt: req.Preamble + req.Prompt, Mode: req.Mode}
+	spec := session.Spec{ID: id, Task: req.Task, Agent: req.Agent, Prompt: req.Preamble + req.Prompt + note, Mode: req.Mode}
 	if req.Branch != "" {
 		spec.BranchName = req.Branch
 	} else {
@@ -171,10 +181,12 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
+		removeSaved(saved)
 		return store.Session{}, errors.New("unire is shutting down")
 	}
 	if err := m.st.CreateSession(rec); err != nil {
 		m.mu.Unlock()
+		removeSaved(saved)
 		return store.Session{}, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,15 +194,18 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	m.wg.Add(1)
 	m.mu.Unlock()
 
+	if len(saved) > 0 {
+		_ = m.st.AddEvent(spec.ID, "attach", attachEvent("", saved))
+	}
 	_ = m.st.AddEvent(spec.ID, "log", "queued")
 	for _, n := range req.Notes {
 		_ = m.st.AddEvent(spec.ID, "log", n)
 	}
 	fallback := ""
 	if req.Resume != "" && req.FallbackPreamble != "" {
-		fallback = req.FallbackPreamble + req.Prompt
+		fallback = req.FallbackPreamble + req.Prompt + note
 	}
-	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent), resume: req.Resume, fallback: fallback})
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent), resume: req.Resume, fallback: fallback, files: attachFiles(saved)})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -228,10 +243,11 @@ type job struct {
 	refs     []store.RepoRef // same order as spec.Repos
 	tokens   map[string]string
 	secrets  []string
-	parent   string // the session this one continues, or empty
-	root     string // the first session of the conversation: its id names the workspace
-	resume   string // the agent's own conversation to carry on
-	fallback string // the prompt for a fresh agent if that conversation is gone
+	parent   string       // the session this one continues, or empty
+	root     string       // the first session of the conversation: its id names the workspace
+	resume   string       // the agent's own conversation to carry on
+	fallback string       // the prompt for a fresh agent if that conversation is gone
+	files    []agent.File // attachments to copy into the sandbox before the agent starts
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
@@ -309,6 +325,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 	}
 	wo.Ask = m.askFunc(spec.ID)
 	wo.Resume, wo.Fallback = j.resume, j.fallback
+	wo.Files = j.files
 	if control != nil {
 		wo.Control = control
 		wo.OnMessage = func(id, state string) { _ = m.st.AddEvent(spec.ID, "steerstate", id+"\n"+state) }

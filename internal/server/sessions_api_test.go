@@ -29,6 +29,8 @@ type fakeBox struct {
 	block    chan struct{}
 	outFiles map[string]string // files the agent "writes" in the memory step
 	prompts  []string          // what a steerable agent was told (its first message and later ones)
+	files    map[string][]byte // files written into the sandbox, by path
+	unready  []string          // attachments a message named before they were in the sandbox
 	lostConv bool              // a resumed Claude says its conversation is gone
 	heads    int               // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
@@ -75,7 +77,16 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 					}
 				}
 			},
-			func(u agenttest.User) { b.mu.Lock(); b.prompts = append(b.prompts, u.Text); b.mu.Unlock() })
+			func(u agenttest.User) {
+				b.mu.Lock()
+				b.prompts = append(b.prompts, u.Text)
+				for _, p := range attachedPaths.FindAllString(u.Text, -1) {
+					if _, ok := b.files[p]; !ok {
+						b.unready = append(b.unready, p)
+					}
+				}
+				b.mu.Unlock()
+			})
 	}
 	b.mu.Lock()
 	b.calls = append(b.calls, o)
@@ -102,7 +113,13 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			return fmt.Errorf("exit status 2") // nothing was cloned or asked yet
 		case "mkdir", "rm", "sh":
 			if o.Stdin != nil {
-				io.Copy(io.Discard, o.Stdin)
+				data, _ := io.ReadAll(o.Stdin)
+				b.mu.Lock()
+				if b.files == nil {
+					b.files = map[string][]byte{}
+				}
+				b.files[o.Argv[len(o.Argv)-1]] = data
+				b.mu.Unlock()
 			}
 			return nil
 		case "head":

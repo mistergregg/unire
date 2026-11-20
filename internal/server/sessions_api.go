@@ -82,11 +82,12 @@ func (s *Server) sessionConfig() sessions.Config {
 	allow := allowedEntries(s.allowList())
 	return sessions.Config{
 		Runner: s.runnerFactory(sb), Memory: sb.EffectiveMemory(), CPUs: sb.CPUs,
-		Egress:   sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
-		Pulls:    s.pulls,
-		Upstream: s,
-		Repos:    s,
-		MaxRun:   time.Duration(s.limits().MaxRunMinutes) * time.Minute,
+		Egress:      sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
+		Pulls:       s.pulls,
+		Upstream:    s,
+		Repos:       s,
+		MaxRun:      time.Duration(s.limits().MaxRunMinutes) * time.Minute,
+		Attachments: s.attachmentsDir(),
 	}
 }
 
@@ -425,8 +426,14 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		Repos    []store.RepoRef `json:"repos"`
 		ForkFrom string          `json:"forkFrom"` // start from this conversation: it is told what happened there
 		Parent   string          `json:"parent"`   // follow this conversation: it is told what happens there
+		Images   []imageIn       `json:"images"`   // attached to the prompt
 	}
-	if !readJSON(w, r, &req) {
+	if !readMessage(w, r, &req) {
+		return
+	}
+	images, err := decodeImages(req.Images)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.Task, req.Prompt = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt)
@@ -533,7 +540,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -643,6 +650,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		writeErr(w, http.StatusConflict, "only a finished session can be deleted")
 	default:
+		sessions.RemoveAttachments(s.attachmentsDir(), id)
 		if found && x.ParentID == "" {
 			// The first message of a conversation owns its workspace (the cloned repos).
 			safe.Go("remove a workspace", func() { s.sessions.ForgetWorkspace(id) })

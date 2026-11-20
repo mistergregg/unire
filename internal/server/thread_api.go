@@ -69,7 +69,7 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
-func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string) (store.Session, error) {
+func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, images []sessions.Attachment) (store.Session, error) {
 	prompt = strings.TrimSpace(prompt)
 	switch {
 	case prompt == "" || len(prompt) > 20000:
@@ -149,6 +149,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 		Resume: resume, FallbackPreamble: fallback,
+		Attachments: images,
 	})
 	if err != nil {
 		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
@@ -165,13 +166,19 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Prompt string `json:"prompt"`
-		Agent  string `json:"agent"` // empty: the same agent
+		Prompt string    `json:"prompt"`
+		Agent  string    `json:"agent"`  // empty: the same agent
+		Images []imageIn `json:"images"` // attached to the message
 	}
-	if !readJSON(w, r, &req) {
+	if !readMessage(w, r, &req) {
 		return
 	}
-	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent)
+	images, err := decodeImages(req.Images)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent, images)
 	if err != nil {
 		var re replyError
 		if errors.As(err, &re) {
@@ -336,10 +343,16 @@ func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Text string `json:"text"`
-		Now  bool   `json:"now"` // interrupt and carry on from the message
+		Text   string    `json:"text"`
+		Now    bool      `json:"now"`    // interrupt and carry on from the message
+		Images []imageIn `json:"images"` // attached to the message
 	}
-	if !readJSON(w, r, &req) {
+	if !readMessage(w, r, &req) {
+		return
+	}
+	images, err := decodeImages(req.Images)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
@@ -347,7 +360,7 @@ func (s *Server) steerSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "write a message (20,000 characters max)")
 		return
 	}
-	id, err := s.sessions.Steer(x.ID, req.Text, req.Now)
+	id, err := s.sessions.SteerWith(x.ID, req.Text, images, req.Now)
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return

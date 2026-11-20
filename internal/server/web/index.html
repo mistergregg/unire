@@ -73,6 +73,8 @@
       <input id="n-task" type="hidden">
       <div class="card">
         <textarea id="n-prompt" required rows="5" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
+        <div id="n-previews" class="attach-previews" hidden></div>
+        <input id="n-files" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
 
         <div id="n-selected" class="chips"></div>
         <div id="n-suggest" class="suggest" hidden></div>
@@ -84,7 +86,10 @@
         <div id="n-results" class="results" hidden></div>
 
         <div class="between spaced">
-          <select id="n-agent" class="pill-select" aria-label="Agent"></select>
+          <span class="row-tight">
+            <select id="n-agent" class="pill-select" aria-label="Agent"></select>
+            <button id="n-attach" type="button" class="icon-btn" title="Attach images (or paste them into the message)" aria-label="Attach images"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
+          </span>
           <button class="primary" type="submit" id="n-submit">Start &rarr;</button>
         </div>
 
@@ -126,9 +131,12 @@
     <p id="s-error" class="err" hidden></p>
     <form id="reply-form" class="composer" autocomplete="off">
       <div class="composer-box">
+        <div id="reply-previews" class="attach-previews" hidden></div>
+        <input id="reply-files" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
         <textarea id="reply-text" rows="1" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
         <div class="composer-bar">
           <select id="reply-agent" class="pill-select" aria-label="Agent for the next message"></select>
+          <button id="reply-attach" type="button" class="icon-btn" title="Attach images (or paste them into the message)" aria-label="Attach images"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
           <span class="hint muted" id="composer-hint">Enter to send · Shift+Enter for a new line</span>
           <button id="steer-now" type="button" class="pill-btn" hidden title="Stop what the agent is doing and carry on from this message">Send now</button>
           <button id="s-stop" type="button" class="icon-btn stop" title="Stop the agent" aria-label="Stop" hidden>
@@ -407,6 +415,7 @@
 <script src="/vendor/addon-fit.js" defer></script>
 <script src="/vendor/addon-web-links.js" defer></script>
 <script src="/app.js" defer></script>
+<script src="/attach.js" defer></script>
 <script src="/sessions.js" defer></script>
 <script src="/chat.js" defer></script>
 <script src="/pulls.js" defer></script>

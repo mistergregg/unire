@@ -8,7 +8,8 @@ import (
 )
 
 // Steering: the owner says something to an agent while it works. A message is
-// logged as a "steer" event ("<id>\n<now|next>\n<text>"), handed to the running
+// logged as a "steer" event ("<id>\n<now|next>\n<text>"; images sent with it are
+// referenced by an "attach" event, see attach.go), handed to the running
 // agent through the session's channel, and what becomes of it (queued,
 // delivered, failed) is logged as "steerstate" events ("<id>\n<state>").
 
@@ -47,6 +48,12 @@ func (m *Manager) finishLive(sessionID string, ch chan agent.Steer) {
 // from the message; otherwise the agent reads it at its next step. It returns
 // an id the message's state is reported under.
 func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
+	return m.SteerWith(sessionID, text, nil, now)
+}
+
+// SteerWith is Steer with images attached: they are copied into the sandbox before
+// the agent reads the message, and the message tells it where they are.
+func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool) (string, error) {
 	m.mu.Lock()
 	ch, ok := m.live[sessionID]
 	m.mu.Unlock()
@@ -66,10 +73,18 @@ func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
 	if now {
 		mode = "now"
 	}
+	saved, err := m.saveAttachments(sessionID, files)
+	if err != nil {
+		return "", err
+	}
 	select {
-	case ch <- agent.Steer{ID: id, Text: text, Now: now}:
+	case ch <- agent.Steer{ID: id, Text: text + attachNote(saved), Now: now, Files: attachFiles(saved)}:
 	default:
+		removeSaved(saved)
 		return "", errors.New("too many messages are waiting for the agent")
+	}
+	if len(saved) > 0 {
+		_ = m.st.AddEvent(sessionID, "attach", attachEvent(id, saved))
 	}
 	_ = m.st.AddEvent(sessionID, "steer", id+"\n"+mode+"\n"+text)
 	_ = m.st.AddEvent(sessionID, "steerstate", id+"\n"+agent.MsgQueued)

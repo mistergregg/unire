@@ -336,6 +336,12 @@ func (m *Manager) run(ctx context.Context, j job) {
 	wo.Ask = m.askFunc(spec.ID)
 	wo.Resume, wo.Fallback = j.resume, j.fallback
 	wo.Files = j.files
+	wo.OnUsage = func(u agent.AgentUsage) {
+		if u.AgentID == "" {
+			u.AgentID = spec.Agent
+		}
+		_ = m.st.SaveUsage(u)
+	}
 	if control != nil {
 		wo.Control = control
 		wo.OnMessage = func(id, state string) { _ = m.st.AddEvent(spec.ID, "steerstate", id+"\n"+state) }
@@ -487,6 +493,13 @@ func (m *Manager) Saving(sessionID string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.saving[sessionID]
 	return ok
+}
+
+// Running reports whether any session is currently active.
+func (m *Manager) Running() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.cancels) > 0
 }
 
 // workspaceName is the volume that holds a conversation's repos between turns.

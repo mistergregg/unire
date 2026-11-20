@@ -777,6 +777,30 @@ func TestAReplyThatArrivesInPiecesIsTheAnswerWhenThereIsNoResult(t *testing.T) {
 	}
 }
 
+func TestStreamWriterCallsOnUsage(t *testing.T) {
+	var out, log bytes.Buffer
+	a, _ := agent.Get("claude")
+	var captured *agent.AgentUsage
+	w := &streamWriter{
+		s:   a.(agent.Streamer),
+		out: &out,
+		log: &log,
+		onUsage: func(u *agent.AgentUsage) {
+			captured = u
+		},
+	}
+	line := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.42,"resetsAt":1794880000}}}}` + "\n"
+	w.Write([]byte(line))
+	w.Close()
+
+	if captured == nil {
+		t.Fatal("expected onUsage to be called")
+	}
+	if captured.AgentID != "claude" || len(captured.Windows) != 1 || captured.Windows[0].UsedPercent != 42 {
+		t.Errorf("captured = %+v", captured)
+	}
+}
+
 // A live tool (pr-status and the like) is answered by Unire while the agent runs,
 // and only when the session was given it.
 func TestLiveToolCallsAreAnsweredOnlyWhenGiven(t *testing.T) {

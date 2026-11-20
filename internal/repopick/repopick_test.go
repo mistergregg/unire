@@ -126,3 +126,21 @@ func TestAtMostFourArePickedAtOnce(t *testing.T) {
 		t.Errorf("auto-picked %d, want 4", len(got))
 	}
 }
+
+func TestOnlyAWholeNameCounts(t *testing.T) {
+	repos := append(append([]Repo(nil), owned...), repo("Gbreed/schat-events"), repo("Gbreed/schat-user"), repo("Gbreed/schat-login"))
+	// One word of a name is enough to pick it for a new chat, but not for Named.
+	text := "the fake agent's onUser callback appends before it blocks; the steer event is logged first"
+	if got := Named(Rank(text, repos, History{}, nil, nil)); len(got) != 0 {
+		t.Errorf("a word that is only part of a name: %s", names(got))
+	}
+	for text, want := range map[string]string{
+		"also fix schat-events":   "schat-events",
+		"and schat events please": "schat-events",
+		"look at SchatUser too":   "schat-user",
+	} {
+		if got := Named(Rank(text, repos, History{}, nil, nil)); names(got) != want {
+			t.Errorf("%q: %s, want %s", text, names(got), want)
+		}
+	}
+}

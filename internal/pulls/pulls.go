@@ -717,7 +717,17 @@ func (s *Service) SyncText(ctx context.Context, rootID string) []string {
 				}
 			}
 		}
-		if t == nil || !t.FinishedAt.After(rec.DescribedAt) {
+		if t == nil {
+			continue
+		}
+		// This runs as a turn's work is pushed, before the turn is marked finished: a
+		// turn with no finish time yet is the one ending now. (Seen on a real chat: a
+		// reply's new description never reached its pull request.)
+		ended := t.FinishedAt
+		if ended.IsZero() {
+			ended = time.Now()
+		}
+		if !ended.After(rec.DescribedAt) {
 			continue
 		}
 		title, body := written(s.Store, t.ID)

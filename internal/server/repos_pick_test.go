@@ -144,6 +144,14 @@ func TestAReplyThatMentionsAnotherRepoBringsItIn(t *testing.T) {
 	if code != http.StatusCreated || repoNames(r) != "Gbreed/echotalk-mobile,Gbreed/echotalk-backend" {
 		t.Errorf("nothing new named: %d %s", code, raw)
 	}
+	e.waitStatus(r["id"].(string), "done")
+	// Nor do words that are only part of another repo's name ("control panel" for
+	// gbr-control-panel), which would be enough to pick it for a new chat.
+	code, raw = e.do("POST", "/api/sessions/"+r["id"].(string)+"/reply", map[string]any{"prompt": "the control panel menu is wrong"})
+	json.Unmarshal([]byte(raw), &r)
+	if code != http.StatusCreated || repoNames(r) != "Gbreed/echotalk-mobile,Gbreed/echotalk-backend" {
+		t.Errorf("part of a name: %d %s", code, raw)
+	}
 }
 
 func TestFindingARepoForTheAgent(t *testing.T) {

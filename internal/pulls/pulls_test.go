@@ -387,3 +387,28 @@ func TestALaterTurnUpdatesThePullRequestOnlyWhenItWroteANewDescription(t *testin
 		t.Errorf("once updated, nothing more happens: %v", log)
 	}
 }
+
+// As Unire runs it: when the turn's work is pushed, before the turn is marked finished.
+func TestATurnStillEndingUpdatesItsPullRequest(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if err := st.CreateSession(store.Session{ID: "s2", Task: "Fix the login", Agent: "antigravity", Mode: "hands-off", Prompt: "p", Branch: "agent/x", ParentID: "s1", Repos: thread[0].Repos}); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "prbody", "Waits for the right thing now.")
+	st.AddEvent("s2", "log", "r: pushed agent/x")
+	// Not marked finished yet.
+	log := svc.SyncText(ctx, "s1")
+	if len(log) != 1 || !strings.Contains(log[0], "updated") {
+		t.Fatalf("log = %v", log)
+	}
+	if sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]; !strings.Contains(sent, "Waits for the right thing now.") {
+		t.Errorf("the server was sent %q", sent)
+	}
+}

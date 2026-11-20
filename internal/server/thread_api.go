@@ -108,11 +108,13 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		}
 		refs[i] = ref
 	}
-	// A repo the owner now mentions (or one usually used with the repos here) joins
-	// the conversation. The repos already in it stay.
+	// A repo the owner now names in full joins the conversation; the repos already
+	// in it stay. Only a whole name counts here: a reply was seen cloning two
+	// unrelated repos because the message said "event" and "user", words in their
+	// names. (A new chat, which has no repos yet, also takes weaker matches.)
 	var picked []repopick.Candidate
 	if len(refs) < 10 {
-		picked = repopick.Auto(s.rankRepos(ctx, prompt, refs))
+		picked = repopick.Named(s.rankRepos(ctx, prompt, refs))
 		if room := 10 - len(refs); len(picked) > room {
 			picked = picked[:room]
 		}

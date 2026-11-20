@@ -30,6 +30,25 @@ func TestClaudeCommands(t *testing.T) {
 			t.Errorf("Command(%q,%q,%q) = %v, %v; want %v", c.prompt, c.mode, c.ref, got, err, c.want)
 		}
 	}
+	// With a model chosen.
+	withModel := a.WithModel("opus")
+	modelCases := []struct {
+		prompt, mode, ref string
+		want              []string
+	}{
+		{"do it", HandsOff, ref, []string{"claude", "-p", "--dangerously-skip-permissions", "--session-id", ref, "--model", "opus", "--", "do it"}},
+		{"do it", HandsOff, "", []string{"claude", "-p", "--dangerously-skip-permissions", "--model", "opus", "--", "do it"}},
+		{"", HandsOff, ref, []string{"claude", "--dangerously-skip-permissions", "--session-id", ref, "--model", "opus"}},
+		{"", HandsOff, "", []string{"claude", "--dangerously-skip-permissions", "--model", "opus"}},
+		{"do it", AskFirst, ref, []string{"claude", "--session-id", ref, "--model", "opus", "--", "do it"}},
+		{"", AskFirst, "", []string{"claude", "--model", "opus"}},
+	}
+	for _, c := range modelCases {
+		got, err := withModel.Command(c.prompt, c.mode, c.ref)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("WithModel.Command(%q,%q,%q) = %v, %v; want %v", c.prompt, c.mode, c.ref, got, err, c.want)
+		}
+	}
 	if _, err := a.Command("x", "bogus", ""); err == nil {
 		t.Error("unknown mode should fail")
 	}
@@ -44,6 +63,22 @@ func TestClaudeFollowUpResumesByID(t *testing.T) {
 	want := []string{"claude", "-p", "--dangerously-skip-permissions", "--resume", ref, "--", "update memory"}
 	if !ok || !reflect.DeepEqual(got, want) {
 		t.Errorf("FollowUp = %v, %v; want %v", got, ok, want)
+	}
+	// With a model.
+	gotModel, okModel := a.WithModel("opus").FollowUp("update memory", HandsOff, ref)
+	wantModel := []string{"claude", "-p", "--dangerously-skip-permissions", "--model", "opus", "--resume", ref, "--", "update memory"}
+	if !okModel || !reflect.DeepEqual(gotModel, wantModel) {
+		t.Errorf("WithModel.FollowUp = %v, %v; want %v", gotModel, okModel, wantModel)
+	}
+	// StreamCommand with a model.
+	streamer := a.WithModel("opus").(Streamer)
+	sgot, err := streamer.StreamCommand("do it", HandsOff, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swant := []string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--session-id", ref, "--model", "opus", "--", "do it"}
+	if !reflect.DeepEqual(sgot, swant) {
+		t.Errorf("WithModel.StreamCommand = %v; want %v", sgot, swant)
 	}
 	// Without an id it must not fall back to "the latest conversation".
 	if _, ok := a.FollowUp("x", HandsOff, ""); ok {

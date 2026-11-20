@@ -40,6 +40,31 @@ function iconTile(name, small) {
 }
 document.querySelectorAll("[data-icon]").forEach((n) => { n.innerHTML = iconSvg(n.dataset.icon); });
 
+// ---- model picker: "Default", the agent's known models, or a name typed in ----
+// The picker follows an agent: fill(agent, model) offers that agent's models (from
+// GET /api/agents) and selects model; an empty model is the agent's own default.
+const OTHER_MODEL = "\u0000other";
+function modelPicker(select, input) {
+  const sync = () => { input.hidden = select.value !== OTHER_MODEL; };
+  select.addEventListener("change", () => { sync(); if (!input.hidden) input.focus(); });
+  return {
+    fill(agent, model) {
+      const known = (agent && agent.models) || [];
+      select.replaceChildren(el("option", { value: "" }, "Default model"),
+        ...known.map((m) => el("option", { value: m }, m)),
+        el("option", { value: OTHER_MODEL }, "Other…"));
+      model = model || "";
+      const typed = model !== "" && !known.includes(model);
+      select.value = typed ? OTHER_MODEL : model;
+      input.value = typed ? model : "";
+      sync();
+    },
+    // The model to send: "" for the agent's default.
+    value() { return select.value === OTHER_MODEL ? input.value.trim() : select.value; },
+    set disabled(v) { select.disabled = v; input.disabled = v; },
+  };
+}
+
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,

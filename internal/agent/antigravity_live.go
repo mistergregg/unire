@@ -28,6 +28,9 @@ func (a antigravity) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 	// --print= (empty) because the messages come on stdin, and agy reads the
 	// next argument as the prompt when the value is given separately.
 	argv := []string{"agy", "--dangerously-skip-permissions", "--print=", "--input-format=stream-json", "--output-format=stream-json"}
+	if a.Model != "" {
+		argv = append(argv, "--model", a.Model)
+	}
 	if o.Resume != "" {
 		argv = append(argv, "--conversation", o.Resume)
 	}

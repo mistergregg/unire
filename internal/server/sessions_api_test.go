@@ -859,3 +859,168 @@ func TestAReplyBySameAgentCarriesOnItsOwnConversation(t *testing.T) {
 		t.Errorf("an agent new to the conversation is told all of it: %q %q", resume, p)
 	}
 }
+
+func TestModelSelectionAndSwitchingRoundTrip(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok-1")
+
+	// 1. Validation error on start.
+	if code, _ := e.launch(base, map[string]any{"model": "bad;injection"}); code != http.StatusBadRequest {
+		t.Errorf("start with invalid model = %d, want 400", code)
+	}
+	if code, _ := e.launch(base, map[string]any{"model": "with space"}); code != http.StatusBadRequest {
+		t.Errorf("start with space model = %d, want 400", code)
+	}
+
+	// 2. Start with a model.
+	code, sess := e.launch(base, map[string]any{"agent": "claude", "model": "opus"})
+	if code != http.StatusCreated {
+		t.Fatalf("start with model = %d %v", code, sess)
+	}
+	id := sess["id"].(string)
+	if sess["model"] != "opus" {
+		t.Errorf("sessionView.model = %v, want opus", sess["model"])
+	}
+
+	// Verify database record has the model.
+	stSess, ok, err := e.srv.store.Session(id)
+	if err != nil || !ok || stSess.Model != "opus" {
+		t.Errorf("store.Session model = %q, want opus", stSess.Model)
+	}
+
+	// Verify GET /api/sessions/{id} returns the model.
+	code, getBody := e.do("GET", "/api/sessions/"+id, nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/sessions/{id} = %d %s", code, getBody)
+	}
+	var getView map[string]any
+	json.Unmarshal([]byte(getBody), &getView)
+	if getView["model"] != "opus" {
+		t.Errorf("getView.model = %v, want opus", getView["model"])
+	}
+
+	e.waitStatus(id, "done")
+
+	// 3. Validation error on reply.
+	if code, _ := e.do("POST", "/api/sessions/"+id+"/reply", map[string]any{"prompt": "p", "model": "bad;injection"}); code != http.StatusBadRequest {
+		t.Errorf("reply with invalid model = %d, want 400", code)
+	}
+
+	// 4. Reply switching agent with another model.
+	code, replyRaw := e.do("POST", "/api/sessions/"+id+"/reply", map[string]any{
+		"prompt": "now review with antigravity",
+		"agent":  "antigravity",
+		"model":  "gemini-3.8-flash-high",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("reply with model = %d %s", code, replyRaw)
+	}
+	var replyView map[string]any
+	json.Unmarshal([]byte(replyRaw), &replyView)
+	replyID := replyView["id"].(string)
+	if replyView["agent"] != "antigravity" || replyView["model"] != "gemini-3.8-flash-high" {
+		t.Errorf("replyView agent=%v model=%v; want antigravity, gemini-3.8-flash-high", replyView["agent"], replyView["model"])
+	}
+
+	// Verify reply database record has the agent and model.
+	stReply, ok, err := e.srv.store.Session(replyID)
+	if err != nil || !ok || stReply.Agent != "antigravity" || stReply.Model != "gemini-3.8-flash-high" {
+		t.Errorf("store.Session reply agent=%q model=%q; want antigravity, gemini-3.8-flash-high", stReply.Agent, stReply.Model)
+	}
+
+	// Verify GET /api/sessions/{replyId} returns agent and model.
+	code, getReplyBody := e.do("GET", "/api/sessions/"+replyID, nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/sessions/{replyId} = %d %s", code, getReplyBody)
+	}
+	var getReplyView map[string]any
+	json.Unmarshal([]byte(getReplyBody), &getReplyView)
+	if getReplyView["agent"] != "antigravity" || getReplyView["model"] != "gemini-3.8-flash-high" {
+		t.Errorf("getReplyView agent=%v model=%v; want antigravity, gemini-3.8-flash-high", getReplyView["agent"], getReplyView["model"])
+	}
+
+	e.waitStatus(replyID, "done")
+
+	// A reply that keeps the agent and names no model keeps the model of the turn before.
+	next := func(from string, body map[string]any) map[string]any {
+		t.Helper()
+		body["prompt"] = "carry on"
+		code, raw := e.do("POST", "/api/sessions/"+from+"/reply", body)
+		if code != http.StatusCreated {
+			t.Fatalf("reply %v = %d %s", body, code, raw)
+		}
+		var v map[string]any
+		json.Unmarshal([]byte(raw), &v)
+		e.waitStatus(v["id"].(string), "done")
+		return v
+	}
+	kept := next(replyID, map[string]any{})
+	if kept["agent"] != "antigravity" || kept["model"] != "gemini-3.8-flash-high" {
+		t.Errorf("same agent, no model: agent=%v model=%v; want the last turn's", kept["agent"], kept["model"])
+	}
+	// An empty model asks for the agent's default.
+	reset := next(kept["id"].(string), map[string]any{"model": ""})
+	if reset["agent"] != "antigravity" || reset["model"] != "" {
+		t.Errorf("empty model: agent=%v model=%v; want antigravity with its default", reset["agent"], reset["model"])
+	}
+	// Naming the same agent counts as keeping it.
+	picked := next(reset["id"].(string), map[string]any{"model": "gemini-3.8-flash-low"})
+	kept2 := next(picked["id"].(string), map[string]any{"agent": "antigravity"})
+	if kept2["model"] != "gemini-3.8-flash-low" {
+		t.Errorf("same agent named, no model: model=%v; want the last turn's", kept2["model"])
+	}
+	// Another agent with no model starts from its own default.
+	switched := next(kept2["id"].(string), map[string]any{"agent": "claude"})
+	if switched["agent"] != "claude" || switched["model"] != "" {
+		t.Errorf("other agent, no model: agent=%v model=%v; want claude with its default", switched["agent"], switched["model"])
+	}
+
+	// 5. Start and reply without a model (defaults).
+	code, sessDef := e.launch(base, nil)
+	if code != http.StatusCreated || sessDef["model"] != "" {
+		t.Fatalf("default session = %d %v", code, sessDef)
+	}
+	defID := sessDef["id"].(string)
+	e.waitStatus(defID, "done")
+
+	code, replyDefRaw := e.do("POST", "/api/sessions/"+defID+"/reply", map[string]any{"prompt": "continue"})
+	if code != http.StatusCreated {
+		t.Fatalf("default reply = %d %s", code, replyDefRaw)
+	}
+	var replyDefView map[string]any
+	json.Unmarshal([]byte(replyDefRaw), &replyDefView)
+	if replyDefView["model"] != "" {
+		t.Errorf("default reply model = %v; want empty", replyDefView["model"])
+	}
+
+	// 6. GET /api/agents includes models list for each agent.
+	code, agentsBody := e.do("GET", "/api/agents", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/agents = %d %s", code, agentsBody)
+	}
+	var agentsList []map[string]any
+	json.Unmarshal([]byte(agentsBody), &agentsList)
+	foundAgents := map[string][]string{}
+	for _, a := range agentsList {
+		id := a["id"].(string)
+		if models, ok := a["models"].([]any); ok {
+			for _, m := range models {
+				foundAgents[id] = append(foundAgents[id], m.(string))
+			}
+		}
+	}
+	for _, wantAgent := range []string{"claude", "codex", "antigravity"} {
+		if len(foundAgents[wantAgent]) == 0 {
+			t.Errorf("agent %s has no models in GET /api/agents: %v", wantAgent, foundAgents[wantAgent])
+		}
+	}
+	if !slices.Contains(foundAgents["claude"], "opus") {
+		t.Errorf("claude models %v missing opus", foundAgents["claude"])
+	}
+	if !slices.Contains(foundAgents["codex"], "gpt-6-luna") {
+		t.Errorf("codex models %v missing gpt-6-luna", foundAgents["codex"])
+	}
+	if !slices.Contains(foundAgents["antigravity"], "gemini-3.8-flash-high") {
+		t.Errorf("antigravity models %v missing gemini-3.8-flash-high", foundAgents["antigravity"])
+	}
+}

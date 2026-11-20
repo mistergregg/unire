@@ -26,6 +26,7 @@ docker build -t unire-sandbox docker/sandbox
 2. **Git servers:** add Gitea, Forgejo, GitHub or GitLab with an access token. Tokens are encrypted and can never be viewed again.
 3. **Agents:** press Sign in on Claude Code, Codex or Antigravity CLI. A terminal opens in the browser running that agent's own login, so sessions use your subscription. Another agent is one file: see [docs/adding-an-agent.md](docs/adding-an-agent.md).
 4. **Sessions, New session:** search your repos, pick one or several, write what the agent should do, and launch. Watch the log live; each repo gets an `agent/<agent>/<task>` branch pushed when the agent finishes.
+5. **Models:** next to the agent, pick the model for the message: **Default model** (the agent's own choice), one the agent offers, or **Other…** to type a name. A reply keeps the last turn's model while the agent stays the same, and starts from the new agent's default when you switch; replies Unire starts itself (fixing failed checks) keep it too. The chat shows the model next to the agent's name on each turn where one was chosen.
 
 Needs Docker on the machine running `unire serve`. Only unattended sessions exist so far.
 

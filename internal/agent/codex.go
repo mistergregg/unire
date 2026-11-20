@@ -8,13 +8,20 @@ import (
 // Codex is OpenAI's coding agent (the Codex CLI). Its command line was read
 // from the CLI's own --help (codex-cli 0.169): `codex exec` runs unattended,
 // and the sandbox flags are turned off because Unire's container is the sandbox.
-type codex struct{}
+type codex struct {
+	Model string
+}
 
 func init() { Register(codex{}) }
 
 func (codex) Name() string           { return "codex" }
 func (codex) MemoryFile() string     { return "AGENTS.md" }
 func (codex) MemoryMode() MemoryMode { return MemoryPrompt } // AGENTS.md discovery outside a git repo is unverified
+
+func (c codex) WithModel(model string) Adapter {
+	c.Model = model
+	return c
+}
 
 func (codex) Info() Info {
 	return Info{
@@ -30,6 +37,7 @@ func (codex) Info() Info {
 		InspectArgv: []string{"codex", "login", "status"},
 		ResetArgv:   []string{"codex", "logout"},
 		ResetHelp:   "Signs Codex out of the saved login.",
+		Models:      []string{"gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"},
 		// The status text was seen when signed out; the signed-in text and a
 		// real unattended run need an account to check.
 		Verified: Verified{},
@@ -43,20 +51,26 @@ func (codex) Hosts() []string {
 	return []string{"api.openai.com", "auth.openai.com", "chatgpt.com"}
 }
 
-func (codex) Command(prompt, mode, ref string) ([]string, error) {
+func (c codex) Command(prompt, mode, ref string) ([]string, error) {
+	var model []string
+	if c.Model != "" {
+		model = []string{"--model", c.Model}
+	}
 	switch mode {
 	case HandsOff:
 		if prompt == "" {
-			return []string{"codex", "--dangerously-bypass-approvals-and-sandbox"}, nil
+			return append([]string{"codex", "--dangerously-bypass-approvals-and-sandbox"}, model...), nil
 		}
 		// /workspace is not a git repo (the repos are inside it), hence
 		// --skip-git-repo-check. "--" keeps a dash-leading prompt from being a flag.
-		return []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--", prompt}, nil
+		argv := append([]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"}, model...)
+		return append(argv, "--", prompt), nil
 	case AskFirst:
 		if prompt == "" {
-			return []string{"codex"}, nil
+			return append([]string{"codex"}, model...), nil
 		}
-		return []string{"codex", "--", prompt}, nil
+		argv := append([]string{"codex"}, model...)
+		return append(argv, "--", prompt), nil
 	}
 	return nil, fmt.Errorf("unknown mode %q", mode)
 }

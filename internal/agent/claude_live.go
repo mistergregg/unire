@@ -22,6 +22,9 @@ func (c claude) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 		return nil, nil, errNotUnattended
 	}
 	argv := []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"}
+	if c.Model != "" {
+		argv = append(argv, "--model", c.Model)
+	}
 	conv := o.Ref
 	switch {
 	case o.Resume != "":

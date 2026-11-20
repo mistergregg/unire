@@ -88,6 +88,8 @@
         <div class="between spaced">
           <span class="row-tight">
             <select id="n-agent" class="pill-select" aria-label="Agent"></select>
+            <select id="n-model" class="pill-select" aria-label="Model"></select>
+            <input id="n-model-name" class="pill-input" hidden maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9.:/\-]*" spellcheck="false" autocapitalize="off" placeholder="Model name" aria-label="Model name">
             <button id="n-attach" type="button" class="icon-btn" title="Attach files (or paste them into the message)" aria-label="Attach files"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
           </span>
           <button class="primary" type="submit" id="n-submit">Start &rarr;</button>
@@ -136,6 +138,8 @@
         <textarea id="reply-text" rows="1" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
         <div class="composer-bar">
           <select id="reply-agent" class="pill-select" aria-label="Agent for the next message"></select>
+          <select id="reply-model" class="pill-select" aria-label="Model for the next message"></select>
+          <input id="reply-model-name" class="pill-input" hidden maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9.:/\-]*" spellcheck="false" autocapitalize="off" placeholder="Model name" aria-label="Model name for the next message">
           <button id="reply-attach" type="button" class="icon-btn" title="Attach files (or paste them into the message)" aria-label="Attach files"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
           <span class="hint muted" id="composer-hint">Enter to send · Shift+Enter for a new line</span>
           <button id="steer-now" type="button" class="pill-btn" hidden title="Stop what the agent is doing and carry on from this message">Send now</button>

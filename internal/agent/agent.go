@@ -6,6 +6,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 )
 
@@ -49,6 +50,8 @@ type Info struct {
 	ResetArgv   []string `json:"-"`
 	// ResetHelp says what a reset removes.
 	ResetHelp string `json:"resetHelp"`
+	// Models lists known model names to offer in the UI.
+	Models []string `json:"models"`
 	// Verified says what has been checked against the real agent.
 	Verified Verified `json:"verified"`
 }
@@ -80,6 +83,28 @@ type Adapter interface {
 	// Hosts lists the host names the agent must reach to work at all (its AI
 	// service and login). They stay reachable in the agent-only network mode.
 	Hosts() []string
+	// WithModel returns a copy of the adapter that runs the given model, in its
+	// one-shot commands and its live start alike (empty means the agent's default).
+	WithModel(model string) Adapter
+}
+
+var validModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$`)
+
+// ValidateModel checks that a typed model name is short (64 characters at most),
+// starts with a letter or digit and holds only letters, digits, dots, dashes,
+// colons and slashes, so nothing odd reaches a command line. Empty is valid: it
+// means the agent's own default.
+func ValidateModel(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > 64 {
+		return fmt.Errorf("model name is too long (64 characters max)")
+	}
+	if !validModelRe.MatchString(name) {
+		return fmt.Errorf("invalid model name %q", name)
+	}
+	return nil
 }
 
 var adapters = map[string]Adapter{}

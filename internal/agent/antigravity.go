@@ -29,13 +29,20 @@ import (
 //   - It keeps its login in the Linux Secret Service keyring when there is one
 //     and otherwise reads an auth.json file ("failed to read auth.json" is in the
 //     binary). A container has no keyring, so the file is what persists.
-type antigravity struct{}
+type antigravity struct {
+	Model string
+}
 
 func init() { Register(antigravity{}) }
 
 func (antigravity) Name() string           { return "antigravity" }
 func (antigravity) MemoryFile() string     { return "AGENTS.md" } // unverified: memory goes in the prompt (MemoryPrompt)
 func (antigravity) MemoryMode() MemoryMode { return MemoryPrompt }
+
+func (a antigravity) WithModel(model string) Adapter {
+	a.Model = model
+	return a
+}
 
 // The scripts below only look at paths with "antigravity" or "keyring" in their
 // name (below the home folder, never the home folder's own name), skip the
@@ -65,6 +72,7 @@ func (antigravity) Info() Info {
 		InspectArgv: []string{"sh", "-c", antigravityInspectScript},
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
 		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
+		Models:      []string{"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"},
 		Verified:    Verified{Unattended: true}, // signed-in unattended runs seen working (internet mode)
 	}
 }
@@ -81,20 +89,26 @@ func (antigravity) Hosts() []string {
 	}
 }
 
-func (antigravity) Command(prompt, mode, ref string) ([]string, error) {
+func (a antigravity) Command(prompt, mode, ref string) ([]string, error) {
+	var model []string
+	if a.Model != "" {
+		model = []string{"--model", a.Model}
+	}
 	switch mode {
 	case HandsOff:
 		if prompt == "" {
-			return []string{"agy", "--dangerously-skip-permissions"}, nil
+			return append([]string{"agy", "--dangerously-skip-permissions"}, model...), nil
 		}
 		// --print=<prompt> keeps a prompt that starts with a dash from being
 		// read as a flag, which -p <prompt> and -p -- <prompt> do not.
-		return []string{"agy", "--dangerously-skip-permissions", "--print=" + prompt}, nil
+		argv := append([]string{"agy", "--dangerously-skip-permissions"}, model...)
+		return append(argv, "--print="+prompt), nil
 	case AskFirst:
 		if prompt == "" {
-			return []string{"agy"}, nil
+			return append([]string{"agy"}, model...), nil
 		}
-		return []string{"agy", "--prompt-interactive=" + prompt}, nil
+		argv := append([]string{"agy"}, model...)
+		return append(argv, "--prompt-interactive="+prompt), nil
 	}
 	return nil, fmt.Errorf("unknown mode %q", mode)
 }
@@ -111,8 +125,9 @@ func (a antigravity) StreamCommand(prompt, mode, ref string) ([]string, error) {
 	if err != nil || mode != HandsOff || prompt == "" {
 		return argv, err
 	}
-	// Command is: agy --dangerously-skip-permissions --print=<prompt>
-	return []string{argv[0], argv[1], "--output-format=stream-json", argv[2]}, nil
+	// Command is: agy --dangerously-skip-permissions [--model <model>] --print=<prompt>
+	out := []string{argv[0], argv[1], "--output-format=stream-json"}
+	return append(out, argv[2:]...), nil
 }
 
 // ParseEvent reads agy's stream-json (documented at

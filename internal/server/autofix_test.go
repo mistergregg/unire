@@ -178,3 +178,19 @@ func TestTheFixButtonGetsTheFailureMessage(t *testing.T) {
 		t.Errorf("an unknown pull request = %d, want 404", code)
 	}
 }
+
+func TestAnAutomaticFixKeepsTheModelOfTheTurnBefore(t *testing.T) {
+	e, _, _ := autoFixEnv(t)
+	st := e.srv.store
+	if _, err := st.DB().Exec(`UPDATE sessions SET model = 'opus' WHERE id = 'c1'`); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.srv.autoFixOnce(context.Background()); n != 1 {
+		t.Fatalf("started %d", n)
+	}
+	turn := lastTurn(t, e)
+	if turn.Agent != "claude" || turn.Model != "opus" {
+		t.Errorf("the fix runs %s with model %q; want claude with opus", turn.Agent, turn.Model)
+	}
+	e.waitStatus(turn.ID, "done")
+}

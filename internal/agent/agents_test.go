@@ -29,6 +29,23 @@ func TestCodexCommands(t *testing.T) {
 			t.Errorf("Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
 		}
 	}
+	// With a model chosen.
+	withModel := a.WithModel("gpt-6-luna")
+	modelCases := []struct {
+		prompt, mode string
+		want         []string
+	}{
+		{"do it", HandsOff, []string{"codex", "exec", bypass, "--skip-git-repo-check", "--model", "gpt-6-luna", "--", "do it"}},
+		{"", HandsOff, []string{"codex", bypass, "--model", "gpt-6-luna"}},
+		{"do it", AskFirst, []string{"codex", "--model", "gpt-6-luna", "--", "do it"}},
+		{"", AskFirst, []string{"codex", "--model", "gpt-6-luna"}},
+	}
+	for _, c := range modelCases {
+		got, err := withModel.Command(c.prompt, c.mode, ref)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("WithModel.Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
+		}
+	}
 	if _, ok := a.FollowUp("x", HandsOff, ref); ok {
 		t.Error("Codex must not resume 'the latest' conversation: sessions share one home folder")
 	}
@@ -64,6 +81,33 @@ func TestAntigravityCommands(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
 		}
+	}
+	// With a model chosen.
+	withModel := a.WithModel("gemini-3.8-flash-high")
+	modelCases := []struct {
+		prompt, mode string
+		want         []string
+	}{
+		{"do it", HandsOff, []string{"agy", "--dangerously-skip-permissions", "--model", "gemini-3.8-flash-high", "--print=do it"}},
+		{"", HandsOff, []string{"agy", "--dangerously-skip-permissions", "--model", "gemini-3.8-flash-high"}},
+		{"do it", AskFirst, []string{"agy", "--model", "gemini-3.8-flash-high", "--prompt-interactive=do it"}},
+		{"", AskFirst, []string{"agy", "--model", "gemini-3.8-flash-high"}},
+	}
+	for _, c := range modelCases {
+		got, err := withModel.Command(c.prompt, c.mode, ref)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("WithModel.Command(%q,%q) = %v, %v; want %v", c.prompt, c.mode, got, err, c.want)
+		}
+	}
+	// StreamCommand with model.
+	streamer := withModel.(Streamer)
+	sgot, err := streamer.StreamCommand("do it", HandsOff, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swant := []string{"agy", "--dangerously-skip-permissions", "--output-format=stream-json", "--model", "gemini-3.8-flash-high", "--print=do it"}
+	if !reflect.DeepEqual(sgot, swant) {
+		t.Errorf("StreamCommand = %v; want %v", sgot, swant)
 	}
 	for _, c := range cases {
 		got, _ := a.Command(c.prompt, c.mode, ref)
@@ -194,6 +238,9 @@ func TestAgentsAreCompleteAndSorted(t *testing.T) {
 		if in.Label == "" || in.Description == "" || in.LoginHelp == "" || len(in.LoginArgv) == 0 {
 			t.Errorf("%s: needs a label, description, login help and login command", in.ID)
 		}
+		if len(in.Models) == 0 {
+			t.Errorf("%s: should list known model names", in.ID)
+		}
 		if len(in.StatusArgv) > 0 && in.LoggedIn == nil {
 			t.Errorf("%s: a status command needs a way to read its result", in.ID)
 		}
@@ -240,5 +287,52 @@ func TestUnverifiedAgentsSaySo(t *testing.T) {
 	c, _ := Get("claude")
 	if v := c.Info().Verified; !v.Unattended || !v.Status || !v.Hosts {
 		t.Errorf("claude was verified with real sessions: %+v", v)
+	}
+}
+
+func TestModelValidation(t *testing.T) {
+	valid := []string{
+		"",
+		"sonnet",
+		"opus",
+		"fable",
+		"gpt-6-luna",
+		"gemini-3.8-flash-high",
+		"claude-sonnet-4-6",
+		"meta-llama/Llama-3:8b",
+		"provider.name/model-v1:tag",
+		"a",
+		strings.Repeat("a", 64),
+	}
+	for _, m := range valid {
+		if err := ValidateModel(m); err != nil {
+			t.Errorf("ValidateModel(%q) = %v; want nil", m, err)
+		}
+	}
+
+	invalid := []string{
+		strings.Repeat("a", 65), // too long
+		"has space",
+		"has\ttab",
+		"has\nnewline",
+		"-starts-with-dash",
+		".starts-with-dot",
+		":starts-with-colon",
+		"/starts-with-slash",
+		"model;rm",
+		"model&echo",
+		"model|cat",
+		"model$HOME",
+		"model`id`",
+		"model'quote",
+		"model\"quote",
+		"model\\backslash",
+		"model(paren)",
+		"model<angle>",
+	}
+	for _, m := range invalid {
+		if err := ValidateModel(m); err == nil {
+			t.Errorf("ValidateModel(%q) = nil; want error", m)
+		}
 	}
 }

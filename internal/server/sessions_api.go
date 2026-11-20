@@ -360,6 +360,7 @@ type sessionView struct {
 	ID           string          `json:"id"`
 	Task         string          `json:"task"`
 	Agent        string          `json:"agent"`
+	Model        string          `json:"model"`
 	Mode         string          `json:"mode"`
 	Prompt       string          `json:"prompt"`
 	Branch       string          `json:"branch"`
@@ -380,7 +381,7 @@ type sessionView struct {
 }
 
 func toView(x store.Session) sessionView {
-	v := sessionView{ID: x.ID, Task: x.Task, Agent: x.Agent, Mode: x.Mode, Prompt: x.Prompt, Branch: x.Branch, Status: x.Status, Error: x.Error,
+	v := sessionView{ID: x.ID, Task: x.Task, Agent: x.Agent, Model: x.Model, Mode: x.Mode, Prompt: x.Prompt, Branch: x.Branch, Status: x.Status, Error: x.Error,
 		Network: x.Network, Memory: x.Memory, Parent: x.ParentID, Repos: x.Repos, CreatedAt: x.CreatedAt.Unix(),
 		CanSteer: x.Mode == agent.HandsOff && agent.CanSteer(x.Agent)}
 	if !x.StartedAt.IsZero() {
@@ -422,6 +423,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Task     string          `json:"task"`
 		Agent    string          `json:"agent"`
+		Model    string          `json:"model"`
 		Prompt   string          `json:"prompt"`
 		Network  string          `json:"network"` // empty means the saved default
 		Memory   *bool           `json:"memory"`  // omitted means on
@@ -438,7 +440,13 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.Task, req.Prompt = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt)
+	req.Task, req.Prompt, req.Model = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt), strings.TrimSpace(req.Model)
+	if req.Model != "" {
+		if err := agent.ValidateModel(req.Model); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if req.Task == "" {
 		req.Task = taskNameFrom(req.Prompt) // the name is made from what was asked
 	}
@@ -542,7 +550,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Model: req.Model, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

@@ -20,7 +20,9 @@ Run the real CLI's `--help` in the image and write down:
 ## 3. Write `internal/agent/<name>.go`
 
 ```go
-type myagent struct{}
+type myagent struct {
+	Model string // the model the owner chose; empty means the CLI's own default
+}
 
 func init() { Register(myagent{}) }
 
@@ -35,21 +37,26 @@ func (myagent) Info() Info {
 		LoginArgv:  []string{"myagent", "login"},
 		StatusArgv: []string{"myagent", "whoami"},
 		LoggedIn:   func(out string, ok bool) bool { return ok && !strings.Contains(out, "not logged in") },
+		Models:     []string{"model-a", "model-b"}, // names the CLI accepts, offered in the model picker
 		Verified:   Verified{}, // fill in only what you have actually checked with a real account
 	}
 }
 
 func (myagent) Hosts() []string { return []string{"api.example.com"} }
 
-func (myagent) Command(prompt, mode, ref string) ([]string, error) { /* argv for hands-off and ask-first */ }
+func (a myagent) WithModel(model string) Adapter { a.Model = model; return a }
+
+func (a myagent) Command(prompt, mode, ref string) ([]string, error) { /* argv for hands-off and ask-first; add --model a.Model only when it is set */ }
 func (myagent) FollowUp(prompt, mode, ref string) ([]string, bool)  { return nil, false }
 ```
+
+**Models.** The owner can pick a model per message (a new chat or a reply). Unire hands it to the adapter through `WithModel` before it builds any command, so `Command`, `FollowUp`, `StreamCommand` and `StartLive` all read it from the adapter. Leave the argv exactly as it was when `Model` is empty: that is everyone who never picks one. List in `Models` the names the CLI really accepts (from its own `models` command or help); the owner can still type another name, which Unire checks (`ValidateModel`: letters, digits, `.` `-` `:` `/`, 64 characters at most) before it reaches a command line.
 
 `Verified` is shown to the owner. Leave a field `false` until you have run the real thing: `Unattended` after a real unattended session worked, `Status` after you saw the status command report both states, `Hosts` after you measured the hosts a real session contacts (the session log lists them as "connected to ..."). An agent whose sign-in check is not verified never blocks a launch.
 
 ## 4. Test
 
-Add argv tests next to the others in `internal/agent/agents_test.go`: every mode, a dash-leading prompt, and `FollowUp`. `TestAgentsAreCompleteAndSorted` checks the metadata and `TestUnverifiedAgentsSaySo` keeps you honest about `Verified`.
+Add argv tests next to the others in `internal/agent/agents_test.go`: every mode, a dash-leading prompt, `FollowUp`, and each of them with and without a model. `TestAgentsAreCompleteAndSorted` checks the metadata and `TestUnverifiedAgentsSaySo` keeps you honest about `Verified`.
 
 ## What you get
 

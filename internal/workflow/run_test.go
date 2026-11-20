@@ -524,6 +524,7 @@ func (noResume) Command(prompt, mode, ref string) ([]string, error) {
 	return []string{"fresh-agent", prompt}, nil
 }
 func (noResume) FollowUp(prompt, mode, ref string) ([]string, bool) { return nil, false }
+func (n noResume) WithModel(string) agent.Adapter                   { return n }
 
 func TestAReplyContinuesTheBranchWithoutCreatingIt(t *testing.T) {
 	branches := func(base string) int {
@@ -1118,5 +1119,38 @@ func TestAutoShareFileLinksInAgentOutput(t *testing.T) {
 	resNoTool, _ := run(t, sb, baseSpec(), oNoTools)
 	if len(resNoTool.Shared) != 0 {
 		t.Errorf("session without share tool should have no shared items, got: %+v", resNoTool.Shared)
+	}
+}
+
+func TestTheChosenModelReachesEveryAgentCallAndNoneIsAddedWithout(t *testing.T) {
+	modelOf := func(spec session.Spec) (calls, withModel int) {
+		t.Helper()
+		sb := &fakeSandbox{outFiles: agentWrites("## Asked\nx", "")}
+		if _, err := run(t, sb, spec, memOpts(nil)); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range sb.calls {
+			if !contains(c.Argv, "--dangerously-skip-permissions") {
+				continue // not the agent
+			}
+			calls++
+			for i, a := range c.Argv {
+				if a == "--model" && i+1 < len(c.Argv) && c.Argv[i+1] == spec.Model {
+					withModel++
+				}
+				if a == "--model" && spec.Model == "" {
+					t.Errorf("no model chosen, yet the agent got --model: %v", c.Argv)
+				}
+			}
+		}
+		return calls, withModel
+	}
+	spec := baseSpec()
+	spec.Model = "opus"
+	if calls, with := modelOf(spec); calls < 2 || with != calls {
+		t.Errorf("the run and its memory follow-up should both use the model: %d of %d calls did", with, calls)
+	}
+	if calls, _ := modelOf(baseSpec()); calls < 2 {
+		t.Errorf("expected the run and its follow-up, saw %d agent calls", calls)
 	}
 }

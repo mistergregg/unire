@@ -92,6 +92,7 @@ type Session struct {
 	ID           string
 	Task         string
 	Agent        string
+	Model        string // model chosen for this turn; empty means the agent's default
 	Mode         string
 	Prompt       string
 	Branch       string
@@ -112,14 +113,14 @@ type Session struct {
 	FinishedAt   time.Time // zero until it ends
 }
 
-const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen, auto_fix, agent_conv`
+const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen, auto_fix, agent_conv, model`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var repos string
 	var created, started, finished int64
 	var mem, autoFix int
-	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen, &autoFix, &x.AgentConv); err != nil {
+	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen, &autoFix, &x.AgentConv, &x.Model); err != nil {
 		return x, err
 	}
 	x.Memory = mem != 0
@@ -150,8 +151,8 @@ func (s *Store) CreateSession(x Session) error {
 	if x.Memory {
 		mem = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen, autoFixInt(x), x.AgentConv)
+	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen, autoFixInt(x), x.AgentConv, x.Model)
 	return err
 }
 

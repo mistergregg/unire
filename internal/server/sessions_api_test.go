@@ -707,12 +707,18 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	}
 	// Release the agent only once it has taken the message: a message that reaches an agent
 	// that has already finished is "not delivered", which is correct but not what this tests.
+	var lastLog string
+	found := false
 	for i := 0; i < 300; i++ {
-		_, l := e.do("GET", "/api/sessions/"+id+"/logs", nil)
-		if strings.Contains(l, "gave the agent your message") {
+		_, lastLog = e.do("GET", "/api/sessions/"+id+"/logs", nil)
+		if strings.Contains(lastLog, `"kind":"steer"`) && strings.Contains(lastLog, `\nnow\n`) && strings.Contains(lastLog, "also add tests") {
+			found = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("send-now message never appeared in logs; log:\n%s", lastLog)
 	}
 	e.box.mu.Lock()
 	close(e.box.block)

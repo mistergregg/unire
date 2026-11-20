@@ -47,8 +47,18 @@ func Prompt(set []Tool) string {
 		b.WriteString("- " + t.Usage + "\n")
 	}
 	b.WriteString("\n" + checkingTools)
+	b.WriteString("\n" + keepWhatWorks)
 	return b.String()
 }
+
+// keepWhatWorks is the rule every agent works by. An agent asked why chat messages
+// showed above a pinned header "fixed" it by removing the pinning, a feature the
+// owner wanted, and opened a pull request saying the problem was solved.
+const keepWhatWorks = "# Keep what works\n\n" +
+	"Fix what you were asked about without taking away anything that works. Removing or changing a feature, a setting, an option or how something behaves is not a fix unless the owner asked for that change; find the fix that keeps it.\n\n" +
+	"- If every fix you can find removes or changes something that works, do not make it. Ask the owner first (unire ask, if you have it): say what would be lost and what the other options are. Without an answer, leave it as it is and explain in your reply.\n" +
+	"- Before you finish, read your diff for anything you deleted or changed besides the fix, and put it back unless the task needs it.\n" +
+	"- If your change does alter existing behaviour, say so plainly in your reply and in the pull request description: never describe it as only a fix.\n"
 
 // checkingTools tells the agent about the programs the sandbox image carries for
 // checking work (see docker/sandbox/Dockerfile). They are plain commands, not

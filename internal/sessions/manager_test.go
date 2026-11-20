@@ -230,11 +230,16 @@ func TestStopRunningSession(t *testing.T) {
 	m, st := setup(t, sb)
 	x, _ := m.Start(req(""))
 	deadline := time.Now().Add(3 * time.Second)
+	var running bool
 	for time.Now().Before(deadline) {
 		if got, _, _ := st.Session(x.ID); got.Status == store.StatusRunning {
+			running = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !running {
+		t.Fatalf("session %s never started running", x.ID)
 	}
 	if !m.Stop(x.ID) {
 		t.Fatal("Stop did not find the session")
@@ -981,11 +986,16 @@ func TestStopFreesTheSlotEvenWhenTheRunWillNotEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var running bool
 	for i := 0; i < 200; i++ {
 		if s, _, _ := st.Session(x.ID); s.Status == store.StatusRunning {
+			running = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !running {
+		t.Fatalf("session %s never started running", x.ID)
 	}
 	m.Stop(x.ID)
 	got := waitFinished(t, st, x.ID)

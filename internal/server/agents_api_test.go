@@ -209,6 +209,9 @@ func TestLastSignInOutputIsKeptCleanedAndOwnerOnly(t *testing.T) {
 	for started.count() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
+	if started.count() == 0 {
+		t.Fatal("terminal process never started")
+	}
 	started.get(0).in <- []byte("\x1b[31mFailed to sign in. Message: needs GOOGLE_CLOUD_PROJECT\x1b[0m\r\nhttps://accounts.google.com/o/oauth2/v2/auth?state=SECRETSTATE\r\ncode 4/0AeanS0Zq2x9abcDEFghiJKL\r\n")
 	if _, _, err := c.Read(ctx); err != nil { // wait until the browser has received it
 		t.Fatal(err)

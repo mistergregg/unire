@@ -316,6 +316,15 @@
 
       <div class="card">
         <div class="card-head">
+          <span class="icon-tile sm" data-icon="git"></span>
+          <div class="grow"><h2>Pull requests</h2><p class="muted">Whether Unire asks you before it opens a pull request for an agent's work.</p></div>
+        </div>
+        <label class="check"><input id="pr-auto" type="checkbox"> Open pull requests without asking</label>
+        <p class="muted small spaced">When this is on and an agent finishes a turn that pushed a branch and asked for a pull request (<code>unire pr</code>), Unire opens it straight away with the agent's title and description. Off: the chat asks you first. Branches pushed earlier are still offered as before.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
           <span class="icon-tile sm" data-icon="box"></span>
           <div class="grow"><h2>Sandbox</h2><p class="muted">How each agent's disposable container runs.</p></div>
         </div>

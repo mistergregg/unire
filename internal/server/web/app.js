@@ -284,6 +284,7 @@ async function openSettings() {
   show("settings");
   fillSandbox(await api("GET", "/api/sandbox"));
   fillLimits(await api("GET", "/api/limits"));
+  $("pr-auto").checked = (await api("GET", "/api/pulls/settings")).autoOpen;
   fillNetwork(await api("GET", "/api/network"));
   await renderWorkspaces();
   await renderLogins();
@@ -372,3 +373,12 @@ $("lim-form").addEventListener("submit", (e) => {
     banner("Limits saved. The run limit applies to runs that start from now on.");
   });
 });
+
+// ---- pull requests: ask first, or open them when the agent is done ----
+$("pr-auto").addEventListener("change", () => guarded(null, async () => {
+  const box = $("pr-auto");
+  try {
+    box.checked = (await api("PUT", "/api/pulls/settings", { autoOpen: box.checked })).autoOpen;
+    banner(box.checked ? "Pull requests are opened when the agent is done." : "Unire asks you before it opens a pull request.");
+  } catch (e) { box.checked = !box.checked; throw e; }
+}));

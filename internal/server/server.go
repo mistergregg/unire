@@ -180,6 +180,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/repos/suggest", s.auth(s.suggestRepos))
 	mux.HandleFunc("GET /api/memory/stats", s.auth(s.memoryStats))
 	mux.HandleFunc("GET /api/health", s.auth(s.getHealth))
+	mux.HandleFunc("GET /api/pulls/settings", s.auth(s.getPullSettings))
+	mux.HandleFunc("PUT /api/pulls/settings", s.auth(s.putPullSettings))
 	mux.HandleFunc("GET /api/limits", s.auth(s.getLimits))
 	mux.HandleFunc("PUT /api/limits", s.auth(s.putLimits))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))

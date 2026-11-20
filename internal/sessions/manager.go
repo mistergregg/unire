@@ -45,6 +45,11 @@ type Config struct {
 	Repos RepoFinder
 	// Upstream tells a chat that follows a parent where the parent stands. Nil: no parent tool.
 	Upstream Upstream
+	// AutoPR: pull requests are opened without asking the owner, so the agent is told
+	// so. AfterTurn is called once a turn's work is pushed (nil: nothing); it returns
+	// lines for the turn's log.
+	AutoPR    bool
+	AfterTurn func(ctx context.Context, sessionID string) []string
 	// Attachments is the folder images the owner attaches are kept in, one folder per
 	// session. Empty: messages cannot carry attachments.
 	Attachments string
@@ -339,6 +344,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		wo.Tools = tools.ForReplyWithPR()
 		pulls = cfg.Pulls
 	}
+	if cfg.AutoPR {
+		wo.Tools = tools.WithAutoOpen(wo.Tools) // the agent is told its pull request is opened for it
+	}
 	if j.memory {
 		wo.Tools = append(wo.Tools, tools.Memory)
 	}
@@ -395,6 +403,13 @@ func (m *Manager) run(ctx context.Context, j job) {
 			// A turn that wrote a new description for its open pull request updates it.
 			sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			for _, line := range pulls.SyncText(sctx, j.root) {
+				_ = m.st.AddEvent(spec.ID, "log", line)
+			}
+			cancel()
+		}
+		if cfg.AfterTurn != nil && werr == nil {
+			actx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			for _, line := range cfg.AfterTurn(actx, spec.ID) {
 				_ = m.st.AddEvent(spec.ID, "log", line)
 			}
 			cancel()

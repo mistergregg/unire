@@ -108,6 +108,25 @@ var PR = Tool{
 		`Run it once, when you have finished. You cannot open the pull request yourself: Unire asks the owner whether to.`,
 }
 
+// PRAuto is pr when the owner lets Unire open pull requests without asking.
+var PRAuto = Tool{
+	Name: "pr",
+	Usage: `unire pr "<title>" - ask for a pull request with your changes, with this title (under 70 characters). ` +
+		`Run it once, when you have finished and checked your work: when you finish, Unire opens the pull request for you (you cannot open it yourself). Do not run it if the work is not ready for review.`,
+}
+
+// WithAutoOpen swaps pr for PRAuto in a tool set.
+func WithAutoOpen(set []Tool) []Tool {
+	out := make([]Tool, len(set))
+	for i, t := range set {
+		if t.Name == PR.Name && t.Usage == PR.Usage {
+			t = PRAuto
+		}
+		out[i] = t
+	}
+	return out
+}
+
 // The tools for a conversation with an open pull request. Each prints an answer.
 var (
 	PRStatus = Tool{

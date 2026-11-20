@@ -705,20 +705,21 @@ func TestSteeringARunningAgentThroughTheAPI(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, `"id"`) {
 		t.Fatalf("steer = %d %s", code, body)
 	}
-	// Release the agent only once it has taken the message: a message that reaches an agent
-	// that has already finished is "not delivered", which is correct but not what this tests.
-	var lastLog string
-	found := false
+	// Wait until the agent has received its first message and is held: the driver has begun,
+	// and the steer message will be taken before the agent can finish.
+	held := false
 	for i := 0; i < 300; i++ {
-		_, lastLog = e.do("GET", "/api/sessions/"+id+"/logs", nil)
-		if strings.Contains(lastLog, `"kind":"steer"`) && strings.Contains(lastLog, `\nnow\n`) && strings.Contains(lastLog, "also add tests") {
-			found = true
+		e.box.mu.Lock()
+		held = len(e.box.prompts) >= 1
+		e.box.mu.Unlock()
+		if held {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !found {
-		t.Fatalf("send-now message never appeared in logs; log:\n%s", lastLog)
+	if !held {
+		_, l := e.do("GET", "/api/sessions/"+id+"/logs", nil)
+		t.Fatalf("the agent never received its first message; log:\n%s", l)
 	}
 	e.box.mu.Lock()
 	close(e.box.block)

@@ -45,7 +45,11 @@ document.querySelectorAll("[data-icon]").forEach((n) => { n.innerHTML = iconSvg(
 // GET /api/agents) and selects model; an empty model is the agent's own default.
 const OTHER_MODEL = "\u0000other";
 function modelPicker(select, input) {
-  const sync = () => { input.hidden = select.value !== OTHER_MODEL; };
+  // The picker is narrow, so long names are cut off: the full one shows on hover.
+  const sync = () => {
+    input.hidden = select.value !== OTHER_MODEL;
+    select.title = select.selectedOptions[0] ? select.selectedOptions[0].textContent : "";
+  };
   select.addEventListener("change", () => { sync(); if (!input.hidden) input.focus(); });
   return {
     fill(agent, model) {

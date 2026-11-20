@@ -412,3 +412,42 @@ func TestATurnStillEndingUpdatesItsPullRequest(t *testing.T) {
 		t.Errorf("the server was sent %q", sent)
 	}
 }
+
+// A last turn that reviews the work and pushes nothing may write the pull request's
+// title and description: those are offered, not the pushing turn's. A turn before the
+// push still never counts.
+func TestALaterReviewTurnWritesThePullRequestText(t *testing.T) {
+	svc, thread, _ := setup(t)
+	st := svc.Store
+	review := store.Session{ID: "s2", ParentID: "s1", Task: "Fix the login", Agent: "codex", Mode: "hands-off", Prompt: "review it", Branch: "agent/x", Repos: thread[0].Repos}
+	if err := st.CreateSession(review); err != nil {
+		t.Fatal(err)
+	}
+	st.AddEvent("s2", "out", "No defects found.")
+	st.AddEvent("s2", "prtitle", "Fix the login redirect, reviewed")
+	st.AddEvent("s2", "prbody", "Fixes the redirect. Reviewed and checked with real runs.")
+	thread, _ = st.Thread("s1")
+	props, err := svc.Proposals(thread)
+	if err != nil || len(props) != 1 {
+		t.Fatalf("proposals = %+v, %v", props, err)
+	}
+	if props[0].Title != "Fix the login redirect, reviewed" || !strings.HasPrefix(props[0].Body, "Fixes the redirect. Reviewed") {
+		t.Errorf("the review turn's text is offered: %+v", props[0])
+	}
+
+	// Text written before the turn that pushed describes earlier work.
+	svc2, thread2, _ := setup(t)
+	st2 := svc2.Store
+	st2.AddEvent("s1", "prbody", "Old description.")
+	push := store.Session{ID: "s2", ParentID: "s1", Task: "Fix the login", Agent: "claude", Mode: "hands-off", Prompt: "more", Branch: "agent/x", Repos: thread2[0].Repos}
+	if err := st2.CreateSession(push); err != nil {
+		t.Fatal(err)
+	}
+	st2.AddEvent("s2", "out", "Added SSO too.")
+	st2.AddEvent("s2", "log", "r: pushed agent/x")
+	thread2, _ = st2.Thread("s1")
+	props, _ = svc2.Proposals(thread2)
+	if len(props) != 1 || strings.Contains(props[0].Body, "Old description.") || !strings.Contains(props[0].Body, "Added SSO too.") {
+		t.Errorf("an earlier turn's text must not describe later work: %+v", props)
+	}
+}

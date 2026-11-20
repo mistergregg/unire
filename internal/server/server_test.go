@@ -321,14 +321,6 @@ func TestBackupContainsAttachments(t *testing.T) {
 	id := sess["id"].(string)
 	e.waitStatus(id, "done")
 
-	// Symlinks or other non-regular files must be skipped.
-	attDir := filepath.Join(e.dir, "attachments", id)
-	entries, err := os.ReadDir(attDir)
-	if err != nil || len(entries) == 0 {
-		t.Fatalf("expected saved attachment in %s: %v", attDir, err)
-	}
-	_ = os.Symlink(filepath.Join(attDir, entries[0].Name()), filepath.Join(attDir, "link.png"))
-
 	resp, err := e.c.Get(e.ts.URL + "/api/backup")
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("backup: %v %v", resp, err)
@@ -347,10 +339,7 @@ func TestBackupContainsAttachments(t *testing.T) {
 		if f.Name == "unire.db" {
 			hasDB = true
 		}
-		if f.Name == "attachments/"+id+"/link.png" {
-			t.Error("zip should skip symlinks")
-		}
-		if strings.HasPrefix(f.Name, "attachments/"+id+"/") && f.Name != "attachments/"+id+"/link.png" {
+		if strings.HasPrefix(f.Name, "attachments/"+id+"/") {
 			attName = f.Name
 			rc, err := f.Open()
 			if err != nil {
@@ -371,6 +360,117 @@ func TestBackupContainsAttachments(t *testing.T) {
 	}
 	if !bytes.Equal(attBytes, pngData) {
 		t.Errorf("attachment %s has %d bytes, want %d", attName, len(attBytes), len(pngData))
+	}
+}
+
+func TestBackupSkipsSymlinks(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+
+	// Create a regular attachment, a symlink to a file, and a symlink to a directory.
+	attDir := filepath.Join(e.dir, "attachments", "sess1")
+	if err := os.MkdirAll(attDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(attDir, "photo.png"), pngData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.key")
+	if err := os.WriteFile(outsideFile, []byte("sensitive-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(outsideDir, "nested")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Symlink to a file inside the session folder
+	if err := os.Symlink(outsideFile, filepath.Join(attDir, "link.png")); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink to a directory inside the session folder
+	if err := os.Symlink(subDir, filepath.Join(attDir, "symlink_dir")); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink to a directory directly under attachments folder
+	if err := os.Symlink(outsideDir, filepath.Join(e.dir, "attachments", "outside")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := e.c.Get(e.ts.URL + "/api/backup")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("backup: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hasRegular bool
+	for _, f := range zr.File {
+		if f.Name == "attachments/sess1/photo.png" {
+			hasRegular = true
+		}
+		if strings.Contains(f.Name, "link.png") || strings.Contains(f.Name, "symlink_dir") ||
+			strings.Contains(f.Name, "outside") || strings.Contains(f.Name, "secret.key") ||
+			strings.Contains(f.Name, "nested") {
+			t.Errorf("backup must not follow or include symlinks: found %s", f.Name)
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, _ := io.ReadAll(rc)
+		rc.Close()
+		if bytes.Contains(content, []byte("sensitive-secret")) || bytes.Contains(content, []byte("nested-secret")) {
+			t.Errorf("backup must not contain content from symlinked files: found in %s", f.Name)
+		}
+	}
+	if !hasRegular {
+		t.Error("backup missing attachments/sess1/photo.png")
+	}
+}
+
+func TestBackupWithoutAttachmentsDir(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+
+	// Ensure the attachments folder does not exist.
+	attDir := filepath.Join(e.dir, "attachments")
+	_ = os.RemoveAll(attDir)
+	if _, err := os.Stat(attDir); !os.IsNotExist(err) {
+		t.Fatalf("expected attachments directory not to exist: %v", err)
+	}
+
+	resp, err := e.c.Get(e.ts.URL + "/api/backup")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("backup without attachments dir: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hasDB bool
+	for _, f := range zr.File {
+		if f.Name == "unire.db" {
+			hasDB = true
+		}
+		if strings.HasPrefix(f.Name, "attachments/") {
+			t.Errorf("unexpected attachment in backup: %s", f.Name)
+		}
+	}
+	if !hasDB {
+		t.Error("backup is missing unire.db")
 	}
 }
 

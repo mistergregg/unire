@@ -69,8 +69,13 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
-func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, images []sessions.Attachment) (store.Session, error) {
-	prompt = strings.TrimSpace(prompt)
+func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID, model string, images []sessions.Attachment) (store.Session, error) {
+	prompt, model = strings.TrimSpace(prompt), strings.TrimSpace(model)
+	if model != "" {
+		if err := agent.ValidateModel(model); err != nil {
+			return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
+		}
+	}
 	switch {
 	case prompt == "" || len(prompt) > 20000:
 		return store.Session{}, replyFail(http.StatusBadRequest, "write a message (20,000 characters max)")
@@ -148,7 +153,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		}
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
+		Task: x.Task, Agent: agentID, Model: model, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 		Resume: resume, FallbackPreamble: fallback,
 		Attachments: images,
@@ -170,6 +175,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string    `json:"prompt"`
 		Agent  string    `json:"agent"`  // empty: the same agent
+		Model  string    `json:"model"`  // empty: the agent's default
 		Images []imageIn `json:"images"` // attached to the message
 	}
 	if !readMessage(w, r, &req) {
@@ -180,7 +186,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent, images)
+	started, err := s.startReply(r.Context(), x, req.Prompt, req.Agent, req.Model, images)
 	if err != nil {
 		var re replyError
 		if errors.As(err, &re) {

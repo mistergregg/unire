@@ -139,6 +139,8 @@ var migrations = []string{
 	// 12: the agent's own conversation id for each turn (its session or thread), so a reply by the same agent
 	// carries that conversation on and remembers everything said and done in it
 	`ALTER TABLE sessions ADD COLUMN agent_conv TEXT NOT NULL DEFAULT '';`,
+	// 13: the model chosen for the turn (empty: the agent's default)
+	`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

@@ -17,7 +17,7 @@ import (
 // generate-json-schema` prints; see also developers.openai.com/codex/app-server.
 
 // StartLive implements Live.
-func (codex) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
+func (c codex) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 	if o.Mode != HandsOff {
 		return nil, nil, errNotUnattended
 	}
@@ -25,11 +25,16 @@ func (codex) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 	if dir == "" {
 		dir = "/workspace"
 	}
-	return []string{"codex", "app-server"}, &codexLive{dir: dir, resume: o.Resume, fallback: o.Fallback, kinds: map[int]string{}}, nil
+	model := o.Model
+	if model == "" {
+		model = c.Model
+	}
+	return []string{"codex", "app-server"}, &codexLive{dir: dir, model: model, resume: o.Resume, fallback: o.Fallback, kinds: map[int]string{}}, nil
 }
 
 type codexLive struct {
 	dir      string
+	model    string
 	resume   string // a thread to carry on (thread/resume) instead of starting one
 	fallback string // the prompt to use instead if that thread cannot be carried on
 
@@ -83,7 +88,11 @@ func textInput(text string) []any {
 // startTurn adds a turn/start. The caller holds mu.
 func (d *codexLive) startTurn(o *out, text string) {
 	d.active, d.turnID, d.lastMessage = true, "", ""
-	d.request(o, "turn/start", "turn", map[string]any{"threadId": d.threadID, "input": textInput(text)})
+	params := map[string]any{"threadId": d.threadID, "input": textInput(text)}
+	if d.model != "" {
+		params["model"] = d.model
+	}
+	d.request(o, "turn/start", "turn", params)
 }
 
 func (d *codexLive) Begin(in io.Writer, prompt string) error {
@@ -150,9 +159,17 @@ func (d *codexLive) Line(line string) Event {
 			o.add(map[string]any{"method": "initialized"})
 			if d.resume != "" {
 				// Carry on the agent's own saved thread: it remembers the whole conversation.
-				d.request(&o, "thread/resume", "resume", map[string]any{"threadId": d.resume, "cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access", "excludeTurns": true})
+				params := map[string]any{"threadId": d.resume, "cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access", "excludeTurns": true}
+				if d.model != "" {
+					params["model"] = d.model
+				}
+				d.request(&o, "thread/resume", "resume", params)
 			} else {
-				d.request(&o, "thread/start", "thread", map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"})
+				params := map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"}
+				if d.model != "" {
+					params["model"] = d.model
+				}
+				d.request(&o, "thread/start", "thread", params)
 			}
 		case kind == "resume" && failure != "":
 			// The saved thread is gone (or unreadable): start a new one, with the prompt that
@@ -161,7 +178,11 @@ func (d *codexLive) Line(line string) Event {
 			if d.fallback != "" {
 				d.prompt = d.fallback
 			}
-			d.request(&o, "thread/start", "thread", map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"})
+			params := map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"}
+			if d.model != "" {
+				params["model"] = d.model
+			}
+			d.request(&o, "thread/start", "thread", params)
 		case (kind == "thread" || kind == "resume") && failure == "":
 			if th, ok := result["thread"].(map[string]any); ok {
 				d.threadID, _ = th["id"].(string)

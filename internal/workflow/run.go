@@ -170,6 +170,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if err != nil {
 		return res, err
 	}
+	if spec.Model != "" {
+		adapter = agent.WithModel(adapter, spec.Model)
+	}
 	ref := newRef()
 	if _, err := adapter.Command(spec.Prompt, spec.Mode, ref); err != nil {
 		return res, err // fail before starting anything if the mode is unsupported

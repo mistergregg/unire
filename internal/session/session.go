@@ -27,6 +27,7 @@ type Spec struct {
 	ID     string
 	Task   string // human label, used in the branch name
 	Agent  string // adapter name, e.g. "claude"
+	Model  string // model name; empty means the agent's default
 	Prompt string // empty means interactive
 	Mode   string // "hands-off" or "ask-first"
 	Repos  []Repo

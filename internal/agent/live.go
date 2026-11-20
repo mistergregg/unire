@@ -69,6 +69,7 @@ func JoinSteers(list []Steer) string {
 type LiveOptions struct {
 	Prompt string
 	Mode   string
+	Model  string // model to use; empty means the agent's default
 	Ref    string // a conversation id Unire chose (for agents that accept one)
 	Resume string // the agent's own conversation id, to carry on (a reply, or a restart)
 	// Fallback is the prompt to use if that conversation cannot be carried on (it was

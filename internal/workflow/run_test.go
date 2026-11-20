@@ -524,6 +524,7 @@ func (noResume) Command(prompt, mode, ref string) ([]string, error) {
 	return []string{"fresh-agent", prompt}, nil
 }
 func (noResume) FollowUp(prompt, mode, ref string) ([]string, bool) { return nil, false }
+func (n noResume) WithModel(string) agent.Adapter                   { return n }
 
 func TestAReplyContinuesTheBranchWithoutCreatingIt(t *testing.T) {
 	branches := func(base string) int {

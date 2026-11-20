@@ -5,13 +5,20 @@ import (
 	"strings"
 )
 
-type claude struct{}
+type claude struct {
+	Model string
+}
 
 func init() { Register(claude{}) }
 
 func (claude) Name() string           { return "claude" }
 func (claude) MemoryFile() string     { return "CLAUDE.md" }
 func (claude) MemoryMode() MemoryMode { return MemoryFile }
+
+func (c claude) WithModel(model string) Adapter {
+	c.Model = model
+	return c
+}
 
 func (claude) Info() Info {
 	return Info{
@@ -28,6 +35,7 @@ func (claude) Info() Info {
 		InspectArgv: []string{"claude", "auth", "status"},
 		ResetArgv:   []string{"claude", "auth", "logout"},
 		ResetHelp:   "Signs Claude Code out of the saved login.",
+		Models:      []string{"sonnet", "opus", "fable"},
 		Verified:    Verified{Unattended: true, Status: true, Hosts: true},
 	}
 }
@@ -41,7 +49,7 @@ func (claude) Hosts() []string {
 	return []string{"api.anthropic.com", "mcp-proxy.anthropic.com", "console.anthropic.com", "claude.ai"}
 }
 
-func (claude) Command(prompt, mode, ref string) ([]string, error) {
+func (c claude) Command(prompt, mode, ref string) ([]string, error) {
 	// --session-id stores the conversation under ref so FollowUp can resume
 	// it. Conversations share one home folder across sessions, so resuming by
 	// id, never "the latest", keeps sessions from mixing.
@@ -49,17 +57,21 @@ func (claude) Command(prompt, mode, ref string) ([]string, error) {
 	if ref != "" {
 		id = []string{"--session-id", ref}
 	}
+	var model []string
+	if c.Model != "" {
+		model = []string{"--model", c.Model}
+	}
 	switch mode {
 	case HandsOff:
 		if prompt == "" {
-			return append([]string{"claude", "--dangerously-skip-permissions"}, id...), nil
+			return append(append([]string{"claude", "--dangerously-skip-permissions"}, id...), model...), nil
 		}
 		// -p runs once and exits, which is what an unattended session needs.
 		// "--" keeps a prompt that starts with a dash from being read as a flag.
-		argv := append([]string{"claude", "-p", "--dangerously-skip-permissions"}, id...)
+		argv := append(append([]string{"claude", "-p", "--dangerously-skip-permissions"}, id...), model...)
 		return append(argv, "--", prompt), nil
 	case AskFirst:
-		argv := append([]string{"claude"}, id...)
+		argv := append(append([]string{"claude"}, id...), model...)
 		if prompt == "" {
 			return argv, nil
 		}
@@ -68,11 +80,16 @@ func (claude) Command(prompt, mode, ref string) ([]string, error) {
 	return nil, fmt.Errorf("unknown mode %q", mode)
 }
 
-func (claude) FollowUp(prompt, mode, ref string) ([]string, bool) {
+func (c claude) FollowUp(prompt, mode, ref string) ([]string, bool) {
 	if ref == "" || prompt == "" || mode != HandsOff {
 		return nil, false
 	}
-	return []string{"claude", "-p", "--dangerously-skip-permissions", "--resume", ref, "--", prompt}, true
+	argv := []string{"claude", "-p", "--dangerously-skip-permissions"}
+	if c.Model != "" {
+		argv = append(argv, "--model", c.Model)
+	}
+	argv = append(argv, "--resume", ref, "--", prompt)
+	return argv, true
 }
 
 // StreamCommand asks Claude Code for its event stream (one JSON object per

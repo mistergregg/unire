@@ -63,6 +63,12 @@ func TestClaudeSteeringUsesPriorityAndTracksMessages(t *testing.T) {
 	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Errorf("argv = %v", argv)
 	}
+	// With a model.
+	argvModel, _ := liveOf(t, "claude", LiveOptions{Prompt: "do it", Mode: HandsOff, Model: "sonnet", Ref: "ref-1"})
+	wantModel := []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "sonnet", "--session-id", "ref-1"}
+	if strings.Join(argvModel, " ") != strings.Join(wantModel, " ") {
+		t.Errorf("argvModel = %v, want %v", argvModel, wantModel)
+	}
 	var in bytes.Buffer
 	if err := d.Begin(&in, "do it"); err != nil {
 		t.Fatal(err)
@@ -151,6 +157,12 @@ func TestAntigravityQueuesAMessageUntilTheTurnEnds(t *testing.T) {
 	want := []string{"agy", "--dangerously-skip-permissions", "--print=", "--input-format=stream-json", "--output-format=stream-json"}
 	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Errorf("argv = %v", argv)
+	}
+	// With a model.
+	argvModel, _ := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff, Model: "gemini-3.8-flash-high"})
+	wantModel := []string{"agy", "--dangerously-skip-permissions", "--print=", "--input-format=stream-json", "--output-format=stream-json", "--model", "gemini-3.8-flash-high"}
+	if strings.Join(argvModel, " ") != strings.Join(wantModel, " ") {
+		t.Errorf("argvModel = %v, want %v", argvModel, wantModel)
 	}
 	var in bytes.Buffer
 	d.Begin(&in, "the task")
@@ -488,5 +500,52 @@ func TestClaudeResumesItsSavedConversation(t *testing.T) {
 	}
 	if d.Resume() != "old-id" {
 		t.Errorf("carries on %q", d.Resume())
+	}
+}
+
+func TestCodexStartLiveAndResumeWithModel(t *testing.T) {
+	argv, d := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Model: "gpt-6-luna", Dir: "/workspace"})
+	if strings.Join(argv, " ") != "codex app-server" {
+		t.Errorf("argv = %v; want codex app-server", argv)
+	}
+	s := &codexScript{t: t, d: d}
+	if err := d.Begin(&s.in, "the task"); err != nil {
+		t.Fatal(err)
+	}
+	s.next()
+	s.feed(`{"id":1,"result":{"userAgent":"x"}}`)
+	m := s.next()
+	if len(m) != 2 || m[1]["method"] != "thread/start" {
+		t.Fatalf("after initialize = %v", m)
+	}
+	p := m[1]["params"].(map[string]any)
+	if p["model"] != "gpt-6-luna" {
+		t.Errorf("thread/start model = %v; want gpt-6-luna", p["model"])
+	}
+	s.feed(`{"id":2,"result":{"thread":{"id":"thr-1"}}}`)
+	m = s.next()
+	if len(m) != 1 || m[0]["method"] != "turn/start" {
+		t.Fatalf("after thread/start = %v", m)
+	}
+	ts := m[0]["params"].(map[string]any)
+	if ts["model"] != "gpt-6-luna" {
+		t.Errorf("turn/start model = %v; want gpt-6-luna", ts["model"])
+	}
+
+	// Resuming a thread with another model.
+	_, d2 := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Model: "gpt-5.6-terra", Dir: "/workspace", Resume: "thr-1"})
+	s2 := &codexScript{t: t, d: d2}
+	if err := d2.Begin(&s2.in, "carry on"); err != nil {
+		t.Fatal(err)
+	}
+	s2.next()
+	s2.feed(`{"id":1,"result":{}}`)
+	m2 := s2.next()
+	if len(m2) != 2 || m2[1]["method"] != "thread/resume" {
+		t.Fatalf("after initialize = %v", m2)
+	}
+	p2 := m2[1]["params"].(map[string]any)
+	if p2["model"] != "gpt-5.6-terra" {
+		t.Errorf("thread/resume model = %v; want gpt-5.6-terra", p2["model"])
 	}
 }

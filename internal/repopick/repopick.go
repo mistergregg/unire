@@ -352,3 +352,17 @@ func SearchWords(text string) []string {
 	}
 	return out
 }
+
+// Named returns the repos whose whole name the text has ("schat-events",
+// "schat events", "SchatEvents"). A reply adds only these to its conversation: it
+// already has the repos it works on, so one word that happens to be in another
+// repo's name ("event" for schat-events) is not a reason to clone that repo.
+func Named(c []Candidate) []Candidate {
+	var out []Candidate
+	for _, x := range c {
+		if x.exact {
+			out = append(out, x)
+		}
+	}
+	return out
+}

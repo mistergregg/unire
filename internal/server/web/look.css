@@ -343,3 +343,46 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
 .attach-file-name, .attach-chip { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach-chip { display: inline-block; max-width: 220px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair); background: color-mix(in srgb, var(--panel) 70%, transparent); color: var(--text); }
 .attach-chip-link { text-decoration: none; }
+
+/* ---- usage left per agent: a slim strip above the message box ---- */
+.usage-strip {
+  position: relative; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center;
+  margin: 0 auto 6px; max-width: 820px; font-size: 12px;
+}
+#view-new .usage-strip { margin: 0 0 12px; }
+.usage-item { display: contents; }
+.usage-agent {
+  display: inline-flex; align-items: center; gap: 7px; padding: 2px 9px; min-height: 0;
+  border: 1px solid var(--hair); border-radius: 999px; font: inherit; font-size: 12px; font-weight: 400;
+  color: var(--text); background: var(--glass); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  box-shadow: none; cursor: pointer; white-space: nowrap;
+}
+.usage-agent:hover, .usage-item.open .usage-agent { border-color: color-mix(in srgb, var(--accent) 45%, var(--hair)); }
+.usage-name { font-weight: 650; }
+.usage-win { display: inline-flex; align-items: center; gap: 4px; --lvl: var(--ok); }
+.usage-win.low { --lvl: #d18a00; }
+.usage-win.out { --lvl: var(--danger); }
+.usage-wname { color: var(--muted); }
+.usage-strip .short { display: none; }
+.usage-bar { width: 30px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
+.usage-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--lvl); }
+.usage-left { color: var(--lvl); font-weight: 650; font-variant-numeric: tabular-nums; }
+.usage-none, .usage-age { color: var(--muted); font-style: italic; }
+.usage-agent.stale .usage-win, .usage-agent.stale .usage-name { opacity: .5; }
+.usage-pop {
+  display: none; position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 20;
+  width: max-content; max-width: min(380px, 100%); padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--hair); background: var(--panel); box-shadow: var(--shadow);
+  font-size: 12.5px; line-height: 1.5; white-space: normal; text-align: left;
+}
+#view-new .usage-pop { bottom: auto; top: calc(100% + 6px); }
+.usage-pop-head { font-weight: 650; margin-bottom: 2px; }
+.usage-item.open .usage-pop { display: block; }
+@media (hover: hover) { .usage-item:hover .usage-pop { display: block; } }
+@media (max-width: 600px) {
+  .usage-strip .long { display: none; }
+  .usage-strip .short { display: inline; }
+  .usage-bar { width: 20px; }
+  .usage-win { gap: 3px; }
+  .usage-agent { gap: 5px; padding: 2px 7px; }
+}

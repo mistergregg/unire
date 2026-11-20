@@ -69,6 +69,7 @@
       <p class="muted">Describe it, pick the repos, and an agent gets to work on its own branch.</p>
     </div>
     <p id="n-note" class="note" hidden></p>
+    <div class="usage-strip" aria-label="Usage left per agent" hidden></div>
     <form id="new-form" autocomplete="off">
       <input id="n-task" type="hidden">
       <div class="card">
@@ -132,6 +133,7 @@
     <div id="pulls" class="pulls"></div>
     <p id="s-error" class="err" hidden></p>
     <form id="reply-form" class="composer" autocomplete="off">
+      <div class="usage-strip" aria-label="Usage left per agent" hidden></div>
       <div class="composer-box">
         <div id="reply-previews" class="attach-previews" hidden></div>
         <input id="reply-files" type="file" multiple hidden>
@@ -436,5 +438,6 @@
 <script src="/memory.js" defer></script>
 <script src="/agents.js" defer></script>
 <script src="/health.js" defer></script>
+<script src="/usage.js" defer></script>
 </body>
 </html>

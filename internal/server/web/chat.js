@@ -381,6 +381,7 @@ async function finishTurn(t) {
   t.foot.append(t.memoryNote);
   refreshPulls(); // the turn may have pushed a branch: offer a pull request
   refreshLinks();
+  if (t === thread[thread.length - 1]) usageChanged(); // the turn may have reported usage
 }
 
 // Saving to memory goes on after the turn is done. Show that, then the summary.

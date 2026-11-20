@@ -39,6 +39,14 @@ type OneShot interface {
 	RunOnce(ctx context.Context, argv []string) (output string, ok bool, err error)
 }
 
+// OnlineShot is implemented by runners that can run one short command in a
+// throwaway sandbox that has the agent logins mounted and the network (like a
+// sign-in terminal), but no repos and no git tokens. It is used to ask an agent
+// for its usage limits.
+type OnlineShot interface {
+	RunOnline(ctx context.Context, argv []string) (output string, ok bool, err error)
+}
+
 // Addressable is implemented by sandboxes that can report their address on a
 // network, which the egress proxy uses to recognise them.
 type Addressable interface {

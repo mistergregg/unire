@@ -147,7 +147,11 @@ func (claude) ParseEvent(line string) Event {
 	case "system", "user":
 		return Event{Known: true} // setup and tool results: nothing to show
 	case "rate_limit_event":
-		return Event{Known: true, Progress: claudeUsage(m)}
+		ev := Event{Known: true, Progress: claudeUsage(m)}
+		if u := ParseClaudeUsage(m); u != nil {
+			ev.Usage = u
+		}
+		return ev
 	}
 	// Any other event type (the stream has several kinds Unire does not use) is
 	// part of the stream, so it must never be printed as if it were the answer.

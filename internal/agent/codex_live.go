@@ -213,6 +213,10 @@ func (d *codexLive) Line(line string) Event {
 	default:
 		p, _ := m["params"].(map[string]any)
 		switch method {
+		case "account/rateLimits/updated":
+			if u := ParseCodexUsage(p); u != nil {
+				ev.Usage = u
+			}
 		case "turn/started":
 			if t, ok := p["turn"].(map[string]any); ok {
 				if id, _ := t["id"].(string); id != "" {

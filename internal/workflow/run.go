@@ -66,6 +66,7 @@ type Options struct {
 	// each message (delivered, failed).
 	Control   <-chan agent.Steer
 	OnMessage func(id, state string)
+	OnUsage   func(agent.AgentUsage)
 	// Files are copied into the sandbox before the agent starts: images the owner
 	// attached to the prompt, which names where they are.
 	Files []agent.File
@@ -315,7 +316,14 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if s, ok := adapter.(agent.Streamer); ok && !useLive && !opt.Interactive && spec.Mode == agent.HandsOff && prompt != "" {
 		if sargv, err := s.StreamCommand(prompt, spec.Mode, ref); err == nil {
 			agentOpts.Argv = sargv
-			stream = &streamWriter{s: s, out: io.MultiWriter(opt.Out, out, capture), log: opt.Err}
+			stream = &streamWriter{
+				s: s, out: io.MultiWriter(opt.Out, out, capture), log: opt.Err,
+				onUsage: func(u *agent.AgentUsage) {
+					if opt.OnUsage != nil && u != nil {
+						opt.OnUsage(*u)
+					}
+				},
+			}
 			agentOpts.Stdout = stream
 		}
 	}

@@ -43,9 +43,10 @@ func TestRunArgsNetworkAndEnv(t *testing.T) {
 func TestEveryContainerShareOneHostname(t *testing.T) {
 	d := Docker{Image: "img", CredsVolume: "creds"}
 	cases := map[string][]string{
-		"session":        d.runArgs(StartSpec{SessionID: "x"}),
-		"one-shot":       d.oneShotArgs(),
-		"login terminal": d.LoginTerminalArgs("n", []string{"x"}),
+		"session":         d.runArgs(StartSpec{SessionID: "x"}),
+		"one-shot":        d.oneShotArgs(),
+		"online one-shot": d.onlineShotArgs(),
+		"login terminal":  d.LoginTerminalArgs("n", []string{"x"}),
 	}
 	for name, args := range cases {
 		joined := " " + strings.Join(args, " ") + " "
@@ -65,6 +66,20 @@ func TestOneShotHasNoNetworkAndOnlyTheLoginVolume(t *testing.T) {
 	}
 	if strings.Count(got, " -v ") != 1 {
 		t.Errorf("only the login volume may be mounted: %s", got)
+	}
+}
+
+// The usage check needs the network, like a sign-in, and nothing but the login.
+func TestOnlineShotMountsOnlyTheLoginVolumeAndIsLabelled(t *testing.T) {
+	d := Docker{Image: "img", CredsVolume: "creds"}
+	got := strings.Join(append(d.onlineShotArgs(), "sh", "-c", "x"), " ")
+	for _, want := range []string{"run --rm", "--label unire.login=1", "--cap-drop NET_RAW", "no-new-privileges", "-v creds:/home/node", "img sh -c x"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("online one-shot args missing %q: %s", want, got)
+		}
+	}
+	if strings.Count(got, " -v ") != 1 || strings.Contains(got, " -e ") || strings.Contains(got, "--network") {
+		t.Errorf("only the login volume, no environment, the default network: %s", got)
 	}
 }
 

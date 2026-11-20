@@ -126,6 +126,7 @@ function show(name) {
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
   if (!chats || name === "sessions") window.scrollTo(0, 0);
+  if ((name === "new" || name === "session") && typeof refreshUsage === "function") refreshUsage();
 }
 
 // The chat list sticks just under the header, whatever height the header has

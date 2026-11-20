@@ -108,8 +108,9 @@ func shorten(s string, n int) string {
 
 type agentView struct {
 	agent.Info
-	LoggedIn   *bool  `json:"loggedIn"` // null when unknown
-	StatusNote string `json:"statusNote,omitempty"`
+	LoggedIn   *bool             `json:"loggedIn"` // null when unknown
+	StatusNote string            `json:"statusNote,omitempty"`
+	Usage      *agent.AgentUsage `json:"usage,omitempty"`
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +124,8 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 			defer safe.Recover("agent status", nil)
 			ad, _ := agent.Get(in.ID)
 			st := s.agentStatus(r.Context(), ad)
-			v := agentView{Info: in, StatusNote: st.note}
+			u := s.usageFor(in.ID)
+			v := agentView{Info: in, StatusNote: st.note, Usage: &u}
 			if st.known {
 				v.LoggedIn = &st.loggedIn
 			}

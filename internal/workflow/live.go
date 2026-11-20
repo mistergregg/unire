@@ -145,7 +145,15 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		})
 	}
 
-	sw := &streamWriter{s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true, onMessage: w.opt.OnMessage, exitMarker: agent.ExitMarker, onExit: closeInput}
+	sw := &streamWriter{
+		s: liveParser{drv}, out: answers, log: w.opt.Err, immediate: true,
+		onMessage: w.opt.OnMessage, exitMarker: agent.ExitMarker, onExit: closeInput,
+		onUsage: func(u *agent.AgentUsage) {
+			if w.opt.OnUsage != nil && u != nil {
+				w.opt.OnUsage(*u)
+			}
+		},
+	}
 	var leaving sync.Once
 	var held sync.Once
 	sw.afterLine = func() {

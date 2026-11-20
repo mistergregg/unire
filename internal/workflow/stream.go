@@ -37,6 +37,7 @@ type streamWriter struct {
 
 	immediate bool
 	onMessage func(id, state string)
+	onUsage   func(*agent.AgentUsage)
 	afterLine func()
 	// exitMarker starts a line that says the process has ended; onExit is called
 	// when it is seen and the line is not shown.
@@ -101,6 +102,9 @@ func (w *streamWriter) line(l string) {
 		for _, m := range ev.Msgs {
 			w.onMessage(m.ID, m.State)
 		}
+	}
+	if ev.Usage != nil && w.onUsage != nil {
+		w.onUsage(ev.Usage)
 	}
 	if ev.Text != "" {
 		w.last = ev.Text

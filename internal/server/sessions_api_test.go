@@ -36,6 +36,8 @@ type fakeBox struct {
 
 	status      map[string]statusResult // answers to sign-in questions, by command name
 	statusAsked []string
+	usageOut    string // what the usage command prints (RunOnline)
+	usageAsked  int
 }
 
 type fakeRunner struct{ box *fakeBox }

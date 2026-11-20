@@ -154,8 +154,27 @@ func CleanupOrphans(ctx context.Context) (int, error) {
 // RunOnce runs argv in a throwaway container with the agent login volume and
 // no network, and returns its combined output.
 func (d Docker) RunOnce(ctx context.Context, argv []string) (string, bool, error) {
+	return d.runShot(ctx, append(d.oneShotArgs(), argv...))
+}
+
+// RunOnline runs argv in a throwaway container with the agent login volume and
+// the default network, as a sign-in terminal has, and returns its output.
+func (d Docker) RunOnline(ctx context.Context, argv []string) (string, bool, error) {
+	return d.runShot(ctx, append(d.onlineShotArgs(), argv...))
+}
+
+// onlineShotArgs: the login volume only (no repos, no tokens), the default
+// network, and the sign-in label so a container left by a crash is removed at
+// the next start.
+func (d Docker) onlineShotArgs() []string {
+	return []string{
+		"run", "--rm", "--hostname", Hostname, "--label", "unire.login=1", "--cap-drop", "NET_RAW", "--security-opt", "no-new-privileges",
+		"-v", d.CredsVolume + ":/home/node", "-w", "/home/node", d.Image,
+	}
+}
+
+func (d Docker) runShot(ctx context.Context, args []string) (string, bool, error) {
 	d.Refresh(ctx)
-	args := append(d.oneShotArgs(), argv...)
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = &out, &out

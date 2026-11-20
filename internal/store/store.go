@@ -141,6 +141,15 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN agent_conv TEXT NOT NULL DEFAULT '';`,
 	// 13: the model chosen for the turn (empty: the agent's default)
 	`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';`,
+	// 14: latest usage limits reported by each agent
+	`CREATE TABLE agent_usage (
+		agent_id   TEXT PRIMARY KEY,
+		reported   INTEGER NOT NULL DEFAULT 1,
+		status     TEXT NOT NULL DEFAULT '',
+		plan       TEXT NOT NULL DEFAULT '',
+		windows    TEXT NOT NULL DEFAULT '[]',
+		updated_at INTEGER NOT NULL
+	);`,
 }
 
 // DBFileName is the database file inside the data directory.

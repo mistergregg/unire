@@ -30,6 +30,8 @@ type Event struct {
 	Step     int
 	// Msgs report what happened to messages the owner sent (live agents only).
 	Msgs []MsgState
+	// Usage carries the latest usage limits reading if this event reported one.
+	Usage *AgentUsage
 }
 
 // clip makes s a single short line.

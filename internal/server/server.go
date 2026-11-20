@@ -73,6 +73,8 @@ type Server struct {
 
 	mu       sync.Mutex
 	failures map[string]failure
+	now      func() time.Time
+	usage    usageProbes
 }
 
 type failure struct {
@@ -120,7 +122,8 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		return nil, err
 	}
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
-		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}}
+		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now,
+		usage: usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.stopCleanup = make(chan struct{})
 	s.probe = dockerProbe{}
@@ -138,6 +141,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 func (s *Server) Close() error {
 	s.stopOnce.Do(func() { close(s.stopCleanup) })
 	s.sessions.Shutdown()
+	s.usage.wg.Wait()
 	return s.store.Close()
 }
 
@@ -156,6 +160,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backup", s.auth(s.backup))
 
 	mux.HandleFunc("GET /api/agents", s.auth(s.listAgents))
+	mux.HandleFunc("GET /api/usage", s.auth(s.getUsage))
 	mux.HandleFunc("POST /api/agents/recheck", s.auth(s.recheckAgents))
 	mux.HandleFunc("GET /api/agents/{id}/last-signin", s.auth(s.lastSignin))
 	mux.HandleFunc("POST /api/agents/{id}/inspect", s.auth(s.agentTool(false)))
@@ -745,4 +750,11 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 		repos = []gitprovider.Repo{}
 	}
 	writeJSON(w, http.StatusOK, repos)
+}
+
+func (s *Server) timeNow() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }

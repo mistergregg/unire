@@ -36,7 +36,9 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ## Backups
 
-Copy the data folder (`unire.db` and `master.key`), or use Settings, Download backup. The key decrypts your saved tokens, so treat the backup as secret. If you set `UNIRE_MASTER_KEY`, the key is not in the data folder and you must keep it yourself; losing it makes saved tokens unreadable (you would re-enter them).
+Copy the data folder (`unire.db`, `master.key` and `attachments/`), or use Settings, Download backup. The backup zip includes the database, any files attached to messages, and the key file. The key decrypts your saved tokens, so treat the backup as secret. If you set `UNIRE_MASTER_KEY`, the key is not in the data folder and you must keep it yourself; losing it makes saved tokens unreadable (you would re-enter them).
+
+To restore from a backup, stop Unire and unzip the archive into your data folder (`/data`). The database (`unire.db`) and `master.key` go in the root of the data folder, and attachments go back under `attachments/` (`attachments/<session id>/<file>`).
 
 ## Updating
 

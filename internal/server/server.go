@@ -506,9 +506,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// backup streams a zip with a consistent copy of the database and, when the
-// master key is stored in a file, the key. The key is what decrypts the
-// vault, so the download is as sensitive as the vault itself.
+// backup streams a zip with a consistent copy of the database, any saved
+// attachments, and, when the master key is stored in a file, the key. The
+// key is what decrypts the vault, so the download is as sensitive as the
+// vault itself.
 func (s *Server) backup(w http.ResponseWriter, _ *http.Request) {
 	rb := make([]byte, 6)
 	_, _ = rand.Read(rb)
@@ -536,6 +537,17 @@ func (s *Server) backup(w http.ResponseWriter, _ *http.Request) {
 	if vault.KeyInFile() {
 		add(vault.KeyFileName, filepath.Join(s.dataDir, vault.KeyFileName))
 	}
+	_ = filepath.WalkDir(s.attachmentsDir(), func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(s.attachmentsDir(), p)
+		if err != nil {
+			return nil
+		}
+		add("attachments/"+filepath.ToSlash(rel), p)
+		return nil
+	})
 }
 
 // ---- git servers ----

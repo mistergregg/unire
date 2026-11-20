@@ -308,6 +308,72 @@ func TestBackupContainsDatabaseAndKey(t *testing.T) {
 	}
 }
 
+func TestBackupContainsAttachments(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	code, sess := e.launch(base, map[string]any{
+		"prompt": "inspect attached image",
+		"images": []any{image("screen.png", pngData)},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("launch = %d %v", code, sess)
+	}
+	id := sess["id"].(string)
+	e.waitStatus(id, "done")
+
+	// Symlinks or other non-regular files must be skipped.
+	attDir := filepath.Join(e.dir, "attachments", id)
+	entries, err := os.ReadDir(attDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected saved attachment in %s: %v", attDir, err)
+	}
+	_ = os.Symlink(filepath.Join(attDir, entries[0].Name()), filepath.Join(attDir, "link.png"))
+
+	resp, err := e.c.Get(e.ts.URL + "/api/backup")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("backup: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hasDB bool
+	var attBytes []byte
+	var attName string
+	for _, f := range zr.File {
+		if f.Name == "unire.db" {
+			hasDB = true
+		}
+		if f.Name == "attachments/"+id+"/link.png" {
+			t.Error("zip should skip symlinks")
+		}
+		if strings.HasPrefix(f.Name, "attachments/"+id+"/") && f.Name != "attachments/"+id+"/link.png" {
+			attName = f.Name
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open attachment in zip: %v", err)
+			}
+			attBytes, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatalf("read attachment in zip: %v", err)
+			}
+		}
+	}
+	if !hasDB {
+		t.Error("zip is missing unire.db")
+	}
+	if attName == "" {
+		t.Fatalf("zip has no attachment for session %s", id)
+	}
+	if !bytes.Equal(attBytes, pngData) {
+		t.Errorf("attachment %s has %d bytes, want %d", attName, len(attBytes), len(pngData))
+	}
+}
+
 func TestCSRFHeaderRequired(t *testing.T) {
 	e := newEnv(t)
 	code, _ := e.do("POST", "/api/setup", map[string]string{"password": goodPassword}, true)

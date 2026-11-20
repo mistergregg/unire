@@ -58,7 +58,7 @@ The agent appears on the **Agents** page with its sign-in state and a **Sign in*
 ## Not agents
 
 - **Ollama** runs models; it is not an agent. It would be a model backend for an agent that can use one (Claude Code and Codex can), configured per agent. Not built yet.
-- **Antigravity** is an agent now (`internal/agent/antigravity.go`). Its sign-in works in the terminal (Google link, then paste the code). Not yet checked with a signed-in account: where it keeps its login, and whether that survives into unattended sessions.
+- **Antigravity** is an agent now (`internal/agent/antigravity.go`). Its sign-in works in the terminal (Google link, then paste the code), and the login survives into unattended sessions: signed-in runs have read files and images, used every unire tool, been steered (Send and Send now), carried on their conversation in a reply, and committed and pushed. Still unconfirmed: which saved file the sign-in check should look for (Agents, Inspect lists them, without the run logs), and the hosts it needs in agent-only mode.
 
 ## Showing what the agent is doing (optional)
 

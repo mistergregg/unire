@@ -94,6 +94,12 @@ type Result struct {
 
 const workspace = "/workspace"
 
+// The identity commits in the sandbox are made with, when the owner set none.
+const (
+	commitName  = "unire-agent"
+	commitEmail = "agent@unire.local"
+)
+
 // credentialHelper returns git config that feeds the token from the
 // environment to git, for one host only. The token is never written into the
 // repo config or the clone URL, and git will not offer it to any other host
@@ -193,9 +199,21 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 
 	// Mounted local repos are owned by a different user than the sandbox
 	// user. A global setting is needed because git ignores per-command
-	// settings for the process that reads the source repo.
-	if _, err := w.git(ctx, "", nil, "config", "--global", "--add", "safe.directory", "*"); err != nil {
+	// settings for the process that reads the source repo. The home folder is
+	// kept between sessions, so the setting replaces itself rather than being
+	// added again each time.
+	if _, err := w.git(ctx, "", nil, "config", "--global", "--replace-all", "safe.directory", "*"); err != nil {
 		return res, fmt.Errorf("git setup: %w", err)
+	}
+	// Agents commit their own work, and git refuses to commit without a name and
+	// an address (an agent was seen failing its first commit, then inventing one).
+	// They get the identity Unire commits leftovers with, unless the owner set one.
+	for _, kv := range [][2]string{{"user.name", commitName}, {"user.email", commitEmail}} {
+		if _, err := w.git(ctx, "", nil, "config", "--global", kv[0]); err != nil {
+			if _, err := w.git(ctx, "", nil, "config", "--global", kv[0], kv[1]); err != nil {
+				return res, fmt.Errorf("git setup: %w", err)
+			}
+		}
 	}
 
 	// A conversation keeps its workspace between turns, so a reply finds the
@@ -257,17 +275,18 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 			fmt.Fprintf(opt.Err, "memory: gave the agent project memory (%d characters in %s)\n", len(opt.Mem.Context), adapter.MemoryFile())
 		}
 	}
+	// What Unire adds for a session: its tools, and where the code is.
 	if tp := tools.Prompt(opt.Tools); tp != "" && prompt != "" {
-		prompt += "\n\n---\n\n" + tp
+		prompt += "\n\n---\n\n" + tp + "\n" + workspaceNote(spec)
 	}
 	// The prompt for a fresh conversation, if the saved one cannot be carried on, gets the
-	// same memory and tools.
+	// same memory, tools and note on where the code is.
 	if fb := opt.Fallback; fb != "" {
 		if opt.Mem != nil && opt.Mem.Context != "" && adapter.MemoryMode() == agent.MemoryPrompt {
 			fb = opt.Mem.Context + "\n\n---\n\n# Your task\n\n" + fb
 		}
 		if tp := tools.Prompt(opt.Tools); tp != "" {
-			fb += "\n\n---\n\n" + tp
+			fb += "\n\n---\n\n" + tp + "\n" + workspaceNote(spec)
 		}
 		w.opt.Fallback = fb
 	}
@@ -404,6 +423,27 @@ func (w *worker) git(ctx context.Context, dir string, repo *session.Repo, args .
 	return out.String(), nil
 }
 
+// workspaceNote tells the agent where its repos are. It starts in /workspace, which
+// is not a repo itself; without this, agents were seen running git there, or
+// reading files at the wrong path, before they found the code.
+func workspaceNote(spec session.Spec) string {
+	if len(spec.Repos) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# Where the code is\n\n")
+	b.WriteString("You start in " + workspace + ", which is not a git repo. The repos for this chat are cloned inside it, each on the branch " + spec.Branch() + ":\n\n")
+	for _, r := range spec.Repos {
+		b.WriteString("- " + workspace + "/" + r.Name)
+		if r.Base != "" && r.Base != spec.Branch() {
+			b.WriteString(" (started from " + r.Base + ")")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nRun git, build and test commands inside a repo's folder, and commit your work there: Unire pushes it when you finish.\n")
+	return b.String()
+}
+
 // writeFile writes content to a path in the sandbox. The path is passed as an
 // argument and the content on stdin, so neither is ever parsed by a shell.
 func (w *worker) writeFile(ctx context.Context, path, content string) error {
@@ -478,7 +518,7 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 				return outcomes, err
 			}
 			msg := "unire: " + spec.Task
-			if _, err := w.git(ctx, dir, &repo, "-c", "user.name=unire-agent", "-c", "user.email=agent@unire.local", "commit", "-m", msg); err != nil {
+			if _, err := w.git(ctx, dir, &repo, "-c", "user.name="+commitName, "-c", "user.email="+commitEmail, "commit", "-m", msg); err != nil {
 				return outcomes, err
 			}
 		}

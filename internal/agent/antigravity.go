@@ -9,8 +9,10 @@ import (
 // Antigravity is Google's Antigravity CLI (`agy`), the replacement Google points
 // to now that Gemini CLI no longer accepts personal Google accounts (Unire used
 // to carry Gemini CLI; it was removed for that reason). The command line was
-// read from the CLI's own --help (agy 1.5.9) and exercised up to its sign-in
-// screen; nothing here has been run with a signed-in account yet.
+// read from the CLI's own --help (agy 1.5.9). It has since run signed in, unattended
+// and steered, on real work: it reads files and images, runs the unire tools (name,
+// ask, share, memory, pr, pr-body), commits and pushes, and carries on its
+// conversation in a reply.
 //
 // What was seen directly:
 //   - `agy --print=<prompt>` runs one prompt and exits; `--dangerously-skip-permissions`
@@ -32,7 +34,7 @@ type antigravity struct{}
 func init() { Register(antigravity{}) }
 
 func (antigravity) Name() string           { return "antigravity" }
-func (antigravity) MemoryFile() string     { return "AGENTS.md" } // unverified
+func (antigravity) MemoryFile() string     { return "AGENTS.md" } // unverified: memory goes in the prompt (MemoryPrompt)
 func (antigravity) MemoryMode() MemoryMode { return MemoryPrompt }
 
 // The scripts below only look at paths with "antigravity" or "keyring" in their
@@ -46,7 +48,9 @@ const antigravityFind = `cd "$HOME" && find . -maxdepth 6 -type f -ipath "./*ant
 // this check is marked unverified.
 const antigravityStatusScript = antigravityFind + ` -size +0 \( -iname "auth*.json" -o -iname "*credential*" \) | grep -q .`
 
-const antigravityInspectScript = `echo "Antigravity files (name, bytes):"; ` + antigravityFind + ` -printf "  %P  %s\n" 2>/dev/null | head -40; cd "$HOME" && find . -maxdepth 6 -type f -ipath "./*keyring*" -printf "  %P  %s\n" 2>/dev/null | head -5; echo; echo "API key variables set in this sandbox: $(env | grep -c '^GEMINI_API_KEY=\|^GOOGLE_API_KEY=')"`
+// agy writes a log file for every run, and they are kept, so the listing leaves them
+// out and counts them: otherwise they filled it and the sign-in files never showed.
+const antigravityInspectScript = `echo "Antigravity files (name, bytes):"; ` + antigravityFind + ` -not -ipath "*/log/*" -printf "  %P  %s\n" 2>/dev/null | head -40; echo "  (and $(` + antigravityFind + ` -ipath "*/log/*" 2>/dev/null | wc -l) log files)"; cd "$HOME" && find . -maxdepth 6 -type f -ipath "./*keyring*" -printf "  %P  %s\n" 2>/dev/null | head -5; echo; echo "API key variables set in this sandbox: $(env | grep -c '^GEMINI_API_KEY=\|^GOOGLE_API_KEY=')"`
 
 const antigravityResetScript = `rm -rf "$HOME/.gemini/antigravity-cli" "$HOME"/.antigravity* "$HOME"/.config/antigravity* "$HOME"/.local/share/antigravity* "$HOME/.local/share/keyrings" && echo "Antigravity's saved sign-in and settings were removed."`
 
@@ -61,7 +65,7 @@ func (antigravity) Info() Info {
 		InspectArgv: []string{"sh", "-c", antigravityInspectScript},
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
 		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
-		Verified:    Verified{Unattended: true}, // one real unattended run was seen (internet mode)
+		Verified:    Verified{Unattended: true}, // signed-in unattended runs seen working (internet mode)
 	}
 }
 

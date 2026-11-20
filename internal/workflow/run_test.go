@@ -29,6 +29,7 @@ type fakeSandbox struct {
 	noChange   bool   // the agent changes nothing: HEAD stays where it was
 	refs       string // what `git for-each-ref` prints: local branches and their upstreams
 	branchName string // what `git rev-parse --abbrev-ref HEAD` prints
+	noIdentity bool   // git has no user.name or user.email configured
 	unpushed   bool   // the branch holds commits the server does not have
 	pushErr    string // if set, a push fails with this message
 
@@ -121,6 +122,8 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		}
 	case "git":
 		switch {
+		case f.noIdentity && len(o.Argv) == 4 && o.Argv[1] == "config" && strings.HasPrefix(o.Argv[3], "user."):
+			return errors.New("exit status 1") // asked for a value that is not set
 		case contains(o.Argv, "--abbrev-ref"):
 			io.WriteString(o.Stdout, f.branchName+"\n")
 			return nil

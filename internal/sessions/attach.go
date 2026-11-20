@@ -13,39 +13,72 @@ import (
 	"github.com/mistergregg/unire/internal/agent"
 )
 
-// Attachments: images the owner adds to a message (the first one, a reply, or a
-// message to a working agent). Each is saved under Config.Attachments, in a folder
-// per session, and copied into the sandbox before the agent reads the message,
-// whose text names where it is. Every agent can open an image file, so this works
-// the same for all of them. The log keeps only a short reference: an "attach"
-// event, "<message>\n<file> <name>\n…", where <message> is empty for the turn's
-// prompt or a steer message's id, and <file> is the stored file's name.
+// Attachments: files the owner adds to a message (the first one, a reply, or a
+// message to a working agent): images, or any other file (a log, a document, a
+// long text pasted into the message box). Each is saved under Config.Attachments,
+// in a folder per session, and copied into the sandbox before the agent reads the
+// message, whose text names where it is. Every agent can open a file, so this
+// works the same for all of them. The log keeps only a short reference: an
+// "attach" event, "<message>\n<file> <name>\n…", where <message> is empty for the
+// turn's prompt or a steer message's id, and <file> is the stored file's name.
 
 // Limits on what the owner may attach to one message.
 const (
 	MaxAttachments    = 5
-	MaxAttachmentSize = 5 << 20 // bytes, per image
+	MaxAttachmentSize = 5 << 20 // bytes, per file
 )
 
 // AttachmentDir is where attachments are put in the sandbox: in the workspace but
 // outside every repo, so nothing is committed.
 const AttachmentDir = "/workspace/.unire/attachments"
 
-// Attachment is an image the owner sent with a message.
+// Attachment is a file the owner sent with a message.
 type Attachment struct {
 	Name string // the file name it had on the owner's computer
 	Data []byte
 }
 
-// attachTypes are the image types accepted, by detected content type.
-var attachTypes = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+// imageTypes are the images shown in the chat, by detected content type, and the
+// extension they are stored with. Only content detected as one of these may be
+// stored under an image extension, so the page never shows anything else as one.
+var imageTypes = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+
+// IsImageFile reports whether a stored attachment is an image the page can show.
+func IsImageFile(file string) bool {
+	ext := strings.TrimPrefix(path.Ext(file), ".")
+	for _, e := range imageTypes {
+		if e == ext {
+			return true
+		}
+	}
+	return false
+}
+
+var extRe = regexp.MustCompile(`^[a-z0-9]{1,10}$`)
+
+// attachExt is the extension an attachment is stored with: from its content for an
+// image, else from its name (when it is a plain one and not an image's), else txt
+// for text and bin for anything else.
+func attachExt(a Attachment) string {
+	kind := http.DetectContentType(a.Data)
+	if ext, ok := imageTypes[kind]; ok {
+		return ext
+	}
+	ext := strings.ToLower(strings.TrimPrefix(path.Ext(attachName(a.Name)), "."))
+	if extRe.MatchString(ext) && !IsImageFile("x."+ext) {
+		return ext
+	}
+	if strings.HasPrefix(kind, "text/") {
+		return "txt"
+	}
+	return "bin"
+}
 
 // CheckAttachments says what is wrong with a message's attachments, if anything:
-// too many, too big, or not a PNG, JPEG, GIF or WebP image (judged by the content,
-// not the name).
+// too many, empty, or too big.
 func CheckAttachments(list []Attachment) error {
 	if len(list) > MaxAttachments {
-		return fmt.Errorf("attach at most %d images to a message", MaxAttachments)
+		return fmt.Errorf("attach at most %d files to a message", MaxAttachments)
 	}
 	for _, a := range list {
 		name := attachName(a.Name)
@@ -54,8 +87,6 @@ func CheckAttachments(list []Attachment) error {
 			return fmt.Errorf("%s is empty", name)
 		case len(a.Data) > MaxAttachmentSize:
 			return fmt.Errorf("%s is too big (%d MB at most)", name, MaxAttachmentSize>>20)
-		case attachTypes[http.DetectContentType(a.Data)] == "":
-			return fmt.Errorf("%s is not a PNG, JPEG, GIF or WebP image", name)
 		}
 	}
 	return nil
@@ -91,7 +122,7 @@ func (a savedAttachment) sandboxPath() string { return AttachmentDir + "/" + a.f
 
 // storedFile matches a stored attachment's file name.
 var (
-	storedFile  = regexp.MustCompile(`^[0-9a-f]{12}\.(png|jpg|gif|webp)$`)
+	storedFile  = regexp.MustCompile(`^[0-9a-f]{12}\.[a-z0-9]{1,10}$`)
 	sessionIDRe = regexp.MustCompile(`^[0-9a-f]+$`)
 )
 
@@ -130,7 +161,7 @@ func (m *Manager) saveAttachments(sessionID string, list []Attachment) ([]savedA
 	}
 	var out []savedAttachment
 	for _, a := range list {
-		s := savedAttachment{file: newID() + "." + attachTypes[http.DetectContentType(a.Data)], name: attachName(a.Name)}
+		s := savedAttachment{file: newID() + "." + attachExt(a), name: attachName(a.Name)}
 		s.host = filepath.Join(dir, s.file)
 		if err := os.WriteFile(s.host, a.Data, 0o600); err != nil {
 			removeSaved(out)

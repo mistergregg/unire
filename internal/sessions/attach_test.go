@@ -29,10 +29,8 @@ func TestCheckAttachments(t *testing.T) {
 	for name, list := range map[string][]Attachment{
 		"too many":        six,
 		"too big":         {{Name: "big.png", Data: big}},
-		"not an image":    {{Name: "x.png", Data: []byte("hello there, I am text")}},
-		"a pdf":           {{Name: "x.pdf", Data: []byte("%PDF-1.4\n")}},
 		"empty":           {{Name: "x.png"}},
-		"one bad of many": append(append([]Attachment(nil), ok[:2]...), Attachment{Name: "x", Data: []byte("<html>")}),
+		"one bad of many": append(append([]Attachment(nil), ok[:2]...), Attachment{Name: "x.log"}),
 	} {
 		if err := CheckAttachments(list); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -60,7 +58,7 @@ func TestAttachmentPathOnlyReachesStoredFiles(t *testing.T) {
 	if p := AttachmentPath("/data/att", "abc123", "0123456789ab.png"); p != filepath.Join("/data/att", "abc123", "0123456789ab.png") {
 		t.Errorf("a stored file: %q", p)
 	}
-	for _, c := range [][2]string{{"abc123", "../store.db"}, {"..", "0123456789ab.png"}, {"abc123", "0123456789ab.exe"}, {"abc/../x", "0123456789ab.png"}} {
+	for _, c := range [][2]string{{"abc123", "../store.db"}, {"..", "0123456789ab.png"}, {"abc123", "0123456789ab.EXE"}, {"abc123", "0123456789ab.toolongextension"}, {"abc/../x", "0123456789ab.png"}} {
 		if p := AttachmentPath("/data/att", c[0], c[1]); p != "" {
 			t.Errorf("AttachmentPath(%q, %q) = %q, want nothing", c[0], c[1], p)
 		}
@@ -136,5 +134,33 @@ func TestAttachNoteNamesEveryImage(t *testing.T) {
 	}
 	if attachNote(nil) != "" {
 		t.Error("no attachments, no note")
+	}
+}
+
+func TestAnyFileCanBeAttachedAndKeepsASafeExtension(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{"shot.png", string(pngData), "png"},
+		{"shot.JPG", string(pngData), "png"},                   // an image is stored as what it is
+		{"server.log", "line one\nline two\n", "log"},          // any other file keeps its extension
+		{"report.PDF", "%PDF-1.4\n", "pdf"},                    // in lower case
+		{"notes.png", "just text, named like an image", "txt"}, // never shown as an image
+		{"page.html", "<html><script>x</script>", "html"},
+		{"README", "no extension", "txt"},
+		{"blob", "\x00\x01\x02\x03", "bin"},
+		{"weird.ex e", "hi", "txt"},
+	} {
+		if got := attachExt(Attachment{Name: c.name, Data: []byte(c.data)}); got != c.want {
+			t.Errorf("attachExt(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if err := CheckAttachments([]Attachment{{Name: "a.log", Data: []byte("text")}, {Name: "b.zip", Data: []byte("PK\x03\x04")}}); err != nil {
+		t.Errorf("any kind of file may be attached: %v", err)
+	}
+	if !IsImageFile("0123456789ab.webp") || IsImageFile("0123456789ab.txt") {
+		t.Error("IsImageFile")
 	}
 }

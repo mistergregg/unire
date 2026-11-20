@@ -326,3 +326,7 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
 .attach-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .attach-thumbs:empty { display: none; }
 .attach-thumbs img { max-width: 160px; max-height: 120px; border-radius: 10px; border: 1px solid var(--hair); display: block; object-fit: cover; }
+.attach-preview.file { display: inline-flex; align-items: center; height: 56px; max-width: 180px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--hair); background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.attach-file-name, .attach-chip { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip { display: inline-block; max-width: 220px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair); background: color-mix(in srgb, var(--panel) 70%, transparent); color: var(--text); }
+.attach-chip-link { text-decoration: none; }

@@ -225,7 +225,7 @@ $("n-ws-save").addEventListener("click", () => guarded($("n-ws-save"), async () 
   banner("Workspace saved.");
 }));
 
-// Images attached to the first message.
+// Files attached to the first message.
 const newAttach = attachPicker($("n-files"), $("n-attach"), $("n-prompt"), $("n-previews"));
 
 $("new-form").addEventListener("submit", (e) => {

@@ -257,15 +257,15 @@ function steerState(t, e) {
   s.now.hidden = state !== "queued" || s.mode === "now"; // only a message that is still waiting (and was not sent now) can be sent now
 }
 
-// Images sent with a message: an "attach" event, "<message>\n<file> <name>\n…".
+// Files sent with a message: an "attach" event, "<message>\n<file> <name>\n…".
 // <message> is empty for the turn's prompt, or the id of a message sent while the
-// agent worked (its "steer" event follows). The images are served by the server.
+// agent worked (its "steer" event follows). The files are served by the server.
 function attachedCard(t, e) {
   const [target, rest] = splitEvent(e.text);
   const list = rest.split("\n").filter(Boolean).map((line) => {
     const [file, name] = splitEvent(line.replace(" ", "\n"));
     const src = "/api/sessions/" + encodeURIComponent(t.s.id) + "/attachments/" + encodeURIComponent(file);
-    return { name: name || file, src, href: src };
+    return { name: name || file, src, href: src, image: isImageName(file) };
   });
   if (!target) { t.userThumbs.replaceChildren(...attachThumbs(list)); return; }
   t.attached[target] = list;
@@ -502,7 +502,7 @@ async function watch(t, token) {
   }
 }
 
-// Images attached to the next reply or message.
+// Files attached to the next reply or message.
 const replyAttach = attachPicker($("reply-files"), $("reply-attach"), $("reply-text"), $("reply-previews"));
 
 $("reply-form").addEventListener("submit", (e) => {
@@ -533,7 +533,7 @@ async function sendReply(text) {
   };
   const images = replyAttach.list();
   const t = makeTurn(optSession);
-  t.userThumbs.replaceChildren(...attachThumbs(images.map((a) => ({ name: a.name, src: a.data }))));
+  t.userThumbs.replaceChildren(...attachThumbs(images.map((a) => ({ name: a.name, src: a.data, image: a.image }))));
   thread.push(t);
   $("chat").append(t.root);
   $("reply-text").value = "";
@@ -575,7 +575,7 @@ function steer(text, now) {
   const btn = now ? $("steer-now") : $("reply-send");
   const tempId = "pending-steer-" + Date.now();
   const images = replyAttach.list();
-  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text, images: images.map((a) => ({ name: a.name, src: a.data })) });
+  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text, images: images.map((a) => ({ name: a.name, src: a.data, image: a.image })) });
   $("reply-text").value = "";
   replyAttach.clear();
   autoGrow();

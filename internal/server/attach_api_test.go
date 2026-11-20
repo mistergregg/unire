@@ -29,7 +29,7 @@ func image(name string, data []byte) map[string]any {
 	return map[string]any{"name": name, "data": base64.StdEncoding.EncodeToString(data)}
 }
 
-func TestAttachedImagesAreChecked(t *testing.T) {
+func TestAttachedFilesAreChecked(t *testing.T) {
 	e := newEnv(t)
 	base := withServer(t, e, "tok")
 	many := []any{}
@@ -42,10 +42,8 @@ func TestAttachedImagesAreChecked(t *testing.T) {
 		images []any
 		want   string
 	}{
-		{"not an image", []any{image("notes.png", []byte("just some text, named like an image"))}, "is not a PNG, JPEG, GIF or WebP image"},
-		{"an svg", []any{image("x.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))}, "is not a PNG"},
 		{"too big", []any{image("huge.png", big)}, "huge.png is too big"},
-		{"too many", many, "at most 5 images"},
+		{"too many", many, "at most 5 files"},
 		{"not base64", []any{map[string]any{"name": "x.png", "data": "%%%"}}, "could not be read"},
 		{"empty", []any{image("x.png", nil)}, "is empty"},
 	} {
@@ -222,5 +220,37 @@ func TestAttachedImagesReachTheAgentInEveryKindOfMessage(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("attachments left after delete: %v", err)
+	}
+}
+
+func TestAnAttachedFileIsOnlyEverDownloaded(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	html := []byte("<html><script>alert(1)</script></html>")
+	code, first := e.launch(base, map[string]any{"prompt": "see the page", "images": []any{image("page.html", html), image("server.log", []byte("boom\n"))}})
+	if code != http.StatusCreated {
+		t.Fatalf("launch = %d %v", code, first)
+	}
+	id := first["id"].(string)
+	e.waitStatus(id, "done")
+	told := e.sentToAgent()
+	paths := regexp.MustCompile(regexp.QuoteMeta(sessions.AttachmentDir)+`/[0-9a-f]{12}\.(html|log)`).FindAllString(told, -1)
+	if len(paths) != 2 {
+		t.Fatalf("the agent should be told about both files: %q", told)
+	}
+	e.box.mu.Lock()
+	got := string(e.box.files[paths[0]])
+	e.box.mu.Unlock()
+	if got != string(html) {
+		t.Errorf("%s was not copied into the sandbox: %q", paths[0], got)
+	}
+	resp, err := e.c.Get(e.ts.URL + "/api/sessions/" + id + "/attachments/" + filepath.Base(paths[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/octet-stream" ||
+		!strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") {
+		t.Errorf("a non-image file must be served as a download: %d %v", resp.StatusCode, resp.Header)
 	}
 }

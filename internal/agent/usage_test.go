@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -60,13 +61,12 @@ func TestParseClaudeRealRateLimitSample(t *testing.T) {
 }
 
 func TestParseClaudeMinimalAndFallback(t *testing.T) {
-	// Minimal sample with no unifiedWindows
+	// An event that names no window is no reading: it must not replace a good one.
 	minimal := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`
 	var m1 map[string]any
 	_ = json.Unmarshal([]byte(minimal), &m1)
-	u1 := ParseClaudeUsage(m1)
-	if u1 == nil || !u1.Reported || u1.Status != "allowed" || len(u1.Windows) != 0 {
-		t.Errorf("minimal = %+v", u1)
+	if u1 := ParseClaudeUsage(m1); u1 != nil {
+		t.Errorf("minimal = %+v, want nil", u1)
 	}
 
 	// Top-level utilization fallback
@@ -189,7 +189,7 @@ func TestAntigravityReportsNothingUsable(t *testing.T) {
 	}
 }
 
-func TestFormatWindowDurationName(t *testing.T) {
+func TestWindowName(t *testing.T) {
 	cases := []struct {
 		mins     int
 		fallback string
@@ -204,8 +204,62 @@ func TestFormatWindowDurationName(t *testing.T) {
 		{-1, "Fallback", "Fallback"},
 	}
 	for _, c := range cases {
-		if got := FormatWindowDurationName(c.mins, c.fallback); got != c.want {
-			t.Errorf("FormatWindowDurationName(%d, %q) = %q; want %q", c.mins, c.fallback, got, c.want)
+		if got := WindowName(c.mins, c.fallback); got != c.want {
+			t.Errorf("WindowName(%d, %q) = %q; want %q", c.mins, c.fallback, got, c.want)
 		}
+	}
+}
+
+// Captured from claude 2026-11-20 (stream-json --verbose): utilization is 0 to 1,
+// resetsAt is Unix seconds, windows come shortest first.
+func TestParseClaudeSecondRealSample(t *testing.T) {
+	line := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795225200,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"seven_day":{"utilization":0.19,"resetsAt":1795694400,"status":"allowed"},"five_hour":{"utilization":0.53,"resetsAt":1795225200,"status":"allowed"}}},"uuid":"4eeafcc7-59bd-4e94-b9fc-db224b013703","session_id":"553f0dea-e0d9-477d-81c7-c3317b015f75"}`
+	var m map[string]any
+	_ = json.Unmarshal([]byte(line), &m)
+	u := ParseClaudeUsage(m)
+	if u == nil || len(u.Windows) != 2 {
+		t.Fatalf("u = %+v", u)
+	}
+	want := []UsageWindow{{"5-hour", 300, 53, 1795225200}, {"7-day", 10080, 19, 1795694400}}
+	for i, w := range want {
+		if u.Windows[i] != w {
+			t.Errorf("window %d = %+v, want %+v", i, u.Windows[i], w)
+		}
+	}
+}
+
+func TestParseCodexUsageOutput(t *testing.T) {
+	// Real output of codexUsageScript, signed in and signed out.
+	ok := `{"id":2,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":13,"windowDurationMins":43200,"resetsAt":1797607630},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"free","rateLimitReachedType":null},"rateLimitResetCredits":{"availableCount":0,"credits":[]},"accountId":"x","rateLimitUpsell":null}}`
+	u, err := ParseCodexUsageOutput("Unable to find image locally\n" + ok + "\n")
+	if err != nil || u.Plan != "free" || len(u.Windows) != 1 || u.Windows[0] != (UsageWindow{"30-day", 43200, 13, 1797607630}) {
+		t.Fatalf("u = %+v, err = %v", u, err)
+	}
+	out := `{"error":{"code":-32600,"message":"codex account authentication required to read rate limits"},"id":2}`
+	if _, err := ParseCodexUsageOutput(out); err == nil || !strings.Contains(err.Error(), "authentication required") {
+		t.Errorf("signed out: err = %v", err)
+	}
+	if _, err := ParseCodexUsageOutput(""); err == nil {
+		t.Error("no output must be an error")
+	}
+}
+
+func TestCodexUsageEdgeCases(t *testing.T) {
+	parse := func(s string) *AgentUsage {
+		var m map[string]any
+		_ = json.Unmarshal([]byte(s), &m)
+		return ParseCodexUsage(m)
+	}
+	// A separate limit (for one model) is not Codex's main limit.
+	if u := parse(`{"rateLimits":{"limitId":"codex_other","primary":{"usedPercent":90,"windowDurationMins":300}}}`); u != nil {
+		t.Errorf("other limit = %+v", u)
+	}
+	// Shortest window first; out-of-range percents are clamped; a reached limit says so.
+	u := parse(`{"ordinaryUsageAllowed":false,"rateLimits":{"primary":{"usedPercent":140,"windowDurationMins":10080},"secondary":{"usedPercent":-3,"windowDurationMins":300},"rateLimitReachedType":"rate_limit_reached"}}`)
+	if u == nil || u.Windows[0].Name != "5-hour" || u.Windows[0].UsedPercent != 0 || u.Windows[1].UsedPercent != 100 || u.Status != "rate_limit_reached" {
+		t.Errorf("u = %+v", u)
+	}
+	if u := parse(`{"rateLimits":{"primary":null,"secondary":null}}`); u != nil {
+		t.Errorf("no windows = %+v", u)
 	}
 }

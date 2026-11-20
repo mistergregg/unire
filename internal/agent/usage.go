@@ -1,318 +1,213 @@
 package agent
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os/exec"
 	"sort"
 	"strings"
 )
 
-// UsageWindow represents usage for a specific time window (e.g. 5-hour, 7-day).
+// UsageWindow is how much of one usage limit window (e.g. 5 hours, 7 days) is used.
 type UsageWindow struct {
-	Name         string  `json:"name"`                   // e.g. "5-hour", "7-day", "30-day"
-	DurationMins int     `json:"durationMins,omitempty"` // window length in minutes
-	UsedPercent  float64 `json:"usedPercent"`            // percentage used (0 to 100)
-	ResetsAt     int64   `json:"resetsAt,omitempty"`     // Unix timestamp in seconds
+	Name         string  `json:"name"`                   // from the window length: "5-hour", "7-day", "30-day"
+	DurationMins int     `json:"durationMins,omitempty"` // window length in minutes; 0 when the CLI does not say
+	UsedPercent  float64 `json:"usedPercent"`            // 0 to 100
+	ResetsAt     int64   `json:"resetsAt,omitempty"`     // Unix seconds, as the CLI reported it; 0 when unknown
 }
 
-// AgentUsage represents the latest usage limits reading for an agent.
+// AgentUsage is the latest usage limits reading for an agent.
 type AgentUsage struct {
 	AgentID   string        `json:"agentId"`
-	Reported  bool          `json:"reported"`         // true if the agent reports usage limits
-	Status    string        `json:"status,omitempty"` // e.g. "allowed", "not reported"
-	Plan      string        `json:"plan,omitempty"`   // e.g. "pro", "free" if reported
-	Windows   []UsageWindow `json:"windows"`          // per-window readings
-	UpdatedAt int64         `json:"updatedAt"`        // Unix timestamp when Unire read it
-	Stale     bool          `json:"stale"`            // true when older than staleness threshold
+	Label     string        `json:"label,omitempty"`  // the agent's name in the UI (set by the server)
+	Reported  bool          `json:"reported"`         // false: the CLI reports no usage limits
+	Status    string        `json:"status,omitempty"` // the CLI's own status ("allowed", ...) or "not reported"
+	Plan      string        `json:"plan,omitempty"`   // e.g. "free", "plus", when the CLI says
+	Windows   []UsageWindow `json:"windows"`
+	UpdatedAt int64         `json:"updatedAt"`      // Unix seconds when Unire read it; 0: never
+	Stale     bool          `json:"stale"`          // the reading is old (set by the server)
+	Note      string        `json:"note,omitempty"` // why the last try to read it failed (set by the server)
 }
 
-// FormatWindowDurationName formats a duration in minutes into a readable window name.
-func FormatWindowDurationName(mins int, fallback string) string {
-	if mins <= 0 {
+// WindowName names a window by its length: 300 minutes is "5-hour", 10080 is
+// "7-day", 43200 is "30-day". With no length it returns fallback.
+func WindowName(mins int, fallback string) string {
+	switch {
+	case mins <= 0:
 		return fallback
-	}
-	if mins%1440 == 0 {
+	case mins%1440 == 0:
 		return fmt.Sprintf("%d-day", mins/1440)
-	}
-	if mins%60 == 0 {
+	case mins%60 == 0:
 		return fmt.Sprintf("%d-hour", mins/60)
 	}
 	return fmt.Sprintf("%d-min", mins)
 }
 
-// DefaultUsage returns a baseline reading for an agent.
+// DefaultUsage is the reading for an agent before anything was read: Claude and
+// Codex report their limits, the others do not.
 func DefaultUsage(agentID string) AgentUsage {
-	reported := agentID == "claude" || agentID == "codex"
-	status := ""
-	if !reported {
-		status = "not reported"
+	u := AgentUsage{AgentID: agentID, Windows: []UsageWindow{}}
+	switch agentID {
+	case "claude", "codex":
+		u.Reported = true
+	default:
+		u.Status = "not reported"
 	}
-	return AgentUsage{
-		AgentID:  agentID,
-		Reported: reported,
-		Status:   status,
-		Windows:  []UsageWindow{},
-	}
+	return u
 }
 
-// ParseClaudeUsage parses the rate_limit_event payload from Claude Code.
+// claudeWindowMins are the lengths of the windows Claude Code names in
+// rate_limit_info.unifiedWindows (it gives names, not lengths).
+var claudeWindowMins = map[string]int{"five_hour": 300, "seven_day": 10080}
+
+// ParseClaudeUsage reads Claude Code's stream-json rate_limit_event, e.g.
+//
+//	{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795225200,
+//	 "rateLimitType":"five_hour",...,"unifiedWindows":{"five_hour":{"utilization":0.53,
+//	 "resetsAt":1795225200,"status":"allowed"},"seven_day":{"utilization":0.19,...}}}}
+//
+// utilization is 0 to 1. It returns nil when the event names no window.
 func ParseClaudeUsage(m map[string]any) *AgentUsage {
 	info, _ := m["rate_limit_info"].(map[string]any)
 	if info == nil {
 		return nil
 	}
-	status := firstString(info, "status")
-	if status == "" {
-		status = "allowed"
-	}
-	plan := firstString(info, "planTier", "subscriptionType")
-
 	var windows []UsageWindow
-	windowsMap, _ := info["unifiedWindows"].(map[string]any)
-	if windowsMap != nil {
-		knownWindows := []struct {
-			key      string
-			name     string
-			duration int
-		}{
-			{"five_hour", "5-hour", 300},
-			{"seven_day", "7-day", 10080},
-			{"seven_day_overage_included", "7-day (overage)", 10080},
-			{"seven_day_sonnet", "7-day Sonnet", 10080},
-			{"seven_day_opus", "7-day Opus", 10080},
+	add := func(key string, win map[string]any) {
+		u, ok := toFloat(win["utilization"])
+		if !ok {
+			return
 		}
-		seen := make(map[string]bool)
-		for _, kw := range knownWindows {
-			if win, ok := windowsMap[kw.key].(map[string]any); ok {
-				seen[kw.key] = true
-				if w := parseClaudeWindow(win, kw.name, kw.duration); w != nil {
-					windows = append(windows, *w)
-				}
-			}
-		}
-		// Any remaining windows in windowsMap
-		var extraKeys []string
-		for k := range windowsMap {
-			if !seen[k] {
-				extraKeys = append(extraKeys, k)
-			}
-		}
-		sort.Strings(extraKeys)
-		for _, k := range extraKeys {
-			if win, ok := windowsMap[k].(map[string]any); ok {
-				name := strings.ReplaceAll(k, "_", "-")
-				if w := parseClaudeWindow(win, name, 0); w != nil {
-					windows = append(windows, *w)
-				}
-			}
-		}
-	} else if u, ok := toFloat(info["utilization"]); ok {
-		// Top-level utilization fallback
-		t := firstString(info, "rateLimitType")
-		name := "primary"
-		duration := 0
-		if t == "five_hour" {
-			name = "5-hour"
-			duration = 300
-		} else if t == "seven_day" {
-			name = "7-day"
-			duration = 10080
-		} else if t != "" {
-			name = strings.ReplaceAll(t, "_", "-")
-		}
-		w := UsageWindow{
-			Name:         name,
-			DurationMins: duration,
-			UsedPercent:  u * 100,
-		}
-		if r, ok := toInt64(info["resetsAt"]); ok {
-			w.ResetsAt = r
-		}
+		mins := claudeWindowMins[key]
+		w := UsageWindow{Name: WindowName(mins, strings.ReplaceAll(key, "_", "-")), DurationMins: mins, UsedPercent: clampPercent(u * 100)}
+		w.ResetsAt, _ = toInt64(win["resetsAt"])
 		windows = append(windows, w)
 	}
-
-	if windows == nil {
-		windows = []UsageWindow{}
+	if all, ok := info["unifiedWindows"].(map[string]any); ok {
+		keys := make([]string, 0, len(all))
+		for k := range all {
+			keys = append(keys, k)
+		}
+		// Shortest known window first, then any others by name.
+		sort.Slice(keys, func(i, j int) bool {
+			a, b := claudeWindowMins[keys[i]], claudeWindowMins[keys[j]]
+			if (a == 0) != (b == 0) {
+				return a != 0
+			}
+			if a != b {
+				return a < b
+			}
+			return keys[i] < keys[j]
+		})
+		for _, k := range keys {
+			if win, ok := all[k].(map[string]any); ok {
+				add(k, win)
+			}
+		}
+	} else if t := firstString(info, "rateLimitType"); t != "" {
+		add(t, info) // an older event that carries a single window at the top level
 	}
-
-	return &AgentUsage{
-		AgentID:  "claude",
-		Reported: true,
-		Status:   status,
-		Plan:     plan,
-		Windows:  windows,
-	}
-}
-
-func parseClaudeWindow(win map[string]any, name string, duration int) *UsageWindow {
-	u, ok := toFloat(win["utilization"])
-	if !ok {
+	if len(windows) == 0 {
 		return nil
 	}
-	w := &UsageWindow{
-		Name:         name,
-		DurationMins: duration,
-		UsedPercent:  u * 100,
-	}
-	if r, ok := toInt64(win["resetsAt"]); ok {
-		w.ResetsAt = r
-	}
-	return w
+	return &AgentUsage{AgentID: "claude", Reported: true, Status: firstString(info, "status"), Windows: windows}
 }
 
-// ParseCodexUsage parses the rate limit snapshot from Codex app-server.
+// ParseCodexUsage reads a Codex app-server rate limit reading: the result of
+// account/rateLimits/read ({"rateLimits":{...},"ordinaryUsageAllowed":true,...})
+// or the params of the account/rateLimits/updated notification
+// ({"rateLimits":{...}}). usedPercent is 0 to 100. It returns nil when there is
+// no window, or when the snapshot is for a limit other than Codex's main one.
 func ParseCodexUsage(m map[string]any) *AgentUsage {
-	if m == nil {
+	snap, _ := m["rateLimits"].(map[string]any)
+	if snap == nil {
 		return nil
 	}
-	// If wrapped in result or params or rateLimits
-	if res, ok := m["result"].(map[string]any); ok {
-		m = res
+	if id := firstString(snap, "limitId"); id != "" && id != "codex" {
+		return nil // a separate limit (for one model); the main one is what the owner wants
 	}
-	ordinaryAllowed, hasOrdinary := m["ordinaryUsageAllowed"].(bool)
-	if p, ok := m["params"].(map[string]any); ok {
-		m = p
-	}
-	if rl, ok := m["rateLimits"].(map[string]any); ok {
-		m = rl
-	}
-
-	plan := firstString(m, "planType")
-	status := "allowed"
-	if hasOrdinary && !ordinaryAllowed {
-		status = "rejected"
-	}
-	if reachedType := firstString(m, "rateLimitReachedType"); reachedType != "" {
-		status = reachedType
-	}
-
 	var windows []UsageWindow
-	if primary, ok := m["primary"].(map[string]any); ok && primary != nil {
-		if w := parseCodexWindow(primary, "Primary"); w != nil {
-			windows = append(windows, *w)
+	for _, key := range []string{"primary", "secondary"} {
+		win, _ := snap[key].(map[string]any)
+		pct, ok := toFloat(win["usedPercent"])
+		if !ok {
+			continue
 		}
+		mins64, _ := toInt64(win["windowDurationMins"])
+		w := UsageWindow{Name: WindowName(int(mins64), key), DurationMins: int(mins64), UsedPercent: clampPercent(pct)}
+		w.ResetsAt, _ = toInt64(win["resetsAt"])
+		windows = append(windows, w)
 	}
-	if secondary, ok := m["secondary"].(map[string]any); ok && secondary != nil {
-		if w := parseCodexWindow(secondary, "Secondary"); w != nil {
-			windows = append(windows, *w)
-		}
+	if len(windows) == 0 {
+		return nil
 	}
-
-	if windows == nil {
-		windows = []UsageWindow{}
+	sort.SliceStable(windows, func(i, j int) bool {
+		a, b := windows[i].DurationMins, windows[j].DurationMins
+		return a != 0 && (b == 0 || a < b)
+	})
+	status := "allowed"
+	if ok, has := m["ordinaryUsageAllowed"].(bool); has && !ok {
+		status = "limit reached"
 	}
-
-	return &AgentUsage{
-		AgentID:  "codex",
-		Reported: true,
-		Status:   status,
-		Plan:     plan,
-		Windows:  windows,
+	if r := firstString(snap, "rateLimitReachedType"); r != "" {
+		status = r
 	}
+	return &AgentUsage{AgentID: "codex", Reported: true, Status: status, Plan: firstString(snap, "planType"), Windows: windows}
 }
 
-func parseCodexWindow(win map[string]any, fallbackName string) *UsageWindow {
-	pct, ok := toFloat(win["usedPercent"])
-	if !ok {
-		return nil
+// codexUsageScript asks codex app-server for the account's rate limits and
+// prints its answer line. app-server ends as soon as its input closes, before
+// it answers, so the input stays open until the answer is seen (or 20 seconds
+// pass). Nothing in it comes from outside: the requests are fixed.
+const codexUsageScript = `d=$(mktemp -d) || exit 1
+{
+  printf '%s\n' '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"unire","title":"Unire","version":"1"}}}' '{"method":"initialized"}' '{"method":"account/rateLimits/read","id":2}'
+  i=0; while [ ! -e "$d/done" ] && [ $i -lt 100 ]; do sleep 0.2; i=$((i+1)); done
+} | timeout 25 codex app-server 2>/dev/null | while IFS= read -r l; do
+  case "$l" in '{"id":2,'*|*',"id":2}') printf '%s\n' "$l"; touch "$d/done";; esac
+done
+rm -rf "$d"`
+
+// ParseCodexUsageOutput reads what codexUsageScript printed.
+func ParseCodexUsageOutput(out string) (*AgentUsage, error) {
+	for _, line := range strings.Split(out, "\n") {
+		var m struct {
+			ID     int            `json:"id"`
+			Result map[string]any `json:"result"`
+			Error  map[string]any `json:"error"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &m) != nil || m.ID != 2 {
+			continue
+		}
+		if m.Error != nil {
+			msg, _ := m.Error["message"].(string)
+			return nil, errors.New("codex: " + clip(msg, 200))
+		}
+		if u := ParseCodexUsage(m.Result); u != nil {
+			return u, nil
+		}
+		return nil, errors.New("codex reported no usage window")
 	}
-	mins := 0
-	if m, ok := toInt64(win["windowDurationMins"]); ok {
-		mins = int(m)
-	}
-	name := FormatWindowDurationName(mins, fallbackName)
-	w := &UsageWindow{
-		Name:         name,
-		DurationMins: mins,
-		UsedPercent:  pct,
-	}
-	if r, ok := toInt64(win["resetsAt"]); ok {
-		w.ResetsAt = r
-	}
-	return w
+	return nil, errors.New("codex gave no answer about its usage")
+}
+
+func clampPercent(p float64) float64 {
+	return max(0, min(100, p))
 }
 
 func toFloat(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
 		return n, true
-	case float32:
-		return float64(n), true
 	case int:
 		return float64(n), true
 	case int64:
 		return float64(n), true
-	default:
-		return 0, false
 	}
+	return 0, false
 }
 
 func toInt64(v any) (int64, bool) {
-	switch n := v.(type) {
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	case float64:
-		return int64(n), true
-	default:
-		return 0, false
-	}
-}
-
-// QueryCodexUsage queries codex app-server directly for current rate limits.
-func QueryCodexUsage(ctx context.Context) (*AgentUsage, error) {
-	cmd := exec.CommandContext(ctx, "codex", "app-server")
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	}()
-
-	initReq := `{"method":"initialize","id":1,"params":{"clientInfo":{"name":"unire","title":"Unire","version":"1"}}}` + "\n"
-	if _, err := io.WriteString(stdin, initReq); err != nil {
-		return nil, err
-	}
-	readReq := `{"method":"account/rateLimits/read","id":2,"params":null}` + "\n"
-	if _, err := io.WriteString(stdin, readReq); err != nil {
-		return nil, err
-	}
-
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		var m map[string]any
-		if json.Unmarshal([]byte(line), &m) != nil {
-			continue
-		}
-		id, _ := m["id"].(float64)
-		if int(id) == 2 {
-			res, _ := m["result"].(map[string]any)
-			if res == nil {
-				return nil, fmt.Errorf("empty result from codex rateLimits")
-			}
-			return ParseCodexUsage(res), nil
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return nil, fmt.Errorf("codex app-server did not return rate limits")
+	f, ok := toFloat(v)
+	return int64(f), ok
 }

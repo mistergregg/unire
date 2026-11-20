@@ -79,6 +79,12 @@ through unchanged, and if the stream has no final answer the last thing the
 agent wrote is used, so a parser that misses something never hides the answer.
 Claude Code and Antigravity do this today.
 
+## Usage limits (optional)
+
+If the CLI reports how much of its usage limits is used, parse it into an
+`agent.AgentUsage` and set `Event.Usage`; the chat pages then show what is left.
+See [usage-limits.md](usage-limits.md).
+
 ## Updating an agent's version
 
 Claude Code and Codex are pinned in `docker/sandbox/Dockerfile` (`CLAUDE_CODE_VERSION`, `CODEX_VERSION`), so a new upstream release never changes what a running install does. To update one: change the number, push, and look at the `sandbox-smoke` job in CI. It builds the image, checks the `unire` tool script, and runs the real CLIs signed out through `TestRealCLIs`, which fails if an agent no longer accepts the first message, reports its error and leaves by itself. Antigravity's installer has no version option, so it is whatever was latest when the image was built; the same job is what catches a change there.

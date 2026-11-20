@@ -202,12 +202,6 @@ func (d *codexLive) Line(line string) Event {
 				ev.Msgs = []MsgState{{ID: id, State: MsgFailed}}
 				ev.Progress = "codex could not take the message: " + failure
 			}
-		case kind == "rateLimits":
-			if failure == "" {
-				if u := ParseCodexUsage(result); u != nil {
-					ev.Usage = u
-				}
-			}
 		}
 		if failure != "" && (kind == "initialize" || kind == "thread" || kind == "turn") {
 			ev.Progress = "codex error: " + failure

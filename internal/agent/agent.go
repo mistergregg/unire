@@ -48,6 +48,11 @@ type Info struct {
 	// throwaway sandbox that has the login volume mounted.
 	InspectArgv []string `json:"-"`
 	ResetArgv   []string `json:"-"`
+	// UsageArgv, when set, prints the agent's usage limits without using any of
+	// them; ParseUsage reads its output. It needs the network and the login
+	// volume, and runs in a throwaway sandbox with nothing else mounted.
+	UsageArgv  []string                                 `json:"-"`
+	ParseUsage func(output string) (*AgentUsage, error) `json:"-"`
 	// ResetHelp says what a reset removes.
 	ResetHelp string `json:"resetHelp"`
 	// Models lists known model names to offer in the UI.

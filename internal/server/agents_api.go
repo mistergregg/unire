@@ -124,7 +124,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 			defer safe.Recover("agent status", nil)
 			ad, _ := agent.Get(in.ID)
 			st := s.agentStatus(r.Context(), ad)
-			u := s.usageFor(r.Context(), in.ID)
+			u := s.usageFor(in.ID)
 			v := agentView{Info: in, StatusNote: st.note, Usage: &u}
 			if st.known {
 				v.LoggedIn = &st.loggedIn

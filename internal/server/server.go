@@ -74,6 +74,7 @@ type Server struct {
 	mu       sync.Mutex
 	failures map[string]failure
 	now      func() time.Time
+	usage    usageProbes
 }
 
 type failure struct {
@@ -121,7 +122,8 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		return nil, err
 	}
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
-		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now}
+		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now,
+		usage: usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.stopCleanup = make(chan struct{})
 	s.probe = dockerProbe{}
@@ -139,6 +141,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 func (s *Server) Close() error {
 	s.stopOnce.Do(func() { close(s.stopCleanup) })
 	s.sessions.Shutdown()
+	s.usage.wg.Wait()
 	return s.store.Close()
 }
 

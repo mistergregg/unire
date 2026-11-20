@@ -96,6 +96,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+	agents  map[string]string           // queued or running session -> its agent
 	asks    map[string]chan string      // questions waiting for the owner, by session id + "/" + question id
 	saving  map[string]chan struct{}    // sessions whose memory is still being saved; closed when done
 	live    map[string]chan agent.Steer // running sessions whose agent takes messages
@@ -109,7 +110,7 @@ func New(st *store.Store, config func() Config) (*Manager, error) {
 	if _, err := st.InterruptUnfinished(); err != nil {
 		return nil, err
 	}
-	return &Manager{st: st, config: config, abandon: defaultAbandonAfter, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}, live: map[string]chan agent.Steer{}}, nil
+	return &Manager{st: st, config: config, abandon: defaultAbandonAfter, sem: make(chan struct{}, MaxConcurrent), cancels: map[string]context.CancelFunc{}, agents: map[string]string{}, asks: map[string]chan string{}, saving: map[string]chan struct{}{}, live: map[string]chan agent.Steer{}}, nil
 }
 
 func newID() string {
@@ -201,6 +202,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[spec.ID] = cancel
+	m.agents[spec.ID] = spec.Agent
 	m.wg.Add(1)
 	m.mu.Unlock()
 
@@ -271,6 +273,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 	defer func() {
 		m.mu.Lock()
 		delete(m.cancels, spec.ID)
+		delete(m.agents, spec.ID)
 		m.mu.Unlock()
 	}()
 	// The owner can talk to a steerable agent while it works.
@@ -495,11 +498,16 @@ func (m *Manager) Saving(sessionID string) bool {
 	return ok
 }
 
-// Running reports whether any session is currently active.
-func (m *Manager) Running() bool {
+// AgentBusy reports whether a chat with the agent is queued or running.
+func (m *Manager) AgentBusy(agentID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.cancels) > 0
+	for _, a := range m.agents {
+		if a == agentID {
+			return true
+		}
+	}
+	return false
 }
 
 // workspaceName is the volume that holds a conversation's repos between turns.

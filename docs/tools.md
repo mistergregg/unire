@@ -213,6 +213,10 @@ Separate from the `unire` tools above, the sandbox image carries programs an age
 
 All versions are pinned in `docker/sandbox/Dockerfile`, and the `sandbox-smoke` CI job runs each one.
 
+## Keep what works
+
+Every agent is also given one working rule (`keepWhatWorks` in `internal/tools`): fix what it was asked about without taking away anything that works. Removing or changing a feature, setting, option or behaviour is not a fix unless the owner asked for it. If every fix it can find would take something away, it asks first (`unire ask`) and says what would be lost; before it finishes it reads its diff for anything deleted besides the fix; and any change to existing behaviour is stated plainly in its reply and pull request description. It was added after an agent "fixed" messages showing above the pinned chat title by removing the pinning.
+
 ### One conversation, one branch, one pull request
 
 A conversation works on one branch. A reply continues it, whichever agent answers (a different agent used to get a branch of its own, which produced a second pull request repeating the first one's changes). Commits pushed by a later turn therefore update the same pull request on their own.

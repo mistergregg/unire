@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +66,9 @@ type Options struct {
 	// each message (delivered, failed).
 	Control   <-chan agent.Steer
 	OnMessage func(id, state string)
+	// Files are copied into the sandbox before the agent starts: images the owner
+	// attached to the prompt, which names where they are.
+	Files []agent.File
 	// OnWorkDone is called once the agent has finished and its work is pushed,
 	// before the memory step. It is not called when the session fails earlier.
 	OnWorkDone func(res Result, err error)
@@ -197,6 +202,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// repos where the last turn left them. Requests the agent left in files
 	// last time must not be read again.
 	_ = w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"rm", "-rf", tools.Dir, memory.OutDir}})
+	if err := w.copyFiles(ctx, opt.Files); err != nil {
+		return res, err
+	}
 
 	startHeads := map[string]string{}
 	for _, repo := range spec.Repos {
@@ -403,6 +411,35 @@ func (w *worker) writeFile(ctx context.Context, path, content string) error {
 	err := w.sb.Exec(ctx, runner.ExecOpts{
 		Argv:  []string{"sh", "-c", `cat > "$1"`, "sh", path},
 		Stdin: strings.NewReader(content), Stderr: &errb,
+	})
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return nil
+}
+
+// copyFiles copies files from the host into the sandbox (attachments: see
+// sessions/attach.go). Each is fed on stdin and its path passed as an argument, so
+// nothing is parsed by a shell.
+func (w *worker) copyFiles(ctx context.Context, files []agent.File) error {
+	for _, f := range files {
+		if err := w.copyFile(ctx, f); err != nil {
+			return fmt.Errorf("could not give the agent %s: %w", path.Base(f.To), err)
+		}
+	}
+	return nil
+}
+
+func (w *worker) copyFile(ctx context.Context, f agent.File) error {
+	in, err := os.Open(f.From)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	var errb bytes.Buffer
+	err = w.sb.Exec(ctx, runner.ExecOpts{
+		Argv:  []string{"sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", f.To},
+		Stdin: in, Stderr: &errb,
 	})
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(errb.String()))

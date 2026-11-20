@@ -26,6 +26,15 @@ type Steer struct {
 	// Promote: the message with this ID was already sent and is waiting; make the
 	// agent take it now. Text is not used.
 	Promote bool
+	// Files are copied into the sandbox before the agent is given the message
+	// (images the owner attached, which Text names).
+	Files []File
+}
+
+// File is a file on the host to copy into the sandbox.
+type File struct {
+	From string // host path
+	To   string // sandbox path
 }
 
 // Message states, shown next to the message in the conversation.

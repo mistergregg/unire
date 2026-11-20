@@ -231,7 +231,10 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 			if s.Promote {
 				err = drv.Promote(s.ID)
 			} else {
-				err = drv.Send(s)
+				// Images it names are put in the sandbox before the agent can read it.
+				if err = w.copyFiles(ctx, s.Files); err == nil {
+					err = drv.Send(s)
+				}
 			}
 			switch {
 			case errors.Is(err, agent.ErrInterrupt):

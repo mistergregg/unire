@@ -236,8 +236,10 @@ function steerCard(t, e) {
     await api("POST", "/api/sessions/" + encodeURIComponent(t.s.id) + "/steer/" + encodeURIComponent(entry.id) + "/now");
     now.hidden = true;
   }));
+  const thumbs = el("div", { class: "attach-thumbs" }, ...attachThumbs(e.images || t.attached[id] || []));
+  entry.thumbs = thumbs;
   const card = el("div", { class: "steer" },
-    el("div", { class: "bubble user" }, el("div", { class: "said" }, text)),
+    el("div", { class: "bubble user" }, el("div", { class: "said" }, text), thumbs),
     el("div", { class: "time" }, note + " · ", status, " ", now));
   now.hidden = mode === "now";
   entry.card = card;
@@ -253,6 +255,22 @@ function steerState(t, e) {
   s.status.textContent = STEER_STATES[state] || state;
   s.status.className = "steer-state " + state;
   s.now.hidden = state !== "queued" || s.mode === "now"; // only a message that is still waiting (and was not sent now) can be sent now
+}
+
+// Files sent with a message: an "attach" event, "<message>\n<file> <name>\n…".
+// <message> is empty for the turn's prompt, or the id of a message sent while the
+// agent worked (its "steer" event follows). The files are served by the server.
+function attachedCard(t, e) {
+  const [target, rest] = splitEvent(e.text);
+  const list = rest.split("\n").filter(Boolean).map((line) => {
+    const [file, name] = splitEvent(line.replace(" ", "\n"));
+    const src = "/api/sessions/" + encodeURIComponent(t.s.id) + "/attachments/" + encodeURIComponent(file);
+    return { name: name || file, src, href: src, image: isImageName(file) };
+  });
+  if (!target) { t.userThumbs.replaceChildren(...attachThumbs(list)); return; }
+  t.attached[target] = list;
+  const s = t.steers[target];
+  if (s) s.thumbs.replaceChildren(...attachThumbs(list));
 }
 
 let thread = [];      // one entry per turn: { s, node pieces, text, after }
@@ -278,10 +296,11 @@ function makeTurn(s) {
   const foot = el("div", { class: "turn-foot muted" });
   const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
   const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)), el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
-  const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt)), el("div", { class: "time" }, ago(s.createdAt)));
+  const userThumbs = el("div", { class: "attach-thumbs" });
+  const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt), userThumbs), el("div", { class: "time" }, ago(s.createdAt)));
   const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, shareBox, foot);
   const root = el("div", { class: "turn" }, user, el("div", { class: "msg agent" }, avatar, body));
-  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, shareBox, answer, foot, avatar, asks: {}, steers: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
+  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, shareBox, answer, foot, avatar, userThumbs, asks: {}, steers: {}, attached: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
   renderSummary(t);
   renderAnswer(t);
   return t;
@@ -318,6 +337,7 @@ function addEvents(t, events) {
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
     if (e.kind === "share") { shareCard(t, e); continue; }
+    if (e.kind === "attach") { attachedCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
     if (e.kind === "prtitle" || e.kind === "prbody") continue; // what the agent suggests for a pull request, used when you are asked
@@ -380,6 +400,7 @@ function setComposer() {
   const running = !isFinished(tail.s.status);
   const steerable = running && tail.s.canSteer; // it takes messages while it works
   $("reply-text").disabled = running && !steerable;
+  $("reply-attach").disabled = running && !steerable;
   $("reply-text").placeholder = steerable ? "Tell the agent something while it works…"
     : running ? "The agent is working…" : "Reply to the agent";
   $("reply-send").hidden = running && !steerable;
@@ -424,6 +445,7 @@ async function openSession(id) {
   linksData = null;
   $("s-links").replaceChildren();
   $("reply-text").value = "";
+  replyAttach.clear();
   autoGrow();
   const token = (pollToken = {});
   const [turns, agents] = await Promise.all([api("GET", "/api/sessions/" + encodeURIComponent(id) + "/thread"), api("GET", "/api/agents")]);
@@ -480,6 +502,9 @@ async function watch(t, token) {
   }
 }
 
+// Files attached to the next reply or message.
+const replyAttach = attachPicker($("reply-files"), $("reply-attach"), $("reply-text"), $("reply-previews"));
+
 $("reply-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("reply-text").value.trim();
@@ -506,10 +531,13 @@ async function sendReply(text) {
     repos: tail.s.repos || [],
     branch: tail.s.branch,
   };
+  const images = replyAttach.list();
   const t = makeTurn(optSession);
+  t.userThumbs.replaceChildren(...attachThumbs(images.map((a) => ({ name: a.name, src: a.data, image: a.image }))));
   thread.push(t);
   $("chat").append(t.root);
   $("reply-text").value = "";
+  replyAttach.clear();
   autoGrow();
   setComposer();
   window.scrollTo(0, document.body.scrollHeight);
@@ -517,7 +545,7 @@ async function sendReply(text) {
   const token = pollToken;
   guarded($("reply-send"), async () => {
     try {
-      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent });
+      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent, images });
       t.s = s;
       if (pollToken !== token || currentView !== "session") return;
       setComposer();
@@ -529,6 +557,7 @@ async function sendReply(text) {
         const idx = thread.indexOf(t);
         if (idx >= 0) thread.splice(idx, 1);
         $("reply-text").value = text;
+        replyAttach.set(images);
         autoGrow();
         setComposer();
         $("reply-text").focus();
@@ -545,15 +574,17 @@ function steer(text, now) {
   const tail = thread[thread.length - 1];
   const btn = now ? $("steer-now") : $("reply-send");
   const tempId = "pending-steer-" + Date.now();
-  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text });
+  const images = replyAttach.list();
+  steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text, images: images.map((a) => ({ name: a.name, src: a.data, image: a.image })) });
   $("reply-text").value = "";
+  replyAttach.clear();
   autoGrow();
   window.scrollTo(0, document.body.scrollHeight);
 
   const token = pollToken;
   guarded(btn, async () => {
     try {
-      const res = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now });
+      const res = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/steer", { text, now, images });
       if (res && res.id) {
         const pending = tail.steers[tempId];
         if (pending) {
@@ -571,6 +602,7 @@ function steer(text, now) {
           delete tail.steers[tempId];
         }
         $("reply-text").value = text;
+        replyAttach.set(images);
         autoGrow();
         $("reply-text").focus();
       }

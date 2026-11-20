@@ -106,6 +106,7 @@ async function openNew(prefill) {
     api("GET", "/api/servers"), api("GET", "/api/agents"), api("GET", "/api/workspaces"), api("GET", "/api/network")]);
   serverList = servers; workspaceList = workspaces; selected = []; lastResults = []; networkInfo = net;
   $("new-form").reset();
+  newAttach.clear();
   $("n-prompt").style.height = "";
   const def = net.modes.find((m) => m.id === net.mode);
   $("n-network").replaceChildren(
@@ -224,14 +225,18 @@ $("n-ws-save").addEventListener("click", () => guarded($("n-ws-save"), async () 
   banner("Workspace saved.");
 }));
 
+// Files attached to the first message.
+const newAttach = attachPicker($("n-files"), $("n-attach"), $("n-prompt"), $("n-previews"));
+
 $("new-form").addEventListener("submit", (e) => {
   e.preventDefault();
   guarded($("n-submit"), async () => {
     const s = await api("POST", "/api/sessions", {
       task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
-      forkFrom, parent: $("n-parent").value,
+      forkFrom, parent: $("n-parent").value, images: newAttach.list(),
     });
+    newAttach.clear();
     await openSession(s.id);
   });
 });

@@ -115,6 +115,8 @@ async function openNew(prefill) {
   updateNetworkDesc();
   $("n-agent").replaceChildren(...agents.map((a) => el("option", { value: a.id },
     a.label + (a.loggedIn === false ? " (not signed in)" : ""))));
+  newAgents = agents;
+  newModel.fill(agents.find((a) => a.id === $("n-agent").value), "");
   $("n-server").replaceChildren(...servers.map((s) => el("option", { value: s.id }, s.name)));
   $("n-server").hidden = servers.length < 2; // nothing to choose with one server
   fillWorkspaceSelect();
@@ -225,6 +227,11 @@ $("n-ws-save").addEventListener("click", () => guarded($("n-ws-save"), async () 
   banner("Workspace saved.");
 }));
 
+// The model for the first message follows the agent picked for it.
+let newAgents = [];
+const newModel = modelPicker($("n-model"), $("n-model-name"));
+$("n-agent").addEventListener("change", () => newModel.fill(newAgents.find((a) => a.id === $("n-agent").value), ""));
+
 // Files attached to the first message.
 const newAttach = attachPicker($("n-files"), $("n-attach"), $("n-prompt"), $("n-previews"));
 
@@ -232,7 +239,7 @@ $("new-form").addEventListener("submit", (e) => {
   e.preventDefault();
   guarded($("n-submit"), async () => {
     const s = await api("POST", "/api/sessions", {
-      task: $("n-task").value, agent: $("n-agent").value, prompt: $("n-prompt").value,
+      task: $("n-task").value, agent: $("n-agent").value, model: newModel.value(), prompt: $("n-prompt").value,
       network: $("n-network").value, memory: $("n-memory").checked, repos: refsOf(),
       forkFrom, parent: $("n-parent").value, images: newAttach.list(),
     });

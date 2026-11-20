@@ -171,7 +171,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		return res, err
 	}
 	if spec.Model != "" {
-		adapter = agent.WithModel(adapter, spec.Model)
+		adapter = adapter.WithModel(spec.Model) // used by the one-shot commands and the live start
 	}
 	ref := newRef()
 	if _, err := adapter.Command(spec.Prompt, spec.Mode, ref); err != nil {

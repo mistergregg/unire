@@ -50,7 +50,7 @@ func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec
 	fallback := w.opt.Fallback
 	var deliver []string // ids of messages the new prompt carries
 	for restarts := 0; ; restarts++ {
-		argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Model: spec.Model, Ref: ref, Resume: resume, Fallback: fallback, Dir: workspace})
+		argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Ref: ref, Resume: resume, Fallback: fallback, Dir: workspace})
 		if err != nil {
 			return err
 		}

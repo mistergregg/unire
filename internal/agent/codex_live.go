@@ -25,11 +25,9 @@ func (c codex) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 	if dir == "" {
 		dir = "/workspace"
 	}
-	model := o.Model
-	if model == "" {
-		model = c.Model
-	}
-	return []string{"codex", "app-server"}, &codexLive{dir: dir, model: model, resume: o.Resume, fallback: o.Fallback, kinds: map[int]string{}}, nil
+	// app-server takes no --model: the model goes in thread/start, thread/resume
+	// and turn/start (see their params in generate-json-schema).
+	return []string{"codex", "app-server"}, &codexLive{dir: dir, model: c.Model, resume: o.Resume, fallback: o.Fallback, kinds: map[int]string{}}, nil
 }
 
 type codexLive struct {

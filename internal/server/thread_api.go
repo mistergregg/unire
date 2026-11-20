@@ -69,10 +69,14 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
-func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID, model string, images []sessions.Attachment) (store.Session, error) {
-	prompt, model = strings.TrimSpace(prompt), strings.TrimSpace(model)
-	if model != "" {
-		if err := agent.ValidateModel(model); err != nil {
+// A nil model means none was given: the same agent keeps the model of the turn before,
+// and another agent starts from its own default. An empty one asks for the default.
+func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, model *string, images []sessions.Attachment) (store.Session, error) {
+	prompt = strings.TrimSpace(prompt)
+	var chosen string
+	if model != nil {
+		chosen = strings.TrimSpace(*model)
+		if err := agent.ValidateModel(chosen); err != nil {
 			return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
 		}
 	}
@@ -91,6 +95,9 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	}
 	if agentID == "" {
 		agentID = x.Agent
+	}
+	if model == nil && agentID == x.Agent {
+		chosen = x.Model
 	}
 	ad, err := agent.Get(agentID)
 	if err != nil {
@@ -153,7 +160,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		}
 	}
 	started, err := s.sessions.Start(sessions.Request{
-		Task: x.Task, Agent: agentID, Model: model, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
+		Task: x.Task, Agent: agentID, Model: chosen, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
 		Resume: resume, FallbackPreamble: fallback,
 		Attachments: images,
@@ -175,7 +182,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string    `json:"prompt"`
 		Agent  string    `json:"agent"`  // empty: the same agent
-		Model  string    `json:"model"`  // empty: the agent's default
+		Model  *string   `json:"model"`  // omitted: the same agent keeps its last model; empty: the agent's default
 		Images []imageIn `json:"images"` // attached to the message
 	}
 	if !readMessage(w, r, &req) {

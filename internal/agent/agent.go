@@ -83,15 +83,17 @@ type Adapter interface {
 	// Hosts lists the host names the agent must reach to work at all (its AI
 	// service and login). They stay reachable in the agent-only network mode.
 	Hosts() []string
-	// WithModel returns a copy of the adapter configured to use the given model
-	// (empty means the agent's default).
+	// WithModel returns a copy of the adapter that runs the given model, in its
+	// one-shot commands and its live start alike (empty means the agent's default).
 	WithModel(model string) Adapter
 }
 
 var validModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$`)
 
-// ValidateModel checks that a typed model name is short and contains only
-// letters, digits, dots, dashes, colons, slashes and underscores.
+// ValidateModel checks that a typed model name is short (64 characters at most),
+// starts with a letter or digit and holds only letters, digits, dots, dashes,
+// colons and slashes, so nothing odd reaches a command line. Empty is valid: it
+// means the agent's own default.
 func ValidateModel(name string) error {
 	if name == "" {
 		return nil
@@ -103,14 +105,6 @@ func ValidateModel(name string) error {
 		return fmt.Errorf("invalid model name %q", name)
 	}
 	return nil
-}
-
-// WithModel returns the adapter configured to use model (empty means default).
-func WithModel(a Adapter, model string) Adapter {
-	if a == nil {
-		return nil
-	}
-	return a.WithModel(model)
 }
 
 var adapters = map[string]Adapter{}

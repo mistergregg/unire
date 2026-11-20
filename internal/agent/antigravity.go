@@ -72,7 +72,7 @@ func (antigravity) Info() Info {
 		InspectArgv: []string{"sh", "-c", antigravityInspectScript},
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
 		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
-		Models:      []string{"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"},
+		Models:      []string{"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"},
 		Verified:    Verified{Unattended: true}, // signed-in unattended runs seen working (internet mode)
 	}
 }

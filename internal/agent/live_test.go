@@ -38,6 +38,20 @@ func liveOf(t *testing.T, name string, o LiveOptions) ([]string, LiveDriver) {
 	return argv, d
 }
 
+// liveWithModel is liveOf for an adapter set to run model (see Adapter.WithModel).
+func liveWithModel(t *testing.T, name, model string, o LiveOptions) ([]string, LiveDriver) {
+	t.Helper()
+	a, err := Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, d, err := a.WithModel(model).(Live).StartLive(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return argv, d
+}
+
 func TestEveryAgentCanBeSteered(t *testing.T) {
 	for _, id := range []string{"claude", "codex", "antigravity"} {
 		if !CanSteer(id) {
@@ -64,7 +78,7 @@ func TestClaudeSteeringUsesPriorityAndTracksMessages(t *testing.T) {
 		t.Errorf("argv = %v", argv)
 	}
 	// With a model.
-	argvModel, _ := liveOf(t, "claude", LiveOptions{Prompt: "do it", Mode: HandsOff, Model: "sonnet", Ref: "ref-1"})
+	argvModel, _ := liveWithModel(t, "claude", "sonnet", LiveOptions{Prompt: "do it", Mode: HandsOff, Ref: "ref-1"})
 	wantModel := []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "sonnet", "--session-id", "ref-1"}
 	if strings.Join(argvModel, " ") != strings.Join(wantModel, " ") {
 		t.Errorf("argvModel = %v, want %v", argvModel, wantModel)
@@ -159,7 +173,7 @@ func TestAntigravityQueuesAMessageUntilTheTurnEnds(t *testing.T) {
 		t.Errorf("argv = %v", argv)
 	}
 	// With a model.
-	argvModel, _ := liveOf(t, "antigravity", LiveOptions{Mode: HandsOff, Model: "gemini-3.8-flash-high"})
+	argvModel, _ := liveWithModel(t, "antigravity", "gemini-3.8-flash-high", LiveOptions{Mode: HandsOff})
 	wantModel := []string{"agy", "--dangerously-skip-permissions", "--print=", "--input-format=stream-json", "--output-format=stream-json", "--model", "gemini-3.8-flash-high"}
 	if strings.Join(argvModel, " ") != strings.Join(wantModel, " ") {
 		t.Errorf("argvModel = %v, want %v", argvModel, wantModel)
@@ -301,8 +315,8 @@ func startCodex(t *testing.T) *codexScript {
 		t.Fatalf("after initialize = %v", m)
 	}
 	p := m[1]["params"].(map[string]any)
-	if p["cwd"] != "/workspace" || p["approvalPolicy"] != "never" || p["sandbox"] != "danger-full-access" {
-		t.Errorf("thread/start params = %v", p)
+	if _, has := p["model"]; has || p["cwd"] != "/workspace" || p["approvalPolicy"] != "never" || p["sandbox"] != "danger-full-access" {
+		t.Errorf("thread/start params = %v", p) // no model chosen: none is sent
 	}
 	s.feed(`{"id":2,"result":{"thread":{"id":"thr-1"}}}`)
 	m = s.next()
@@ -311,7 +325,7 @@ func startCodex(t *testing.T) *codexScript {
 	}
 	ts := m[0]["params"].(map[string]any)
 	in0 := ts["input"].([]any)[0].(map[string]any)
-	if ts["threadId"] != "thr-1" || in0["type"] != "text" || in0["text"] != "the task" {
+	if _, has := ts["model"]; has || ts["threadId"] != "thr-1" || in0["type"] != "text" || in0["text"] != "the task" {
 		t.Errorf("turn/start params = %v", ts)
 	}
 	s.feed(`{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}`)
@@ -504,7 +518,7 @@ func TestClaudeResumesItsSavedConversation(t *testing.T) {
 }
 
 func TestCodexStartLiveAndResumeWithModel(t *testing.T) {
-	argv, d := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Model: "gpt-6-luna", Dir: "/workspace"})
+	argv, d := liveWithModel(t, "codex", "gpt-6-luna", LiveOptions{Mode: HandsOff, Dir: "/workspace"})
 	if strings.Join(argv, " ") != "codex app-server" {
 		t.Errorf("argv = %v; want codex app-server", argv)
 	}
@@ -533,7 +547,7 @@ func TestCodexStartLiveAndResumeWithModel(t *testing.T) {
 	}
 
 	// Resuming a thread with another model.
-	_, d2 := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Model: "gpt-5.6-terra", Dir: "/workspace", Resume: "thr-1"})
+	_, d2 := liveWithModel(t, "codex", "gpt-5.6-terra", LiveOptions{Mode: HandsOff, Dir: "/workspace", Resume: "thr-1"})
 	s2 := &codexScript{t: t, d: d2}
 	if err := d2.Begin(&s2.in, "carry on"); err != nil {
 		t.Fatal(err)

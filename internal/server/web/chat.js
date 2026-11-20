@@ -295,7 +295,9 @@ function makeTurn(s) {
   const answer = el("div", { class: "agent-text" });
   const foot = el("div", { class: "turn-foot muted" });
   const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
-  const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)), el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
+  const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)),
+    ...(s.model ? [el("span", { class: "model", title: "Model chosen for this turn" }, s.model)] : []),
+    el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
   const userThumbs = el("div", { class: "attach-thumbs" });
   const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt), userThumbs), el("div", { class: "time" }, ago(s.createdAt)));
   const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, shareBox, foot);
@@ -413,13 +415,14 @@ function setComposer() {
   $("s-stop").disabled = !tail.s.id || tail.s.id.startsWith("pending-");
   $("s-delete").hidden = running;
   $("reply-agent").disabled = running;
+  replyModel.disabled = running;
   $("s-title").textContent = thread[0].s.task;
   const badge = $("s-status");
   badge.className = "badge st-" + tail.s.status;
   badge.textContent = tail.s.status;
   const repos = thread[0].s.repos.map((r) => r.fullName.split("/").pop());
   $("s-meta").replaceChildren(
-    pill(agentLabel(tail.s.agent)),
+    pill(agentLabel(tail.s.agent) + (tail.s.model ? " · " + tail.s.model : "")),
     pill("network: " + tail.s.network),
     ...repos.slice(0, 4).map((r) => pill(r)),
     ...(repos.length > 4 ? [pill("+" + (repos.length - 4) + " more", repos.slice(4).join(", "))] : []),
@@ -460,6 +463,7 @@ async function openSession(id) {
   $("reply-agent").replaceChildren(...agents.map((a) => el("option", { value: a.id },
     a.label + (a.loggedIn === false ? " (not signed in)" : ""))));
   $("reply-agent").value = tail.s.agent;
+  fillReplyModel();
   setComposer();
   // Keep reading the log in the background. Waiting for it here would leave the
   // button that opened this chat disabled until the agent has finished.
@@ -514,15 +518,27 @@ $("reply-form").addEventListener("submit", (e) => {
   sendReply(text);
 });
 
+// The model for the next message: the last turn's while the agent stays the same,
+// the agent's default when another agent is picked.
+const replyModel = modelPicker($("reply-model"), $("reply-model-name"));
+function fillReplyModel() {
+  const tail = thread[thread.length - 1];
+  const agent = $("reply-agent").value;
+  replyModel.fill(agentChoices.find((a) => a.id === agent), tail && tail.s.agent === agent ? tail.s.model : "");
+}
+$("reply-agent").addEventListener("change", fillReplyModel);
+
 // Sends a message as the next turn of the conversation and starts following it.
 async function sendReply(text) {
   const tail = thread[thread.length - 1];
   const agent = $("reply-agent").value;
+  const model = replyModel.value();
   const nowUnix = Math.floor(Date.now() / 1000);
   const optSession = {
     id: "pending-" + Date.now(),
     task: tail.s.task,
     agent,
+    model,
     prompt: text,
     status: "queued",
     createdAt: nowUnix,
@@ -545,7 +561,7 @@ async function sendReply(text) {
   const token = pollToken;
   guarded($("reply-send"), async () => {
     try {
-      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent, images });
+      const s = await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/reply", { prompt: text, agent, model, images });
       t.s = s;
       if (pollToken !== token || currentView !== "session") return;
       setComposer();

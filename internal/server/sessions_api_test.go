@@ -941,6 +941,40 @@ func TestModelSelectionAndSwitchingRoundTrip(t *testing.T) {
 
 	e.waitStatus(replyID, "done")
 
+	// A reply that keeps the agent and names no model keeps the model of the turn before.
+	next := func(from string, body map[string]any) map[string]any {
+		t.Helper()
+		body["prompt"] = "carry on"
+		code, raw := e.do("POST", "/api/sessions/"+from+"/reply", body)
+		if code != http.StatusCreated {
+			t.Fatalf("reply %v = %d %s", body, code, raw)
+		}
+		var v map[string]any
+		json.Unmarshal([]byte(raw), &v)
+		e.waitStatus(v["id"].(string), "done")
+		return v
+	}
+	kept := next(replyID, map[string]any{})
+	if kept["agent"] != "antigravity" || kept["model"] != "gemini-3.8-flash-high" {
+		t.Errorf("same agent, no model: agent=%v model=%v; want the last turn's", kept["agent"], kept["model"])
+	}
+	// An empty model asks for the agent's default.
+	reset := next(kept["id"].(string), map[string]any{"model": ""})
+	if reset["agent"] != "antigravity" || reset["model"] != "" {
+		t.Errorf("empty model: agent=%v model=%v; want antigravity with its default", reset["agent"], reset["model"])
+	}
+	// Naming the same agent counts as keeping it.
+	picked := next(reset["id"].(string), map[string]any{"model": "gemini-3.8-flash-low"})
+	kept2 := next(picked["id"].(string), map[string]any{"agent": "antigravity"})
+	if kept2["model"] != "gemini-3.8-flash-low" {
+		t.Errorf("same agent named, no model: model=%v; want the last turn's", kept2["model"])
+	}
+	// Another agent with no model starts from its own default.
+	switched := next(kept2["id"].(string), map[string]any{"agent": "claude"})
+	if switched["agent"] != "claude" || switched["model"] != "" {
+		t.Errorf("other agent, no model: agent=%v model=%v; want claude with its default", switched["agent"], switched["model"])
+	}
+
 	// 5. Start and reply without a model (defaults).
 	code, sessDef := e.launch(base, nil)
 	if code != http.StatusCreated || sessDef["model"] != "" {

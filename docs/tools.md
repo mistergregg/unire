@@ -47,7 +47,7 @@ committed.
 
 ## Pull requests
 
-Unire opens pull requests only when you say so, and follows them afterwards.
+Unire opens pull requests only when you say so, and follows them afterwards. By default it asks each time; with **Settings, Pull requests, Open pull requests without asking** turned on, it opens them as soon as the agent is done (see below).
 
 - When a turn pushes a branch, the chat asks "Open a pull request for this repo?"
   with the title (editable) and a description made from the agent's final answer.
@@ -59,11 +59,19 @@ Unire opens pull requests only when you say so, and follows them afterwards.
   its checks and its comments, refreshed every 30 seconds while you look. A
   failing check or a comment offers a button that sends it to the agent as a
   reply; the agent pushes to the same branch, so the pull request updates.
+- **Without asking** (off by default): when a turn pushes a branch and the agent
+  asked for a pull request with `unire pr`, Unire opens it when the turn's work is
+  pushed, with the agent's title and description, and says so in the activity
+  (`opened pull request #N`). A turn whose agent did not run `unire pr` is still
+  offered to you, and so is a branch an earlier turn pushed. The agent is told
+  that its pull request will be opened for it, so it only asks when the work is
+  ready for review. It still never has the token.
 
 ### `pr`
 
-`unire pr "<title>"` suggests the title Unire offers when it asks. The agent
-cannot open the pull request; the last suggestion wins.
+`unire pr "<title>"` suggests the title Unire offers when it asks (or opens the
+pull request with, when it opens them without asking). The agent cannot open the
+pull request itself; the last suggestion wins.
 
 Once a pull request is open, a later turn that changes what it does writes a
 new title and description with `pr` and `pr-body`, and Unire puts them on the

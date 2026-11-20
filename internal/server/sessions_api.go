@@ -88,6 +88,8 @@ func (s *Server) sessionConfig() sessions.Config {
 		Repos:       s,
 		MaxRun:      time.Duration(s.limits().MaxRunMinutes) * time.Minute,
 		Attachments: s.attachmentsDir(),
+		AutoPR:      s.autoOpenPulls(),
+		AfterTurn:   s.afterTurn,
 	}
 }
 

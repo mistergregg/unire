@@ -185,7 +185,7 @@ func TestRealAgentsThroughTheRealRunLoop(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
 			start := time.Now()
-			pending, err := w.runLiveProcess(ctx, argv, drv, "say hi", &answers, nil)
+			pending, _, err := w.runLiveProcess(ctx, argv, drv, "say hi", &answers, nil, false)
 			t.Logf("%s: returned after %v; pending=%d err=%v; log=%q answers=%q", id, time.Since(start).Round(100*time.Millisecond), len(pending), err, strings.TrimSpace(log.String()), strings.TrimSpace(answers.String()))
 			if ctx.Err() != nil {
 				t.Fatalf("%s: the run loop did not come back in time", id)

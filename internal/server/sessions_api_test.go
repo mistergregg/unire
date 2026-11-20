@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,7 @@ type fakeBox struct {
 	block    chan struct{}
 	outFiles map[string]string // files the agent "writes" in the memory step
 	prompts  []string          // what a steerable agent was told (its first message and later ones)
+	lostConv bool              // a resumed Claude says its conversation is gone
 	heads    int               // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
 	status      map[string]statusResult // answers to sign-in questions, by command name
@@ -45,8 +48,12 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	} else if isAgent {
 		b.mu.Lock()
 		b.calls = append(b.calls, o)
-		out, block := b.out, b.block
+		out, block, lost := b.out, b.block, b.lostConv
 		b.mu.Unlock()
+		if lost && inner[0] == "claude" && slices.Contains(inner, "--resume") {
+			io.WriteString(o.Stderr, "No conversation found with session ID: x\n")
+			return errors.New("exit status 1")
+		}
 		if inner[0] != "claude" { // another agent: it prints its output and ignores its input
 			io.WriteString(o.Stdout, out)
 			if block != nil {
@@ -600,6 +607,11 @@ func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
 	_, first := e.launch(base, map[string]any{"prompt": "What is the answer?"})
 	id1 := first["id"].(string)
 	e.waitStatus(id1, "done")
+	// The conversation is lost before the reply: the agent must start a new one that
+	// is told the whole story.
+	e.box.mu.Lock()
+	e.box.lostConv = true
+	e.box.mu.Unlock()
 	_, second := replyTo(e, id1, map[string]any{"prompt": "And the question?"})
 	e.waitStatus(second["id"].(string), "done")
 
@@ -608,7 +620,7 @@ func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
 	prompts := append([]string(nil), e.box.prompts...)
 	e.box.mu.Unlock()
 	if len(prompts) != 2 {
-		t.Fatalf("expected two agent runs, got %d", len(prompts))
+		t.Fatalf("expected two agent prompts (the resume never got to read one), got %d", len(prompts))
 	}
 	for _, want := range []string{"<earlier-request>", "What is the answer?", "<earlier-answer>", "The answer is 42.", "And the question?"} {
 		if !strings.Contains(prompts[1], want) {
@@ -617,6 +629,42 @@ func TestAReplyIsToldWhatTheAgentAnsweredBefore(t *testing.T) {
 	}
 	if strings.Contains(prompts[0], "<earlier-answer>") {
 		t.Error("a first message has no earlier answer")
+	}
+}
+
+func TestAReplyBySameAgentResumesItsConversation(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	_, first := e.launch(base, map[string]any{"prompt": "What is the answer?"})
+	id1 := first["id"].(string)
+	e.waitStatus(id1, "done")
+	_, second := replyTo(e, id1, map[string]any{"prompt": "And the question?"})
+	e.waitStatus(second["id"].(string), "done")
+
+	var claudes [][]string
+	e.box.mu.Lock()
+	for _, c := range e.box.calls {
+		if inner, isAgent, _ := agenttest.Unwrap(c.Argv); isAgent && inner[0] == "claude" {
+			claudes = append(claudes, inner)
+		}
+	}
+	prompts := append([]string(nil), e.box.prompts...)
+	e.box.mu.Unlock()
+	if len(claudes) < 2 {
+		t.Fatalf("expected two Claude runs, got %d", len(claudes))
+	}
+	argAfter := func(argv []string, flag string) string {
+		if i := slices.Index(argv, flag); i >= 0 && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		return ""
+	}
+	conv := argAfter(claudes[0], "--session-id")
+	if conv == "" || argAfter(claudes[len(claudes)-1], "--resume") != conv {
+		t.Fatalf("the reply carries on the first conversation %q: %v", conv, claudes[len(claudes)-1])
+	}
+	if p := prompts[len(prompts)-1]; strings.Contains(p, "<earlier-request>") || !strings.Contains(p, "And the question?") {
+		t.Errorf("a resumed agent is not told again what it remembers:\n%s", p)
 	}
 }
 
@@ -724,9 +772,9 @@ func TestAReplyBoilsTheWholeConversationDown(t *testing.T) {
 		if i%2 == 0 {
 			agentID = "antigravity"
 		}
-		thread = append(thread, mk(i, agentID, fmt.Sprintf("request number %d %s", i, strings.Repeat("x", 800))))
+		thread = append(thread, mk(i, agentID, fmt.Sprintf("request number %d %s", i, strings.Repeat("x", 2000))))
 	}
-	answer := func(id string) string { return "answer of " + id + " " + strings.Repeat("y", 1500) }
+	answer := func(id string) string { return "answer of " + id + " " + strings.Repeat("y", 3000) }
 	p := replyPreamble(thread, answer)
 
 	if !strings.Contains(p, "request number 30") || !strings.Contains(p, "answer of t30") {
@@ -741,10 +789,10 @@ func TestAReplyBoilsTheWholeConversationDown(t *testing.T) {
 	if strings.Contains(p, "request number 1 ") {
 		t.Error("the oldest turns are the ones left out")
 	}
-	if strings.Contains(p, "request number 29 "+strings.Repeat("x", 600)) {
+	if strings.Contains(p, "request number 29 "+strings.Repeat("x", 1000)) {
 		t.Error("an older request is clipped")
 	}
-	if len(p) > 14000 {
+	if len(p) > 36000 {
 		t.Errorf("the preamble is %d characters, it should stay near its budget", len(p))
 	}
 	if !strings.Contains(p, "(antigravity)") || !strings.Contains(p, "branch agent/x") {
@@ -752,5 +800,38 @@ func TestAReplyBoilsTheWholeConversationDown(t *testing.T) {
 	}
 	if replyPreamble(nil, answer) != "" {
 		t.Error("no conversation, no preamble")
+	}
+}
+
+func TestAReplyBySameAgentCarriesOnItsOwnConversation(t *testing.T) {
+	answer := func(id string) string { return "answer of " + id }
+	thread := []store.Session{
+		{ID: "t1", Agent: "claude", Prompt: "first ask", Branch: "agent/x", AgentConv: "conv-1"},
+		{ID: "t2", Agent: "claude", Prompt: "second ask", Branch: "agent/x", AgentConv: "conv-1"},
+		{ID: "t3", Agent: "codex", Prompt: "third ask", Branch: "agent/x", AgentConv: "thread-9"},
+	}
+
+	resume, p, fallback := replyContext(thread, "claude", answer)
+	if resume != "conv-1" {
+		t.Fatalf("claude carries on its own conversation, got %q", resume)
+	}
+	if !strings.Contains(p, "third ask") || !strings.Contains(p, "answer of t3") {
+		t.Errorf("it hears what the other agent did since: %q", p)
+	}
+	if strings.Contains(p, "first ask") {
+		t.Errorf("what it already remembers is not repeated: %q", p)
+	}
+	if !strings.Contains(fallback, "first ask") || !strings.Contains(fallback, "third ask") {
+		t.Errorf("the fallback tells the whole story: %q", fallback)
+	}
+
+	resume, p, _ = replyContext(thread, "codex", answer)
+	if resume != "thread-9" || strings.Contains(p, "ask") {
+		t.Errorf("the last agent carries on with nothing to catch up on: %q %q", resume, p)
+	}
+
+	resume, p, fallback = replyContext(thread, "antigravity", answer)
+	if resume != "" || fallback != "" || !strings.Contains(p, "first ask") {
+		t.Errorf("an agent new to the conversation is told all of it: %q %q", resume, p)
 	}
 }

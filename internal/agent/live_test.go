@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -433,5 +434,59 @@ func TestCodexSendsEveryWaitingMessageTogetherAfterAnInterrupt(t *testing.T) {
 	}
 	if text := m[0]["params"].(map[string]any)["input"].([]any)[0].(map[string]any)["text"]; text != "first\n\nsecond" {
 		t.Errorf("the turn carries both: %q", text)
+	}
+}
+
+func TestCodexCarriesOnItsSavedThreadOrStartsAfreshWithTheFallback(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		_, d := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Dir: "/workspace", Resume: "thr-old", Fallback: "the whole story"})
+		s := &codexScript{t: t, d: d}
+		if err := d.Begin(&s.in, "just the new part"); err != nil {
+			t.Fatal(err)
+		}
+		s.next()
+		s.feed(`{"id":1,"result":{}}`)
+		m := s.next()
+		if len(m) != 2 || m[1]["method"] != "thread/resume" {
+			t.Fatalf("after initialize = %v", m)
+		}
+		if p := m[1]["params"].(map[string]any); p["threadId"] != "thr-old" || p["cwd"] != "/workspace" {
+			t.Errorf("thread/resume params = %v", p)
+		}
+		want, thread := "just the new part", "thr-old"
+		if lost {
+			ev := s.feed(`{"id":2,"error":{"message":"no rollout found for thread id thr-old"}}`)
+			if ev.Progress == "" {
+				t.Error("losing the thread is reported")
+			}
+			m = s.next()
+			if len(m) != 1 || m[0]["method"] != "thread/start" {
+				t.Fatalf("a lost thread starts a new one: %v", m)
+			}
+			s.feed(`{"id":3,"result":{"thread":{"id":"thr-new"}}}`)
+			want, thread = "the whole story", "thr-new"
+		} else {
+			s.feed(`{"id":2,"result":{"thread":{"id":"thr-old"}}}`)
+		}
+		m = s.next()
+		if len(m) != 1 || m[0]["method"] != "turn/start" {
+			t.Fatalf("then a turn: %v", m)
+		}
+		if text := m[0]["params"].(map[string]any)["input"].([]any)[0].(map[string]any)["text"]; text != want {
+			t.Errorf("lost=%v: the turn is told %q, want %q", lost, text, want)
+		}
+		if d.Resume() != thread {
+			t.Errorf("lost=%v: carries on %q next time, want %q", lost, d.Resume(), thread)
+		}
+	}
+}
+
+func TestClaudeResumesItsSavedConversation(t *testing.T) {
+	argv, d := liveOf(t, "claude", LiveOptions{Mode: HandsOff, Ref: "new-id", Resume: "old-id"})
+	if !slices.Contains(argv, "--resume") || slices.Contains(argv, "--session-id") {
+		t.Errorf("argv = %v", argv)
+	}
+	if d.Resume() != "old-id" {
+		t.Errorf("carries on %q", d.Resume())
 	}
 }

@@ -20,7 +20,7 @@ Which tools a session gets depends on the situation (`internal/tools`):
 |---|---|
 | First message of a conversation | `name`, `ask`, `pr`, `pr-body`, `share`, `branches`, `repo`, `memory` (with memory on), `parent` (if it follows a parent chat) |
 | A reply in a conversation | `ask`, `pr`, `pr-body`, `share` (the conversation keeps its name) |
-| A reply, in a conversation with a pull request | `ask`, `share`, `pr-status`, `pr-logs`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
+| A reply, in a conversation with a pull request | `ask`, `pr`, `pr-body`, `share`, `pr-status`, `pr-logs`, `pr-comments`, `pr-reply`, `pr-close`, `pr-reopen` |
 
 ## `name`
 
@@ -64,6 +64,12 @@ Unire opens pull requests only when you say so, and follows them afterwards.
 
 `unire pr "<title>"` suggests the title Unire offers when it asks. The agent
 cannot open the pull request; the last suggestion wins.
+
+Once a pull request is open, a later turn that changes what it does writes a
+new title and description with `pr` and `pr-body`, and Unire puts them on the
+pull request when the turn ends. A small fix (a failing check, a review nit)
+writes neither, so the pull request keeps its text; the chat still offers to
+update it if you want.
 
 ### `pr-body`
 

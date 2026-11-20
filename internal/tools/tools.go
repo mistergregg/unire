@@ -146,7 +146,25 @@ func IsCall(name string) bool {
 
 // ForReplyWithPR is the tool set for a reply in a conversation that has an open
 // pull request: the agent can read its checks and comments and answer.
-func ForReplyWithPR() []Tool { return append([]Tool{Ask, Share, Branches}, PRTools()...) }
+func ForReplyWithPR() []Tool {
+	return append([]Tool{Ask, PRUpdate, PRBodyUpdate, Share, Branches}, PRTools()...)
+}
+
+// PRUpdate and PRBodyUpdate are pr and pr-body once a pull request is open for the
+// branch: what the agent writes replaces the pull request's text when the turn ends.
+// The agent decides whether it is needed, so a small fix leaves the text alone.
+var (
+	PRUpdate = Tool{
+		Name: "pr",
+		Usage: `unire pr "<title>" - a new title (under 70 characters) for the open pull request, if this turn changes what it does. ` +
+			`Use it together with pr-body; leave both out for a small fix (a failing check, a typo, a review nit) so the pull request keeps its text.`,
+	}
+	PRBodyUpdate = Tool{
+		Name: "pr-body",
+		Usage: "unire pr-body <<'EOF' ... EOF - a new description for the open pull request, if this turn changes what it does: describe the whole change as it now is " +
+			"(what changed and why, and how it was checked), not only this turn. Unire puts it on the pull request when you finish. Do not mention Unire or this conversation.",
+	}
+)
 
 // PRBody lets the agent write the description of a pull request. It is piped in,
 // because it has several lines.

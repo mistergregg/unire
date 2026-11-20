@@ -105,20 +105,21 @@ type Session struct {
 	UpstreamSeen int    // how many finished turns of that conversation it has been told about
 	AutoFix      bool   // start a fix by itself when the conversation's pull request has failing checks (kept on the first session)
 	AutoFixSet   bool   // CreateSession: AutoFix was chosen on purpose (otherwise the default, on, applies)
+	AgentConv    string // the agent's own conversation id (its session or thread) for this turn, to carry it on
 	Repos        []RepoRef
 	CreatedAt    time.Time
 	StartedAt    time.Time // zero until it starts
 	FinishedAt   time.Time // zero until it ends
 }
 
-const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen, auto_fix`
+const sessionCols = `id, task, agent, mode, prompt, branch, status, error, repos, created_at, started_at, finished_at, network, memory, parent_id, forked_from, upstream_id, upstream_seen, auto_fix, agent_conv`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var repos string
 	var created, started, finished int64
 	var mem, autoFix int
-	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen, &autoFix); err != nil {
+	if err := sc.Scan(&x.ID, &x.Task, &x.Agent, &x.Mode, &x.Prompt, &x.Branch, &x.Status, &x.Error, &repos, &created, &started, &finished, &x.Network, &mem, &x.ParentID, &x.ForkedFrom, &x.UpstreamID, &x.UpstreamSeen, &autoFix, &x.AgentConv); err != nil {
 		return x, err
 	}
 	x.Memory = mem != 0
@@ -149,8 +150,8 @@ func (s *Store) CreateSession(x Session) error {
 	if x.Memory {
 		mem = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
-		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen, autoFixInt(x))
+	_, err = s.db.Exec(`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		x.ID, x.Task, x.Agent, x.Mode, x.Prompt, x.Branch, StatusQueued, "", string(b), s.now().Unix(), x.Network, mem, x.ParentID, x.ForkedFrom, x.UpstreamID, x.UpstreamSeen, autoFixInt(x), x.AgentConv)
 	return err
 }
 
@@ -249,6 +250,38 @@ func (s *Store) Events(sessionID string, after int64, limit int) ([]Event, error
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+const maxThread = 100 // a guard against a loop, far more than anyone replies
+
+// Thread returns every session of the conversation that id belongs to, first to last.
+func (s *Store) Thread(id string) ([]Session, error) {
+	x, ok, err := s.Session(id)
+	if err != nil || !ok {
+		return nil, err
+	}
+	for i := 0; i < maxThread && x.ParentID != ""; i++ {
+		p, ok, err := s.Session(x.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break // the earlier turns were deleted
+		}
+		x = p
+	}
+	out := []Session{x}
+	for len(out) < maxThread {
+		c, ok, err := s.ChildOf(x.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		out, x = append(out, c), c
+	}
+	return out, nil
 }
 
 // BranchTaken reports whether any session already uses this branch name.
@@ -391,5 +424,11 @@ func (s *Store) SetAutoFix(rootID string, on bool) error {
 		v = 1
 	}
 	_, err := s.db.Exec(`UPDATE sessions SET auto_fix = ? WHERE id = ?`, v, rootID)
+	return err
+}
+
+// SetAgentConv records the agent's own conversation id for a turn.
+func (s *Store) SetAgentConv(id, conv string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET agent_conv = ? WHERE id = ?`, conv, id)
 	return err
 }

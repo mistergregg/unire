@@ -17,37 +17,8 @@ import (
 // A conversation is a chain of sessions: the first one, then one per reply.
 // Each reply is a new run that starts from the branch the one before pushed.
 
-const maxThread = 100 // a guard against a loop, far more than anyone replies
-
 // threadOf returns every session of the conversation that id belongs to, first to last.
-func (s *Server) threadOf(id string) ([]store.Session, error) {
-	x, ok, err := s.store.Session(id)
-	if err != nil || !ok {
-		return nil, err
-	}
-	for i := 0; i < maxThread && x.ParentID != ""; i++ {
-		p, ok, err := s.store.Session(x.ParentID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			break // the earlier turns were deleted
-		}
-		x = p
-	}
-	out := []store.Session{x}
-	for len(out) < maxThread {
-		c, ok, err := s.store.ChildOf(x.ID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			break
-		}
-		out, x = append(out, c), c
-	}
-	return out, nil
-}
+func (s *Server) threadOf(id string) ([]store.Session, error) { return s.store.Thread(id) }
 
 // viewWithPushed is toView plus the repos the session pushed a branch to.
 func (s *Server) viewWithPushed(x store.Session) sessionView {
@@ -157,19 +128,27 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	if !ok {
 		mode = s.networkMode()
 	}
+	// The same agent carries on its own saved conversation, so it remembers everything
+	// said and done in it; it hears only what happened since (another agent's turns).
+	// The full digest is the fallback if that conversation is gone, and what another
+	// agent is told.
+	resume, preamble, fallback := replyContext(thread, agentID, s.lastAnswer)
 	// A chat that follows a parent hears what the parent has done since it last looked.
-	preamble := replyPreamble(thread, s.lastAnswer)
 	rootSession := thread[0]
 	upSeen := rootSession.UpstreamSeen
 	if rootSession.UpstreamID != "" {
 		if text, n := s.upstreamUpdate(ctx, rootSession, false); text != "" {
 			preamble = text + "\n" + preamble
+			if fallback != "" {
+				fallback = text + "\n" + fallback
+			}
 			upSeen = n
 		}
 	}
 	started, err := s.sessions.Start(sessions.Request{
 		Task: x.Task, Agent: agentID, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
 		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
+		Resume: resume, FallbackPreamble: fallback,
 	})
 	if err != nil {
 		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())
@@ -209,11 +188,11 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 // characters. The latest turn is given nearly in full; older ones are boiled down
 // to what was asked and how it ended, newest first, until the budget is spent.
 const (
-	lastRequestChars = 2000
-	lastAnswerChars  = 5000
-	olderRequest     = 400
-	olderAnswer      = 600
-	olderBudget      = 5000
+	lastRequestChars = 8000
+	lastAnswerChars  = 8000
+	olderRequest     = 800
+	olderAnswer      = 1200
+	olderBudget      = 16000
 )
 
 func clip(s string, n int) string {
@@ -277,6 +256,31 @@ func replyPreamble(thread []store.Session, answer func(id string) string) string
 		conversationDigest(thread, answer, "In the last turn you were asked:", "and the answer was:") +
 		"The work so far is on branch " + last.Branch + " in the repos that changed " +
 		"(git log and git diff show it). The owner now writes:\n\n"
+}
+
+// replyContext decides how a reply by agentID continues the conversation. If that
+// agent worked in it before and its saved conversation is known, it carries that on
+// (resume) and preamble tells only what happened since; fallback is the full digest,
+// for when that conversation cannot be carried on. Otherwise resume and fallback are
+// empty and preamble is the full digest.
+func replyContext(thread []store.Session, agentID string, answer func(id string) string) (resume, preamble, fallback string) {
+	full := replyPreamble(thread, answer)
+	for i := len(thread) - 1; i >= 0; i-- {
+		t := thread[i]
+		if t.Agent != agentID || t.AgentConv == "" {
+			continue
+		}
+		since := thread[i+1:]
+		last := thread[len(thread)-1]
+		p := "This continues your conversation.\n"
+		if len(since) > 0 {
+			p += "Since your last turn, another agent took over. What happened:\n" +
+				conversationDigest(since, answer, "It was last asked:", "and answered:")
+		}
+		p += "The work so far is on branch " + last.Branch + ". The owner now writes:\n\n"
+		return t.AgentConv, p, full
+	}
+	return "", full, ""
 }
 
 // lastAnswer is what the agent printed as its answer in a session.

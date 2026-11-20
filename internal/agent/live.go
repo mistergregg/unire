@@ -61,8 +61,11 @@ type LiveOptions struct {
 	Prompt string
 	Mode   string
 	Ref    string // a conversation id Unire chose (for agents that accept one)
-	Resume string // the agent's own conversation id, to carry on after a restart
-	Dir    string // the working directory the agent works in
+	Resume string // the agent's own conversation id, to carry on (a reply, or a restart)
+	// Fallback is the prompt to use if that conversation cannot be carried on (it was
+	// lost): it tells a fresh agent what happened so far.
+	Fallback string
+	Dir      string // the working directory the agent works in
 }
 
 // Live is implemented by agents that can be steered.

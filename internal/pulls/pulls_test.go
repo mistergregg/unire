@@ -342,3 +342,48 @@ func TestALaterTurnOffersToUpdateThePullRequestsText(t *testing.T) {
 		t.Error("a title is required")
 	}
 }
+
+func TestALaterTurnUpdatesThePullRequestOnlyWhenItWroteANewDescription(t *testing.T) {
+	svc, thread, api := setup(t)
+	ctx := context.Background()
+	st := svc.Store
+	props, _ := svc.Proposals(thread)
+	if _, err := svc.Open(ctx, thread, Proposal{ServerID: props[0].ServerID, Repo: "o/r", Branch: "agent/x"}); err != nil {
+		t.Fatal(err)
+	}
+	turn := func(id, parent string, events ...string) {
+		time.Sleep(1200 * time.Millisecond) // the turn finishes after the pull request's text was set
+		x := store.Session{ID: id, Task: "Fix the login", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "agent/x", ParentID: parent, Repos: thread[0].Repos}
+		if err := st.CreateSession(x); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i+1 < len(events); i += 2 {
+			st.AddEvent(id, events[i], events[i+1])
+		}
+		st.AddEvent(id, "log", "r: pushed agent/x")
+		st.MarkFinished(id, store.StatusDone, "")
+	}
+
+	// A fix for a failing check writes no description: the pull request keeps its text.
+	turn("s2", "s1", "out", "Fixed the lint error.")
+	if log := svc.SyncText(ctx, "s1"); len(log) != 0 {
+		t.Errorf("nothing to update: %v", log)
+	}
+	if _, sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]; sent {
+		t.Error("a small fix must not rewrite the pull request")
+	}
+
+	// A turn that changes what it does writes a new description (and title).
+	turn("s3", "s2", "prtitle", "Fix the login redirect and add SSO", "prbody", "Fixes the redirect and adds SSO.")
+	log := svc.SyncText(ctx, "s1")
+	if len(log) != 1 || !strings.Contains(log[0], "updated") {
+		t.Fatalf("log = %v", log)
+	}
+	sent := api.sent["PATCH /api/v1/repos/o/r/pulls/4"]
+	if !strings.Contains(sent, "add SSO") || !strings.Contains(sent, "Fixes the redirect and adds SSO.") {
+		t.Errorf("the server was sent %q", sent)
+	}
+	if log := svc.SyncText(ctx, "s1"); len(log) != 0 {
+		t.Errorf("once updated, nothing more happens: %v", log)
+	}
+}

@@ -673,6 +673,70 @@ func (s *Service) Updates(thread []store.Session) ([]Update, error) {
 	return out, nil
 }
 
+// written is the title and description the agent wrote in a turn (pr and pr-body), if any.
+func written(st *store.Store, id string) (title, body string) {
+	events, err := st.Events(id, 0, 5000)
+	if err != nil {
+		return "", ""
+	}
+	for _, e := range events {
+		switch t := strings.TrimSpace(e.Text); {
+		case e.Kind == "prtitle" && t != "":
+			title = t
+		case e.Kind == "prbody" && t != "":
+			body = t
+		}
+	}
+	return title, body
+}
+
+// SyncText puts the text the agent wrote on the pull requests its turn pushed to:
+// when a later turn changes what a pull request does, the agent writes a new
+// description (pr-body, and a title with pr) and it replaces the old one. A turn that
+// wrote no description, such as a fix for a failing check, leaves the pull request's
+// text alone; the owner can still update it from the chat. It returns a line per
+// pull request it changed or could not change, for the turn's log.
+func (s *Service) SyncText(ctx context.Context, rootID string) []string {
+	thread, err := s.Store.Thread(rootID)
+	if err != nil || len(thread) == 0 {
+		return nil
+	}
+	recs, err := s.Store.PullRequests(rootID)
+	if err != nil {
+		return nil
+	}
+	_, last := s.pushes(thread)
+	var log []string
+	for _, rec := range recs {
+		var t *store.Session
+		for p, turn := range last {
+			if p.serverID == rec.ServerID && p.repo == rec.Repo && p.branch == rec.Branch {
+				turn := turn
+				if t == nil || turn.FinishedAt.After(t.FinishedAt) {
+					t = &turn
+				}
+			}
+		}
+		if t == nil || !t.FinishedAt.After(rec.DescribedAt) {
+			continue
+		}
+		title, body := written(s.Store, t.ID)
+		if body == "" {
+			continue
+		}
+		if title == "" {
+			title = rec.Title
+		}
+		body += "\n\n---\n_Opened from a Unire conversation: " + thread[0].Task + "_"
+		if _, err := s.SetText(ctx, rootID, rec.ServerID, rec.Repo, rec.Number, title, body); err != nil {
+			log = append(log, fmt.Sprintf("could not update the text of pull request #%d in %s: %v", rec.Number, rec.Repo, err))
+			continue
+		}
+		log = append(log, fmt.Sprintf("updated the title and description of pull request #%d in %s", rec.Number, rec.Repo))
+	}
+	return log
+}
+
 // SetText changes the title and description of one of the conversation's pull requests.
 func (s *Service) SetText(ctx context.Context, rootID, serverID, repo string, number int, title, body string) (View, error) {
 	title = strings.TrimSpace(title)

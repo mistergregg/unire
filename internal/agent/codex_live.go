@@ -25,11 +25,13 @@ func (codex) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 	if dir == "" {
 		dir = "/workspace"
 	}
-	return []string{"codex", "app-server"}, &codexLive{dir: dir, kinds: map[int]string{}}, nil
+	return []string{"codex", "app-server"}, &codexLive{dir: dir, resume: o.Resume, fallback: o.Fallback, kinds: map[int]string{}}, nil
 }
 
 type codexLive struct {
-	dir string
+	dir      string
+	resume   string // a thread to carry on (thread/resume) instead of starting one
+	fallback string // the prompt to use instead if that thread cannot be carried on
 
 	writeMu sync.Mutex
 	in      io.Writer
@@ -146,8 +148,21 @@ func (d *codexLive) Line(line string) Event {
 		switch {
 		case kind == "initialize" && failure == "":
 			o.add(map[string]any{"method": "initialized"})
+			if d.resume != "" {
+				// Carry on the agent's own saved thread: it remembers the whole conversation.
+				d.request(&o, "thread/resume", "resume", map[string]any{"threadId": d.resume, "cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access", "excludeTurns": true})
+			} else {
+				d.request(&o, "thread/start", "thread", map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"})
+			}
+		case kind == "resume" && failure != "":
+			// The saved thread is gone (or unreadable): start a new one, with the prompt that
+			// tells the agent what happened so far.
+			ev.Progress = "could not carry on the earlier conversation (" + failure + "): starting a new one with a summary of it"
+			if d.fallback != "" {
+				d.prompt = d.fallback
+			}
 			d.request(&o, "thread/start", "thread", map[string]any{"cwd": d.dir, "approvalPolicy": "never", "sandbox": "danger-full-access"})
-		case kind == "thread" && failure == "":
+		case (kind == "thread" || kind == "resume") && failure == "":
 			if th, ok := result["thread"].(map[string]any); ok {
 				d.threadID, _ = th["id"].(string)
 			}

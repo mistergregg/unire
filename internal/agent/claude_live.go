@@ -22,14 +22,22 @@ func (c claude) StartLive(o LiveOptions) ([]string, LiveDriver, error) {
 		return nil, nil, errNotUnattended
 	}
 	argv := []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"}
-	if o.Ref != "" {
+	conv := o.Ref
+	switch {
+	case o.Resume != "":
+		// Carry on the agent's own saved conversation: it remembers everything that was
+		// said and done in it (Claude Code compacts a long one by itself).
+		argv = append(argv, "--resume", o.Resume)
+		conv = o.Resume
+	case o.Ref != "":
 		argv = append(argv, "--session-id", o.Ref)
 	}
-	return argv, &claudeLive{c: c, state: map[string]string{}, owner: map[string]string{}}, nil
+	return argv, &claudeLive{c: c, conv: conv, state: map[string]string{}, owner: map[string]string{}}, nil
 }
 
 type claudeLive struct {
-	c claude
+	c    claude
+	conv string // the conversation (session id) this process works in, to carry it on later
 
 	writeMu sync.Mutex // one message at a time on stdin
 	in      io.Writer
@@ -133,7 +141,7 @@ func (d *claudeLive) Done() bool {
 	return true
 }
 
-func (d *claudeLive) Resume() string   { return "" }
+func (d *claudeLive) Resume() string   { return d.conv }
 func (d *claudeLive) Pending() []Steer { return nil }
 
 // Promote interrupts the turn that is running. Claude keeps the messages that

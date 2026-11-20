@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mistergregg/unire/internal/agent"
@@ -42,14 +44,31 @@ const maxRestarts = 3
 // messages, all at once, as the new prompt.
 func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec, prompt, ref string, tailOut io.Writer) error {
 	answers := io.MultiWriter(w.opt.Out, tailOut)
-	var resume string
+	// A reply carries on the agent's own saved conversation when it has one, so it
+	// remembers everything said and done before (see Options.Resume).
+	resume := w.opt.Resume
+	fallback := w.opt.Fallback
 	var deliver []string // ids of messages the new prompt carries
 	for restarts := 0; ; restarts++ {
-		argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Ref: ref, Resume: resume, Dir: workspace})
+		argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Ref: ref, Resume: resume, Fallback: fallback, Dir: workspace})
 		if err != nil {
 			return err
 		}
-		pending, err := w.runLiveProcess(ctx, argv, drv, prompt, answers, deliver)
+		pending, lost, err := w.runLiveProcess(ctx, argv, drv, prompt, answers, deliver, resume != "")
+		if c := drv.Resume(); c != "" {
+			w.conv = c
+		}
+		if lost && ctx.Err() == nil {
+			// The saved conversation is gone: start over with a fresh one that is told
+			// what happened in the chat. This does not count as a restart.
+			resume, w.conv = "", ""
+			if fallback != "" {
+				prompt = fallback
+			}
+			fallback = ""
+			restarts--
+			continue
+		}
 		if len(pending) == 0 || ctx.Err() != nil || restarts >= maxRestarts {
 			if w.opt.OnMessage != nil {
 				for _, s := range pending {
@@ -73,7 +92,7 @@ func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec
 
 // runLiveProcess runs one process until it ends. It returns the messages the
 // agent was never given, so the caller can start it again with them.
-func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string) ([]agent.Steer, error) {
+func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string, resuming bool) ([]agent.Steer, bool, error) {
 	pr, pw := io.Pipe()
 	var closeOnce sync.Once
 	closeInput := func() { closeOnce.Do(func() { _ = pw.Close() }) }
@@ -144,13 +163,26 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		}
 	}
 
-	var stderr tail
+	// While carrying on a saved conversation, the agent saying it has no such conversation
+	// means it would start over without what was said before: end it, and let the caller
+	// start a fresh one that is told what happened (see runLive).
+	var lost atomic.Bool
+	var lostOnce sync.Once
+	stderr := &watchTail{onLine: func(line string) {
+		if resuming && lostConversation.MatchString(line) {
+			lostOnce.Do(func() {
+				lost.Store(true)
+				fmt.Fprintln(w.opt.Err, "the agent's earlier conversation is gone: starting a new one that is told what happened")
+				stopHard()
+			})
+		}
+	}}
 	wrapped := agentWrapper(argv)
 	var execErr error
 	go func() {
 		defer close(exited)
 		defer safe.Recover("run the agent", func(e error) { execErr = e })
-		execErr = w.sb.Exec(execCtx, runner.ExecOpts{Argv: wrapped, Dir: workspace, Stdin: pr, Stdout: sw, Stderr: &stderr})
+		execErr = w.sb.Exec(execCtx, runner.ExecOpts{Argv: wrapped, Dir: workspace, Stdin: pr, Stdout: sw, Stderr: stderr})
 		_ = pr.Close() // anything still writing to the agent's input stops waiting
 	}()
 
@@ -226,11 +258,11 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	sw.Close()
 
 	if execErr != nil && ctx.Err() == nil && len(drv.Pending()) == 0 {
-		if t := lastLines(stderr.buf, 4); t != "" {
+		if t := lastLines(stderr.buf, 4); t != "" && !lost.Load() {
 			fmt.Fprintln(w.opt.Err, t)
 		}
 	}
-	return drv.Pending(), execErr
+	return drv.Pending(), lost.Load(), execErr
 }
 
 // agentWrapper is the command a steerable agent is run with: a small shell that
@@ -277,4 +309,37 @@ func lastLines(b []byte, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// lostConversation is what an agent says when the conversation it was asked to carry on
+// does not exist (Claude Code: "No conversation found with session ID"; Antigravity:
+// `warning: conversation "x" not found`).
+var lostConversation = regexp.MustCompile(`(?i)(no conversation found|conversation .{0,80}not found|session .{0,80}not found)`)
+
+// watchTail keeps the end of what a process writes (like tail) and hands each complete
+// line to onLine as it arrives.
+type watchTail struct {
+	tail
+	part   string
+	onLine func(string)
+}
+
+func (t *watchTail) Write(p []byte) (int, error) {
+	t.tail.Write(p)
+	t.part += string(p)
+	for {
+		i := strings.IndexByte(t.part, '\n')
+		if i < 0 {
+			break
+		}
+		line := t.part[:i]
+		t.part = t.part[i+1:]
+		if t.onLine != nil {
+			t.onLine(line)
+		}
+	}
+	if len(t.part) > 4096 {
+		t.part = t.part[len(t.part)-4096:]
+	}
+	return len(p), nil
 }

@@ -71,6 +71,8 @@ type Request struct {
 	Branch                    string   // the branch to continue on (a reply, same agent); empty means a new, unused one
 	Preamble                  string   // told to the agent before the prompt; not shown as part of what the owner wrote
 	Notes                     []string // lines for the activity log (for example why repos were picked)
+	Resume                    string   // the agent's own conversation to carry on (a reply by the same agent)
+	FallbackPreamble          string   // told to a fresh agent instead of Preamble if that conversation is gone
 	ForkedFrom                string   // the conversation this one was started from (information only)
 	UpstreamID                string   // the parent conversation it keeps getting updates from
 }
@@ -184,7 +186,11 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	for _, n := range req.Notes {
 		_ = m.st.AddEvent(spec.ID, "log", n)
 	}
-	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent)})
+	fallback := ""
+	if req.Resume != "" && req.FallbackPreamble != "" {
+		fallback = req.FallbackPreamble + req.Prompt
+	}
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent), resume: req.Resume, fallback: fallback})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -216,14 +222,16 @@ func (m *Manager) Wait() { m.wg.Wait() }
 
 // job is everything a running session needs.
 type job struct {
-	spec    session.Spec
-	network egress.Mode
-	memory  bool
-	refs    []store.RepoRef // same order as spec.Repos
-	tokens  map[string]string
-	secrets []string
-	parent  string // the session this one continues, or empty
-	root    string // the first session of the conversation: its id names the workspace
+	spec     session.Spec
+	network  egress.Mode
+	memory   bool
+	refs     []store.RepoRef // same order as spec.Repos
+	tokens   map[string]string
+	secrets  []string
+	parent   string // the session this one continues, or empty
+	root     string // the first session of the conversation: its id names the workspace
+	resume   string // the agent's own conversation to carry on
+	fallback string // the prompt for a fresh agent if that conversation is gone
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
@@ -243,6 +251,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 	control := m.registerLive(spec.ID, spec.Agent, spec.Mode)
 	if control != nil {
 		defer m.finishLive(spec.ID, control)
+	} else if j.resume != "" && j.fallback != "" {
+		// Only a live agent carries on a saved conversation: this one gets the whole story.
+		spec.Prompt, j.resume, j.fallback = j.fallback, "", ""
 	}
 	if j.memory {
 		// The memory step runs after the turn is marked finished; Saving reports it.
@@ -297,6 +308,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 		_ = m.st.SetMemoryStats(spec.ID, len(wo.Mem.Context), 0)
 	}
 	wo.Ask = m.askFunc(spec.ID)
+	wo.Resume, wo.Fallback = j.resume, j.fallback
 	if control != nil {
 		wo.Control = control
 		wo.OnMessage = func(id, state string) { _ = m.st.AddEvent(spec.ID, "steerstate", id+"\n"+state) }
@@ -349,6 +361,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		workDone.Store(time.Now().UnixNano())
 		out.Flush()
 		info.Flush()
+		if res.Conversation != "" {
+			_ = m.st.SetAgentConv(spec.ID, res.Conversation)
+		}
 		for _, f := range res.Shared {
 			_ = m.st.AddEvent(spec.ID, "share", f.Event())
 		}
@@ -359,6 +374,14 @@ func (m *Manager) run(ctx context.Context, j job) {
 			_ = m.st.AddEvent(spec.ID, "prtitle", res.PRTitle) // the title Unire offers when it asks about a pull request
 		}
 		m.applyName(j, res.Name)
+		if pulls != nil && werr == nil {
+			// A turn that wrote a new description for its open pull request updates it.
+			sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			for _, line := range pulls.SyncText(sctx, j.root) {
+				_ = m.st.AddEvent(spec.ID, "log", line)
+			}
+			cancel()
+		}
 		m.finish(ctx, spec.ID, werr, secrets)
 	}
 	type outcome struct {
@@ -403,6 +426,9 @@ func (m *Manager) run(ctx context.Context, j job) {
 		}
 	}
 	if !finished.Load() { // it failed before the work was done
+		if res.Conversation != "" { // what it did say is still there to carry on
+			_ = m.st.SetAgentConv(spec.ID, res.Conversation)
+		}
 		m.applyName(j, res.Name)
 		m.finish(ctx, spec.ID, err, secrets)
 	}
@@ -634,6 +660,9 @@ type Pulls interface {
 	HasAny(ctx context.Context, rootID string) bool
 	// Call answers one of the agent's pull request tools.
 	Call(ctx context.Context, rootID, tool, args string) string
+	// SyncText puts the description a turn wrote on the pull requests it pushed to, and
+	// returns lines for the turn's log.
+	SyncText(ctx context.Context, rootID string) []string
 }
 
 // lookUpMemory answers the agent's memory tool: a session id reads that session's

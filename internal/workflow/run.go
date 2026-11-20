@@ -54,6 +54,11 @@ type Options struct {
 	// session may use, asking the owner when that is needed. It returns the repo, or nil
 	// and what to tell the agent.
 	AddRepo func(ctx context.Context, query string) (*AddedRepo, string)
+	// Resume is the agent's own conversation to carry on (a reply by the same agent), so it
+	// remembers everything said and done before; Fallback is the prompt to use instead if
+	// that conversation is gone (it tells a fresh agent what happened in the chat).
+	Resume   string
+	Fallback string
 	// Control carries what the owner says to the agent while it works. nil means
 	// the agent is run once and cannot be steered. OnMessage reports what became of
 	// each message (delivered, failed).
@@ -79,6 +84,7 @@ type Result struct {
 	PRTitle       string            // a pull request title the agent suggested with the pr tool; empty if none
 	PRBody        string            // a pull request description the agent wrote with the pr-body tool; empty if none
 	Shared        []Shared          // files the agent put in the chat with the share tool
+	Conversation  string            // the agent's own conversation id, so the next reply can carry it on
 }
 
 const workspace = "/workspace"
@@ -246,6 +252,17 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if tp := tools.Prompt(opt.Tools); tp != "" && prompt != "" {
 		prompt += "\n\n---\n\n" + tp
 	}
+	// The prompt for a fresh conversation, if the saved one cannot be carried on, gets the
+	// same memory and tools.
+	if fb := opt.Fallback; fb != "" {
+		if opt.Mem != nil && opt.Mem.Context != "" && adapter.MemoryMode() == agent.MemoryPrompt {
+			fb = opt.Mem.Context + "\n\n---\n\n# Your task\n\n" + fb
+		}
+		if tp := tools.Prompt(opt.Tools); tp != "" {
+			fb += "\n\n---\n\n" + tp
+		}
+		w.opt.Fallback = fb
+	}
 	argv, err := adapter.Command(prompt, spec.Mode, ref)
 	if err != nil {
 		return res, err
@@ -288,6 +305,10 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	var agentErr error
 	if useLive {
 		agentErr = w.runLive(ctx, live, spec, prompt, ref, io.MultiWriter(out, capture))
+		res.Conversation = w.conv
+		if w.conv != "" {
+			ref = w.conv // the memory step carries on the conversation the agent actually worked in
+		}
 	} else {
 		agentErr = sb.Exec(ctx, agentOpts)
 		if stream != nil {
@@ -329,7 +350,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	// The work is done and pushed. Tell the caller now, so the owner can carry on
 	// while the memory step below (which can take a while) finishes in the background.
 	if opt.OnWorkDone != nil {
-		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle, PRBody: prBody, Shared: shared}, workErr)
+		opt.OnWorkDone(Result{Name: requestedName, PRTitle: prTitle, PRBody: prBody, Shared: shared, Conversation: w.conv}, workErr)
 	}
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
@@ -338,11 +359,13 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	res.PRTitle = prTitle
 	res.PRBody = prBody
 	res.Shared = shared
+	res.Conversation = w.conv
 	return res, workErr
 }
 
 type worker struct {
 	spec        session.Spec
+	conv        string            // the agent's conversation this run worked in (to carry it on next time)
 	mu          sync.Mutex        // guards what the repo tool adds while the agent runs
 	added       []session.Repo    // repos brought in while the agent ran
 	addedTokens map[string]string // their tokens, by directory

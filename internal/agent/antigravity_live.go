@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -46,6 +47,32 @@ type antigravityLive struct {
 	interrupted bool    // SIGINT was asked for: the turn's result is not a cue to write the queue
 	held        bool    // the interrupted turn has ended: the messages wait for a restart
 	conv        string  // the agent's conversation id
+
+	// The agent's latest message in this turn, built from its parts and as it was
+	// last given whole (see finalAnswer).
+	msgStep  int
+	msgParts string
+	msgDone  string
+}
+
+// finalAnswer is what a turn's result shows as the answer. agy's "response" joins
+// every message the agent wrote during the turn ("I have started the tests and will
+// check them…", then the summary), so the chat read like a log. Claude's result is
+// its last message only; this does the same: when the response ends with the
+// agent's last message, that message is the answer. Otherwise the response is kept.
+func finalAnswer(response string, last ...string) string {
+	r := strings.TrimSpace(response)
+	best := ""
+	for _, l := range last {
+		l = strings.TrimSpace(l)
+		if l != "" && len(l) < len(r) && strings.HasSuffix(r, l) && len(l) > len(best) {
+			best = l
+		}
+	}
+	if best == "" {
+		return response
+	}
+	return best
 }
 
 func (d *antigravityLive) write(text string) error {
@@ -148,8 +175,24 @@ func (d *antigravityLive) Line(line string) Event {
 		d.conv = id
 		d.mu.Unlock()
 	}
+	if ev.Fragment != "" || ev.Text != "" {
+		d.mu.Lock()
+		if ev.Step != d.msgStep {
+			d.msgStep, d.msgParts, d.msgDone = ev.Step, "", ""
+		}
+		if ev.Text != "" {
+			d.msgDone = ev.Text // the message given whole when it is done
+		} else {
+			d.msgParts += ev.Fragment
+		}
+		d.mu.Unlock()
+	}
 	if m["event"] == "result" {
 		d.mu.Lock()
+		if ev.Answer != "" {
+			ev.Answer = finalAnswer(ev.Answer, d.msgDone, d.msgParts, d.msgParts+d.msgDone)
+		}
+		d.msgStep, d.msgParts, d.msgDone = 0, "", ""
 		d.turnActive, d.sawResult = false, true
 		if d.interrupted {
 			// The turn was cut short on purpose: the messages stay held until the

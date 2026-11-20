@@ -688,5 +688,9 @@ function shareCard(t, e) {
     el("div", { class: "share-actions" }, actions),
     el("div", { class: "share-body" }, body));
   card.dataset.filename = name;
-  t.shareBox.append(card);
+  // An agent that shares a file again (after changing it) replaces the card it shared
+  // before, so the chat shows the newest copy once.
+  const older = [...t.shareBox.children].find((c) => c.dataset.filename === name);
+  if (older) older.replaceWith(card);
+  else t.shareBox.append(card);
 }

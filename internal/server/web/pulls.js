@@ -148,10 +148,22 @@ function proposalCard(p) {
     await refreshLinks();
   }));
   later.addEventListener("click", () => { dismiss(proposalKey(p)); renderPulls(); });
-  return el("div", { class: "pr-card propose" },
+  const card = el("div", { class: "pr-card propose" },
     el("div", { class: "pr-ask" }, "Open a pull request for ", el("strong", {}, p.repo), "? ",
       el("span", { class: "muted" }, "Branch "), el("code", {}, p.branch), el("span", { class: "muted" }, " into " + (p.base || "its default branch") + ".")),
     title, el("label", { class: "pr-base muted" }, "Into branch", base), more, el("div", { class: "pr-actions" }, open, later));
+  // The card is kept between refreshes so what you typed is not lost, but a later turn
+  // can write a better title and description. Fields you have not touched follow the
+  // newest text; one you edited stays as you left it.
+  let offered = { title: p.title, body: p.body, base: p.base || "" };
+  card.sync = (q) => {
+    const next = { title: q.title, body: q.body, base: q.base || "" };
+    if (title.value === offered.title) title.value = next.title;
+    if (body.value === offered.body) body.value = next.body;
+    if (base.value === offered.base) base.value = next.base;
+    offered = next;
+  };
+  return card;
 }
 
 // A branch you said "not now" to stays one click away.
@@ -181,6 +193,7 @@ function renderPulls() {
     else {
       const key = proposalKey(p);
       if (!proposalEls.has(key)) proposalEls.set(key, proposalCard(p));
+      else proposalEls.get(key).sync(p);
       cards.push(proposalEls.get(key));
     }
   }

@@ -37,14 +37,14 @@ function usageWindowChip(w) {
   return el("span", { class: "usage-win " + usageLevel(left) },
     el("span", { class: "usage-wname" }, el("span", { class: "long" }, w.name), el("span", { class: "short" }, shortWindow(w.name))),
     bar,
-    el("span", { class: "usage-left" }, left + "%"));
+    el("span", { class: "usage-left" }, left + "%", el("span", { class: "usage-word" }, " left")));
 }
 
 function usageDetails(u) {
   const now = Date.now() / 1000;
   const rows = [el("div", { class: "usage-pop-head" }, u.label || u.agentId, u.plan ? el("span", { class: "muted" }, " · " + u.plan + " plan") : "")];
   if (!u.reported) {
-    rows.push(el("div", {}, "Usage is not reported by the " + (u.label || u.agentId) + " CLI, so Unire cannot show how much is left."));
+    rows.push(el("div", {}, "Usage is not reported by " + (u.label || u.agentId) + ", so Unire cannot show how much is left."));
     return rows;
   }
   if (!u.windows || !u.windows.length) {

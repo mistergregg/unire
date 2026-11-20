@@ -386,3 +386,4 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
   .usage-win { gap: 3px; }
   .usage-agent { gap: 5px; padding: 2px 7px; }
 }
+.usage-word { font-weight: 450; opacity: .8; }

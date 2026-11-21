@@ -217,6 +217,8 @@ func TestParseAntigravityUsageMalformed(t *testing.T) {
 		"no fraction":     `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","reset_time":"2026-11-21T01:50:34Z"}]}]}}}`,
 		"percent not 0-1": `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":78,"reset_time":"2026-11-21T01:50:34Z"}]}]}}}`,
 		"bad reset":       `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5,"reset_time":"tomorrow"}]}]}}}`,
+		"missing reset":   `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5}]}]}}}`,
+		"unknown window":  `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"monthly","remaining_fraction":0.5,"reset_time":"2026-11-21T01:50:34Z"}]}]}}`,
 		"no buckets":      `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[]}]}}}`,
 	} {
 		if u, err := ParseAntigravityUsageOutput(out); err == nil {

@@ -120,7 +120,11 @@ function renderUsage() {
     strip.hidden = false;
     // Agents that report their usage first; the order among them is the server's.
     const sorted = [...usageData].sort((a, b) => Number(b.reported) - Number(a.reported));
-    strip.replaceChildren(...sorted.flatMap((u) => { const items = usageItems(u); return items.map((it, i) => usageAgent(it, i === items.length - 1)); }));
+    const items = sorted.flatMap((u) => usageItems(u));
+    // Keep the compact single-agent chips together first; Antigravity's two
+    // group chips then wrap below them on narrow screens.
+    items.sort((a, b) => Number(!!a.group) - Number(!!b.group));
+    strip.replaceChildren(...items.map((it, i) => usageAgent(it, !it.group || i === items.length - 1)));
   }
 }
 

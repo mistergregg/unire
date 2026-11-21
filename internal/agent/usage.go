@@ -262,18 +262,19 @@ func ParseAntigravityUsageOutput(out string) (*AgentUsage, error) {
 			if g.Name == "" || b.Remaining == nil || *b.Remaining < 0 || *b.Remaining > 1 {
 				return nil, errors.New("agy's usage answer has an unexpected shape")
 			}
-			mins := antigravityWindowMins[b.Window]
+			mins, ok := antigravityWindowMins[b.Window]
+			if !ok || b.ResetTime == "" {
+				return nil, errors.New("agy's usage answer has an unexpected shape")
+			}
 			w := UsageWindow{
 				Name: WindowName(mins, b.Window), DurationMins: mins, Group: g.Name, Models: models,
 				UsedPercent: clampPercent(100 - *b.Remaining*100),
 			}
-			if b.ResetTime != "" {
-				t, err := time.Parse(time.RFC3339, b.ResetTime)
-				if err != nil {
-					return nil, errors.New("agy's usage answer has an unexpected reset time")
-				}
-				w.ResetsAt = t.Unix()
+			t, err := time.Parse(time.RFC3339, b.ResetTime)
+			if err != nil {
+				return nil, errors.New("agy's usage answer has an unexpected reset time")
 			}
+			w.ResetsAt = t.Unix()
 			windows = append(windows, w)
 		}
 		// Shortest window first within the group (agy lists weekly first).

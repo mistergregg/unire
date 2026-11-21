@@ -31,6 +31,9 @@ const ICONS = {
   bell: '<path d="M6 16v-5a6 6 0 0112 0v5l2 2H4z"/><path d="M10 21h4"/>',
   download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+  zoomIn: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+  zoomOut: '<path d="M4 14h6v6M20 10h-6V4M14 10l-7 7M10 14l-7 7"/>',
+  close: '<path d="M18 6L6 18M6 6l12 12"/>',
 };
 const iconSvg = (name) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
 function iconTile(name, small) {
@@ -393,23 +396,165 @@ function fillLimits(l) {
   $("lim-ws").value = l.keepWorkspaceDays;
 }
 
-$("lim-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  guarded($("lim-submit"), async () => {
-    fillLimits(await api("PUT", "/api/limits", {
-      maxRunMinutes: Number($("lim-run").value) || 0,
-      keepLogsDays: Number($("lim-logs").value) || 0,
-      keepWorkspaceDays: Number($("lim-ws").value) || 0,
-    }));
-    banner("Limits saved. The run limit applies to runs that start from now on.");
+const limForm = $("lim-form");
+if (limForm) {
+  limForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    guarded($("lim-submit"), async () => {
+      fillLimits(await api("PUT", "/api/limits", {
+        maxRunMinutes: Number($("lim-run").value) || 0,
+        keepLogsDays: Number($("lim-logs").value) || 0,
+        keepWorkspaceDays: Number($("lim-ws").value) || 0,
+      }));
+      banner("Limits saved. The run limit applies to runs that start from now on.");
+    });
   });
-});
+}
 
 // ---- pull requests: ask first, or open them when the agent is done ----
-$("pr-auto").addEventListener("change", () => guarded(null, async () => {
-  const box = $("pr-auto");
-  try {
-    box.checked = (await api("PUT", "/api/pulls/settings", { autoOpen: box.checked })).autoOpen;
-    banner(box.checked ? "Pull requests are opened when the agent is done." : "Unire asks you before it opens a pull request.");
-  } catch (e) { box.checked = !box.checked; throw e; }
-}));
+const prAuto = $("pr-auto");
+if (prAuto) {
+  prAuto.addEventListener("change", () => guarded(null, async () => {
+    try {
+      prAuto.checked = (await api("PUT", "/api/pulls/settings", { autoOpen: prAuto.checked })).autoOpen;
+      banner(prAuto.checked ? "Pull requests are opened when the agent is done." : "Unire asks you before it opens a pull request.");
+    } catch (e) { prAuto.checked = !prAuto.checked; throw e; }
+  }));
+}
+
+// ---- file download helpers ----
+function downloadUrl(name, url) {
+  const a = el("a", { href: url, download: name || "file" });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  downloadUrl(name, url);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// ---- full-screen image viewer modal ----
+let lastActiveElement = null;
+let imageModalZoomed = false;
+let activeImageDownload = null;
+
+function updateImageModalZoomBtn() {
+  const btn = $("image-modal-zoom");
+  if (!btn) return;
+  btn.title = imageModalZoomed ? "Fit to screen (Z)" : "Actual size (Z)";
+  btn.setAttribute("aria-label", imageModalZoomed ? "Fit to screen" : "Actual size");
+  btn.innerHTML = iconSvg(imageModalZoomed ? "zoomOut" : "zoomIn");
+}
+
+function toggleImageModalZoom() {
+  const viewport = $("image-modal-viewport");
+  if (!viewport) return;
+  imageModalZoomed = !imageModalZoomed;
+  viewport.classList.toggle("is-zoomed", imageModalZoomed);
+  updateImageModalZoomBtn();
+}
+
+function handleImageModalKey(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeImageModal();
+  } else if ((e.key === "z" || e.key === "Z") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    toggleImageModalZoom();
+  }
+}
+
+function openImageModal({ src, name, onDownload, href }) {
+  const modal = $("image-modal");
+  if (!modal) return;
+  const img = $("image-modal-img");
+  const title = $("image-modal-title");
+  const dlBtn = $("image-modal-download");
+  const viewport = $("image-modal-viewport");
+
+  lastActiveElement = document.activeElement;
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+
+  const displayName = name || "Image";
+  if (title) {
+    title.textContent = displayName;
+    title.title = displayName;
+  }
+
+  imageModalZoomed = false;
+  if (viewport) {
+    viewport.classList.remove("is-zoomed");
+    viewport.scrollTop = 0;
+    viewport.scrollLeft = 0;
+  }
+  updateImageModalZoomBtn();
+
+  if (img) {
+    img.src = src;
+    img.alt = displayName;
+  }
+
+  activeImageDownload = onDownload || (() => downloadUrl(displayName, href || src));
+  if (dlBtn) {
+    dlBtn.onclick = () => {
+      if (typeof activeImageDownload === "function") activeImageDownload();
+    };
+  }
+
+  const closeBtn = $("image-modal-close");
+  if (closeBtn) closeBtn.focus();
+
+  document.removeEventListener("keydown", handleImageModalKey);
+  document.addEventListener("keydown", handleImageModalKey);
+}
+
+function closeImageModal() {
+  const modal = $("image-modal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  document.body.classList.remove("modal-open");
+  const img = $("image-modal-img");
+  if (img) img.src = "";
+  activeImageDownload = null;
+  document.removeEventListener("keydown", handleImageModalKey);
+  if (lastActiveElement && typeof lastActiveElement.focus === "function") {
+    try { lastActiveElement.focus(); } catch (_) {}
+  }
+}
+
+function initImageModal() {
+  const modal = $("image-modal");
+  if (!modal) return;
+  modal.addEventListener("click", (e) => {
+    if (!e.target.closest("#image-modal-img") && !e.target.closest(".image-modal-bar")) {
+      closeImageModal();
+    }
+  });
+  const closeBtn = $("image-modal-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeImageModal);
+  const zoomBtn = $("image-modal-zoom");
+  if (zoomBtn) zoomBtn.addEventListener("click", toggleImageModalZoom);
+  const img = $("image-modal-img");
+  if (img) img.addEventListener("click", toggleImageModalZoom);
+
+  // Delegated click handler: clicking any image in chat or files side panel opens full screen
+  document.addEventListener("click", (e) => {
+    const imgEl = e.target.closest("img");
+    if (!imgEl || imgEl.closest("#image-modal")) return;
+    if (imgEl.classList.contains("share-img") || imgEl.closest(".side-viewer-body, .share-body, .attach-thumbs, .attach-preview")) {
+      e.preventDefault();
+      const src = imgEl.src;
+      const rawName = imgEl.alt || imgEl.title || "Image";
+      const name = rawName.replace(/\s*[·—]\s*Click to view full screen$/, "");
+      if (src) {
+        openImageModal({ src, name });
+      }
+    }
+  });
+}
+
+initImageModal();

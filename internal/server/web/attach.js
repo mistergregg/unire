@@ -35,7 +35,14 @@ function attachPicker(input, button, box, previews) {
     previews.replaceChildren(...picked.map((p, i) => {
       const remove = el("button", { type: "button", class: "attach-remove", title: "Remove " + p.name, "aria-label": "Remove " + p.name }, "×");
       remove.addEventListener("click", () => { picked.splice(i, 1); render(); });
-      const look = p.image ? el("img", { src: p.data, alt: p.name }) : el("span", { class: "attach-file-name" }, p.name);
+      const look = p.image ? el("img", { src: p.data, alt: p.name, title: p.name + " · Click to view full screen" }) : el("span", { class: "attach-file-name" }, p.name);
+      if (p.image) {
+        look.addEventListener("click", () => openImageModal({
+          src: p.data,
+          name: p.name,
+          onDownload: () => downloadUrl(p.name, p.data),
+        }));
+      }
       return el("span", { class: "attach-preview" + (p.image ? "" : " file"), title: p.name }, look, remove);
     }));
   };
@@ -83,7 +90,22 @@ function attachThumbs(list) {
       const chip = el("span", { class: "attach-chip", title: a.name }, a.name);
       return a.href ? el("a", { href: a.href, download: a.name, class: "attach-chip-link" }, chip) : chip;
     }
-    const img = el("img", { src: a.src, alt: a.name, title: a.name, loading: "lazy" });
-    return a.href ? el("a", { href: a.href, target: "_blank", rel: "noopener" }, img) : img;
+    const img = el("img", { src: a.src, alt: a.name, title: a.name + " · Click to view full screen", loading: "lazy" });
+    const link = el("a", {
+      href: a.href || a.src,
+      class: "attach-thumb-link",
+      title: a.name + " · Click to view full screen",
+      "aria-label": "View " + a.name + " full screen",
+    }, img);
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openImageModal({
+        src: a.src,
+        name: a.name,
+        href: a.href,
+        onDownload: () => downloadUrl(a.name, a.href || a.src),
+      });
+    });
+    return link;
   });
 }

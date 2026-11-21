@@ -19,6 +19,10 @@ func (r fakeRunner) RunOnline(_ context.Context, argv []string) (string, bool, e
 		r.box.agyAsked++
 		return r.box.agyUsageOut, true, nil
 	}
+	if len(argv) > 0 && argv[0] == "claude" {
+		r.box.claudeAsked++
+		return r.box.claudeUsageOut, true, nil
+	}
 	r.box.usageAsked++
 	return r.box.usageOut, true, nil
 }
@@ -80,7 +84,6 @@ func TestCodexUsageIsAskedInTheBackgroundAndStored(t *testing.T) {
 	if n := e.box.usageCalls(); n != 1 {
 		t.Errorf("codex asked %d times; a fresh reading must not be asked again", n)
 	}
-	// Claude cannot be asked without using its limits.
 	e.box.mu.Lock()
 	e.box.usageAsked = 0
 	e.box.mu.Unlock()
@@ -392,5 +395,18 @@ func TestUsageAPIStoresAndCalculatesStaleness(t *testing.T) {
 	}
 	if byID["codex"].Windows[0].UsedPercent != 13 || byID["codex"].Stale {
 		t.Errorf("after restart codex = %+v", byID["codex"])
+	}
+}
+
+// Claude is asked with `claude -p /usage` (no model call) in the background.
+func TestClaudeUsageIsAskedInTheBackgroundAndStored(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.claudeUsageOut = `{"is_error":false,"result":"Current session: 45% used · resets Nov 21, 6:50am (UTC)\nCurrent week (all models): 30% used · resets Nov 26, 12pm (UTC)"}`
+	e.usage()
+	e.waitUsageProbes()
+	cl := e.usage()["claude"]
+	if cl.UpdatedAt == 0 || len(cl.Windows) != 2 || cl.Windows[0].UsedPercent != 45 || cl.Windows[1].UsedPercent != 30 {
+		t.Fatalf("claude = %+v", cl)
 	}
 }

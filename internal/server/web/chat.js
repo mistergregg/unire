@@ -755,14 +755,18 @@ function shareCard(t, e) {
   let body;
   if (kind === "image" && mime) {
     const src = "data:" + mime + ";base64," + content;
-    body = el("img", { class: "share-img", src, alt: name });
-    const save = el("button", { type: "button", class: "tiny" }, "Download");
-    save.addEventListener("click", () => {
+    const saveImage = () => {
       const bin = atob(content);
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
       download(name, new Blob([bytes], { type: mime }));
-    });
-    actions.append(save);
+    };
+    body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
+    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
+    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", saveImage);
+    actions.append(full, save);
   } else {
     const isMd = /\.(md|markdown)$/i.test(name);
     body = isMd ? el("div", { class: "md" }, renderMarkdown(content)) : el("pre", { class: "log" }, content);
@@ -951,14 +955,18 @@ function viewSideFile(name) {
   let body;
   if (isImg) {
     const src = "data:" + file.mime + ";base64," + file.content;
-    body = el("img", { class: "share-img", src, alt: name });
-    const save = el("button", { type: "button", class: "tiny" }, "Download");
-    save.addEventListener("click", () => {
+    const saveImage = () => {
       const bin = atob(file.content);
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
       download(name, new Blob([bytes], { type: file.mime }));
-    });
-    actions.append(save);
+    };
+    body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
+    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
+    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", saveImage);
+    actions.append(full, save);
   } else {
     const isMd = /\.(md|markdown)$/i.test(name);
     body = isMd ? el("div", { class: "md" }, renderMarkdown(file.content)) : el("pre", { class: "log" }, file.content);

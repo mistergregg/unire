@@ -99,6 +99,43 @@ function usageDetails(u) {
 let usageHover = "";
 let hoverTimer = null;
 
+function updateUsagePopups() {
+  const activeId = usageOpen || usageHover;
+  let activeItem = null;
+  if (activeId && usageData) {
+    const sorted = [...usageData].sort((a, b) => Number(b.reported) - Number(a.reported));
+    const items = sorted.flatMap((u) => usageItems(u));
+    items.sort((a, b) => Number(!!a.group) - Number(!!b.group));
+    activeItem = items.find((it) => (it.key || it.agentId) === activeId) || null;
+  }
+
+  for (const strip of document.querySelectorAll(".usage-strip")) {
+    const pop = strip.querySelector(".usage-pop");
+    const track = strip.querySelector(".usage-track");
+    if (!pop || !track) continue;
+
+    let activeChip = null;
+    for (const chip of track.querySelectorAll(".usage-agent")) {
+      const id = chip.dataset.usageId;
+      const isActive = Boolean(activeItem && id === activeId);
+      chip.classList.toggle("active", isActive);
+      chip.setAttribute("aria-expanded", String(usageOpen === id));
+      if (isActive) activeChip = chip;
+    }
+
+    if (activeItem && activeChip) {
+      pop.replaceChildren(...usageDetails(activeItem));
+      pop.classList.add("open");
+      const maxLeft = Math.max(0, strip.clientWidth - pop.offsetWidth);
+      const pos = Math.max(0, Math.min(activeChip.offsetLeft - track.scrollLeft, maxLeft));
+      pop.style.left = pos + "px";
+    } else {
+      pop.classList.remove("open");
+      pop.replaceChildren();
+    }
+  }
+}
+
 function renderUsage() {
   for (const strip of document.querySelectorAll(".usage-strip")) {
     if (!usageData) { strip.hidden = true; continue; }
@@ -109,33 +146,29 @@ function renderUsage() {
     // Keep single-agent chips first; grouped chips follow.
     items.sort((a, b) => Number(!!a.group) - Number(!!b.group));
 
-    const activeId = usageOpen || usageHover;
-    const activeItem = items.find((it) => (it.key || it.agentId) === activeId);
-
-    const pop = el("div", { class: "usage-pop" + (activeItem ? " open" : ""), role: "tooltip" });
-    if (activeItem) {
-      pop.append(...usageDetails(activeItem));
-    }
+    const pop = el("div", { class: "usage-pop", role: "tooltip" });
     pop.addEventListener("mouseenter", () => {
       clearTimeout(hoverTimer);
     });
     pop.addEventListener("mouseleave", () => {
       hoverTimer = setTimeout(() => {
         usageHover = "";
-        renderUsage();
+        updateUsagePopups();
       }, 100);
     });
     pop.addEventListener("click", (e) => { e.stopPropagation(); });
 
     const track = el("div", { class: "usage-track" });
-    let activeChip = null;
+    track.addEventListener("scroll", () => {
+      if (usageOpen || usageHover) updateUsagePopups();
+    }, { passive: true });
 
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const id = it.key || it.agentId;
       const name = it.label || it.agentId;
       const body = [el("span", { class: "usage-name" }, el("span", { class: "long" }, name), el("span", { class: "short" }, name.split(" ")[0]))];
-      let cls = "usage-agent" + (id === activeId ? " active" : "");
+      let cls = "usage-agent";
       if (!it.reported) {
         cls += " none";
         body.push(el("span", { class: "usage-none" }, el("span", { class: "long" }, "usage not reported by the CLI"), el("span", { class: "short" }, "not reported")));
@@ -152,29 +185,28 @@ function renderUsage() {
       const chip = el("button", {
         type: "button",
         class: cls,
-        "aria-expanded": String(usageOpen === id),
+        "aria-expanded": "false",
         title: name + " usage details"
       }, ...body);
-
-      if (id === activeId) activeChip = chip;
+      chip.dataset.usageId = id;
 
       chip.addEventListener("click", (e) => {
         e.stopPropagation();
         clearTimeout(hoverTimer);
         usageOpen = usageOpen === id ? "" : id;
         usageHover = "";
-        renderUsage();
+        updateUsagePopups();
       });
       chip.addEventListener("mouseenter", () => {
         clearTimeout(hoverTimer);
         usageHover = id;
-        renderUsage();
+        updateUsagePopups();
       });
       chip.addEventListener("mouseleave", () => {
         hoverTimer = setTimeout(() => {
           if (usageHover === id) {
             usageHover = "";
-            renderUsage();
+            updateUsagePopups();
           }
         }, 100);
       });
@@ -183,13 +215,8 @@ function renderUsage() {
     }
 
     strip.replaceChildren(track, pop);
-
-    if (activeChip && pop.classList.contains("open")) {
-      const maxLeft = Math.max(0, strip.clientWidth - pop.offsetWidth);
-      const pos = Math.max(0, Math.min(activeChip.offsetLeft - track.scrollLeft, maxLeft));
-      pop.style.left = pos + "px";
-    }
   }
+  updateUsagePopups();
 }
 
 let usageBusy = false;
@@ -205,5 +232,33 @@ function usageChanged() { refreshUsage(); }
 
 const onChatPage = () => currentView === "session" || currentView === "new";
 setInterval(() => { if (onChatPage() && !document.hidden) refreshUsage(); }, USAGE_POLL_MS);
-document.addEventListener("visibilitychange", () => { if (!document.hidden && onChatPage()) refreshUsage(); });
-document.addEventListener("click", () => { if (usageOpen) { usageOpen = ""; renderUsage(); } });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (usageHover) { usageHover = ""; updateUsagePopups(); }
+  } else if (onChatPage()) {
+    refreshUsage();
+  }
+});
+document.addEventListener("click", () => {
+  if (usageOpen || usageHover) {
+    usageOpen = "";
+    usageHover = "";
+    updateUsagePopups();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && (usageOpen || usageHover)) {
+    usageOpen = "";
+    usageHover = "";
+    updateUsagePopups();
+  }
+});
+window.addEventListener("blur", () => {
+  if (usageHover) { usageHover = ""; updateUsagePopups(); }
+});
+document.addEventListener("mouseleave", () => {
+  if (usageHover) { usageHover = ""; updateUsagePopups(); }
+});
+window.addEventListener("resize", () => {
+  if (usageOpen || usageHover) updateUsagePopups();
+});

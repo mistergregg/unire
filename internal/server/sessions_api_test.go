@@ -34,12 +34,14 @@ type fakeBox struct {
 	lostConv bool              // a resumed Claude says its conversation is gone
 	heads    int               // rev-parse calls: the first of each pair is the start HEAD, the second differs (the agent committed)
 
-	status      map[string]statusResult // answers to sign-in questions, by command name
-	statusAsked []string
-	usageOut    string // what the usage command prints (RunOnline)
-	usageAsked  int
-	agyUsageOut string // what `agy --print=/usage` prints (RunOnline)
-	agyAsked    int
+	status         map[string]statusResult // answers to sign-in questions, by command name
+	statusAsked    []string
+	usageOut       string // what the usage command prints (RunOnline)
+	usageAsked     int
+	claudeUsageOut string // what `claude -p /usage` prints (RunOnline)
+	claudeAsked    int
+	agyUsageOut    string // what `agy --print=/usage` prints (RunOnline)
+	agyAsked       int
 }
 
 type fakeRunner struct{ box *fakeBox }

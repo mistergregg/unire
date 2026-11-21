@@ -806,8 +806,156 @@ let sessionFiles = new Map();
 let sidePanelOpen = false;
 let sideActiveTab = "files";
 
+const DEFAULT_RIGHT_WIDTH = 340;
+const MIN_RIGHT_WIDTH = 240;
+const MAX_RIGHT_WIDTH = 680;
+const SNAP_RIGHT_ZONE = 16;
+const COLLAPSE_RIGHT_THRESHOLD = 160;
+
+function initRightResizer() {
+  const ws = $("workspace");
+  const resizer = $("side-panel-resizer");
+  if (!ws || !resizer) return;
+
+  // Restore saved width
+  let savedWidth = DEFAULT_RIGHT_WIDTH;
+  try {
+    const w = parseInt(localStorage.getItem("unire_side_right_w"), 10);
+    if (!isNaN(w) && w >= MIN_RIGHT_WIDTH && w <= MAX_RIGHT_WIDTH) {
+      savedWidth = w;
+    }
+  } catch (_) {}
+  ws.style.setProperty("--side-right-w", savedWidth + "px");
+
+  let dragging = false;
+
+  resizer.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    if (resizer.setPointerCapture && e.pointerId) {
+      try { resizer.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    ws.classList.add("resizing");
+    resizer.classList.add("dragging");
+
+    const sessionBody = document.querySelector(".session-body");
+
+    const onPointerMove = (ev) => {
+      if (!dragging || !sessionBody) return;
+      const rect = sessionBody.getBoundingClientRect();
+      const rawWidth = rect.right - ev.clientX;
+
+      if (rawWidth < COLLAPSE_RIGHT_THRESHOLD) {
+        if (typeof showResizeTooltip === "function") {
+          showResizeTooltip(0, false, DEFAULT_RIGHT_WIDTH, ev.clientX - 70, ev.clientY, "Minimize to side");
+        }
+        resizer.classList.remove("snapped-lock");
+        return;
+      }
+
+      let width = rawWidth;
+      let isLocked = false;
+      if (Math.abs(rawWidth - DEFAULT_RIGHT_WIDTH) <= SNAP_RIGHT_ZONE) {
+        width = DEFAULT_RIGHT_WIDTH;
+        isLocked = true;
+      } else {
+        const maxW = Math.min(MAX_RIGHT_WIDTH, window.innerWidth * 0.5);
+        width = Math.max(MIN_RIGHT_WIDTH, Math.min(maxW, rawWidth));
+      }
+
+      resizer.classList.toggle("snapped-lock", isLocked);
+      if (typeof showResizeTooltip === "function") {
+        showResizeTooltip(Math.round(width), isLocked, DEFAULT_RIGHT_WIDTH, ev.clientX - 70, ev.clientY);
+      }
+      ws.style.setProperty("--side-right-w", Math.round(width) + "px");
+    };
+
+    const onPointerUp = (ev) => {
+      if (!dragging) return;
+      dragging = false;
+      if (resizer.releasePointerCapture && ev.pointerId) {
+        try { resizer.releasePointerCapture(ev.pointerId); } catch (_) {}
+      }
+      ws.classList.remove("resizing");
+      resizer.classList.remove("dragging", "snapped-lock");
+      if (typeof hideResizeTooltip === "function") {
+        hideResizeTooltip();
+      }
+      document.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+
+      if (!sessionBody) return;
+      const rect = sessionBody.getBoundingClientRect();
+      const rawWidth = rect.right - ev.clientX;
+
+      if (rawWidth < COLLAPSE_RIGHT_THRESHOLD) {
+        setSidePanelOpen(false);
+      } else {
+        let finalWidth = rawWidth;
+        if (Math.abs(rawWidth - DEFAULT_RIGHT_WIDTH) <= SNAP_RIGHT_ZONE) {
+          finalWidth = DEFAULT_RIGHT_WIDTH;
+        } else {
+          const maxW = Math.min(MAX_RIGHT_WIDTH, window.innerWidth * 0.5);
+          finalWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(maxW, rawWidth));
+        }
+        finalWidth = Math.round(finalWidth);
+        ws.style.setProperty("--side-right-w", finalWidth + "px");
+        try { localStorage.setItem("unire_side_right_w", String(finalWidth)); } catch (_) {}
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  });
+
+  resizer.addEventListener("dblclick", () => {
+    ws.style.setProperty("--side-right-w", DEFAULT_RIGHT_WIDTH + "px");
+    try { localStorage.setItem("unire_side_right_w", String(DEFAULT_RIGHT_WIDTH)); } catch (_) {}
+    resizer.classList.add("snapped-lock");
+    setTimeout(() => resizer.classList.remove("snapped-lock"), 450);
+  });
+
+  resizer.addEventListener("keydown", (e) => {
+    let currentW = DEFAULT_RIGHT_WIDTH;
+    try {
+      const val = parseInt(ws.style.getPropertyValue("--side-right-w"), 10);
+      if (!isNaN(val)) currentW = val;
+    } catch (_) {}
+
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const next = currentW - 15;
+      if (next < COLLAPSE_RIGHT_THRESHOLD) {
+        setSidePanelOpen(false);
+      } else {
+        const w = Math.max(MIN_RIGHT_WIDTH, next);
+        ws.style.setProperty("--side-right-w", w + "px");
+        try { localStorage.setItem("unire_side_right_w", String(w)); } catch (_) {}
+      }
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      const maxW = Math.min(MAX_RIGHT_WIDTH, window.innerWidth * 0.5);
+      const next = Math.min(maxW, currentW + 15);
+      ws.style.setProperty("--side-right-w", next + "px");
+      try { localStorage.setItem("unire_side_right_w", String(next)); } catch (_) {}
+    } else if (e.key === "Home" || e.key === "Enter") {
+      e.preventDefault();
+      ws.style.setProperty("--side-right-w", DEFAULT_RIGHT_WIDTH + "px");
+      try { localStorage.setItem("unire_side_right_w", String(DEFAULT_RIGHT_WIDTH)); } catch (_) {}
+      resizer.classList.add("snapped-lock");
+      setTimeout(() => resizer.classList.remove("snapped-lock"), 450);
+    }
+  });
+}
+
 function initSidePanel() {
   const toggleBtn = $("s-toggle-side");
+  const minBtn = $("side-panel-minimize");
   const closeBtn = $("side-panel-close");
   const tabFiles = $("side-tab-files");
   const tabPrs = $("side-tab-prs");
@@ -817,6 +965,11 @@ function initSidePanel() {
   if (toggleBtn) {
     toggleBtn.addEventListener("click", () => {
       setSidePanelOpen(!sidePanelOpen);
+    });
+  }
+  if (minBtn) {
+    minBtn.addEventListener("click", () => {
+      setSidePanelOpen(false);
     });
   }
   if (closeBtn) {
@@ -841,6 +994,8 @@ function initSidePanel() {
       if (list) list.hidden = false;
     });
   }
+
+  initRightResizer();
 }
 
 function setSidePanelOpen(open) {
@@ -854,6 +1009,7 @@ function setSidePanelOpen(open) {
     toggleBtn.setAttribute("aria-expanded", String(open));
     toggleBtn.classList.toggle("active", open);
   }
+  try { localStorage.setItem("unire_side_right_open", String(open)); } catch (_) {}
 }
 
 function selectSideTab(tab) {
@@ -921,11 +1077,14 @@ function resetSidePanel() {
     prsList.replaceChildren();
   }
   selectSideTab("files");
-  if (window.innerWidth >= 1100) {
-    setSidePanelOpen(true);
-  } else {
-    setSidePanelOpen(false);
-  }
+  let shouldOpen = window.innerWidth >= 1100;
+  try {
+    const saved = localStorage.getItem("unire_side_right_open");
+    if (saved !== null) {
+      shouldOpen = saved === "true" && window.innerWidth >= 1100;
+    }
+  } catch (_) {}
+  setSidePanelOpen(shouldOpen);
 }
 
 function renderSidePRs(data) {

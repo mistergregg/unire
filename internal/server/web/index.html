@@ -32,10 +32,15 @@
   <aside id="side" class="side" aria-label="Sidebar">
     <div class="side-brand-row">
       <div class="brand">Unire</div>
-      <button id="logout" class="ghost compact side-logout" title="Log out" aria-label="Log out" hidden>
-        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-        <span>Exit</span>
-      </button>
+      <div class="side-brand-actions">
+        <button id="side-collapse-btn" type="button" class="icon-btn tiny side-collapse-btn" title="Minimize sidebar" aria-label="Minimize sidebar">
+          <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="logout" class="ghost compact side-logout" title="Log out" aria-label="Log out" hidden>
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          <span>Exit</span>
+        </button>
+      </div>
     </div>
 
     <button id="new-session" class="new-chat" type="button">
@@ -84,8 +89,13 @@
       </button>
     </nav>
   </aside>
+  <div id="side-resizer" class="panel-resizer left-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize sidebar · Locks to default (270px) · Double-click to reset"></div>
 
   <div class="pane">
+  <button id="workspace-expand-btn" type="button" class="workspace-expand-btn" title="Expand sidebar (Chats)" aria-label="Expand sidebar">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 3v18" stroke="currentColor" stroke-width="2"/><path d="M12 9l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Chats</span>
+  </button>
   <p id="banner" class="banner" role="status" hidden></p>
   <section id="view-sessions" hidden>
     <div class="empty-hero">
@@ -156,6 +166,10 @@
   <section id="view-session" hidden>
     <header class="chat-head">
       <div class="chat-head-main">
+        <button id="s-expand-side" type="button" class="ghost compact side-expand-btn" title="Expand sidebar (Chats)" aria-label="Expand sidebar">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 3v18" stroke="currentColor" stroke-width="2"/><path d="M12 9l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Chats</span>
+        </button>
         <button class="ghost back" id="s-back">&larr; Chats</button>
         <h1 id="s-title"></h1>
         <span id="s-status" class="badge"></span>
@@ -200,6 +214,8 @@
         </form>
       </div>
 
+      <div id="side-panel-resizer" class="panel-resizer right-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize side panel · Locks to default (340px) · Double-click to reset"></div>
+
       <aside id="chat-side-panel" class="chat-side-panel" aria-label="Files, Pull Requests and Session Details">
         <div class="side-panel-header">
           <div class="side-panel-tabs" role="tablist">
@@ -213,9 +229,14 @@
               Session Info
             </button>
           </div>
-          <button type="button" id="side-panel-close" class="icon-btn tiny" title="Close side panel" aria-label="Close side panel">
-            <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          </button>
+          <div class="side-panel-header-actions">
+            <button type="button" id="side-panel-minimize" class="icon-btn tiny" title="Minimize side panel" aria-label="Minimize side panel">
+              <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" id="side-panel-close" class="icon-btn tiny" title="Close side panel" aria-label="Close side panel">
+              <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
         </div>
 
         <div id="side-pane-files" class="side-pane-content">

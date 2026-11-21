@@ -376,140 +376,155 @@
 
   <!-- Settings -->
   <section id="view-settings" hidden>
-    <header class="page-head">
-      <button class="ghost back page-back" type="button">&larr; Menu</button>
-      <span class="icon-tile" data-icon="settings"></span>
-      <div class="grow">
-        <h1>Settings</h1>
-        <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
-      </div>
-    </header>
-
-    <div class="settings-grid">
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="box"></span>
-          <div class="grow"><h2>Limits</h2><p class="muted">Stop runaway runs and keep the database and disk from growing for ever.</p></div>
+    <div class="settings-wrap">
+      <header class="page-head">
+        <button class="ghost back page-back" type="button">&larr; Menu</button>
+        <span class="icon-tile" data-icon="settings"></span>
+        <div class="grow">
+          <h1>Settings</h1>
+          <p class="muted">Unire has one owner: you. Anyone else who wants to use it runs their own copy.</p>
         </div>
-        <form id="lim-form" autocomplete="off">
-          <div class="grid">
-            <label>Longest a run may take (minutes)
-              <input id="lim-run" type="number" min="0" max="10080" placeholder="0 = no limit">
-            </label>
-            <label>Keep activity lines (days)
-              <input id="lim-logs" type="number" min="0" max="3650" placeholder="0 = keep for ever">
-            </label>
-            <label>Remove idle workspaces after (days)
-              <input id="lim-ws" type="number" min="0" max="3650" placeholder="0 = keep for ever">
-            </label>
+      </header>
+
+      <div class="section-title">Runtime &amp; Sandboxes</div>
+      <div class="settings-grid">
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="box"></span>
+            <div class="grow"><h2>Sandbox</h2><p class="muted">How each agent's disposable container runs.</p></div>
           </div>
-          <button class="primary" type="submit" id="lim-submit">Save</button>
-        </form>
-        <p class="muted small spaced">A run that goes over its time is stopped and marked failed. Answers, questions and what was pushed are always kept; a removed workspace is cloned again from its pushed branch when you reply.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="git"></span>
-          <div class="grow"><h2>Pull requests</h2><p class="muted">Whether Unire asks you before it opens a pull request for an agent's work.</p></div>
+          <form id="sb-form" autocomplete="off">
+            <div class="grid">
+              <label>Sandbox image
+                <input id="sb-image" required>
+              </label>
+              <label>Agent login volume
+                <input id="sb-volume" required>
+              </label>
+              <label>Memory limit per chat
+                <input id="sb-memory" placeholder="default 4g, e.g. 8g, or 0 for no limit">
+              </label>
+              <label>CPU limit per chat
+                <input id="sb-cpus" placeholder="no limit, or e.g. 2">
+              </label>
+            </div>
+            <button class="primary" type="submit" id="sb-submit">Save</button>
+          </form>
+          <p class="muted small spaced">Sign in to the agents on the <strong>Agents</strong> tab. The logins are saved in the login volume above.</p>
         </div>
-        <label class="check"><input id="pr-auto" type="checkbox"> Open pull requests without asking</label>
-        <p class="muted small spaced">When this is on and an agent finishes a turn that pushed a branch and asked for a pull request (<code>unire pr</code>), Unire opens it straight away with the agent's title and description. Off: the chat asks you first. Branches pushed earlier are still offered as before.</p>
-      </div>
 
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="box"></span>
-          <div class="grow"><h2>Sandbox</h2><p class="muted">How each agent's disposable container runs.</p></div>
-        </div>
-        <form id="sb-form" autocomplete="off">
-          <div class="grid">
-            <label>Sandbox image
-              <input id="sb-image" required>
-            </label>
-            <label>Agent login volume
-              <input id="sb-volume" required>
-            </label>
-            <label>Memory limit per chat
-              <input id="sb-memory" placeholder="default 4g, e.g. 8g, or 0 for no limit">
-            </label>
-            <label>CPU limit per chat
-              <input id="sb-cpus" placeholder="no limit, or e.g. 2">
-            </label>
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="box"></span>
+            <div class="grow"><h2>Limits</h2><p class="muted">Stop runaway runs and keep the database and disk from growing for ever.</p></div>
           </div>
-          <button class="primary" type="submit" id="sb-submit">Save</button>
-        </form>
-        <p class="muted small spaced">Sign in to the agents on the <strong>Agents</strong> tab. The logins are saved in the login volume above.</p>
+          <form id="lim-form" autocomplete="off">
+            <div class="grid">
+              <label>Longest a run may take (minutes)
+                <input id="lim-run" type="number" min="0" max="10080" placeholder="0 = no limit">
+              </label>
+              <label>Keep activity lines (days)
+                <input id="lim-logs" type="number" min="0" max="3650" placeholder="0 = keep for ever">
+              </label>
+              <label class="lim-ws-label">Remove idle workspaces after (days)
+                <input id="lim-ws" type="number" min="0" max="3650" placeholder="0 = keep for ever">
+              </label>
+            </div>
+            <button class="primary" type="submit" id="lim-submit">Save</button>
+          </form>
+          <p class="muted small spaced">A run that goes over its time is stopped and marked failed. Answers, questions and what was pushed are always kept; a removed workspace is cloned again from its pushed branch when you reply.</p>
+        </div>
+
+        <div class="card full">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="shield"></span>
+            <div class="grow"><h2>Network access</h2><p class="muted">What a sandbox can reach.</p></div>
+          </div>
+          <p id="net-status" class="muted"></p>
+          <form id="net-form" autocomplete="off">
+            <div class="grid">
+              <div>
+                <label>Default for new chats
+                  <select id="net-mode"></select>
+                </label>
+                <p id="net-desc" class="muted small"></p>
+              </div>
+              <div>
+                <label>Allowed addresses
+                  <textarea id="net-allow" rows="4" placeholder="One per line, for example:&#10;192.168.0.50:5432&#10;nas.local&#10;192.168.0.0/24"></textarea>
+                </label>
+                <p class="muted small">Used in Internet only and Agent only mode, on top of the internet (or the agent's own service) and your git servers. A host name, an address or a range, optionally with a port. A chat's git servers are always allowed.</p>
+              </div>
+            </div>
+            <button class="primary" type="submit" id="net-submit">Save</button>
+          </form>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="shield"></span>
-          <div class="grow"><h2>Network access</h2><p class="muted">What a sandbox can reach.</p></div>
+      <div class="section-title">Workflow</div>
+      <div class="settings-grid">
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="git"></span>
+            <div class="grow"><h2>Pull requests</h2><p class="muted">Whether Unire asks you before it opens a pull request for an agent's work.</p></div>
+          </div>
+          <label class="check"><input id="pr-auto" type="checkbox"> Open pull requests without asking</label>
+          <p class="muted small spaced">When this is on and an agent finishes a turn that pushed a branch and asked for a pull request (<code>unire pr</code>), Unire opens it straight away with the agent's title and description. Off: the chat asks you first. Branches pushed earlier are still offered as before.</p>
         </div>
-        <p id="net-status" class="muted"></p>
-        <form id="net-form" autocomplete="off">
-          <label>Default for new chats
-            <select id="net-mode"></select>
-          </label>
-          <p id="net-desc" class="muted small"></p>
-          <label>Allowed addresses
-            <textarea id="net-allow" rows="4" placeholder="One per line, for example:&#10;192.168.0.50:5432&#10;nas.local&#10;192.168.0.0/24"></textarea>
-          </label>
-          <p class="muted small">Used in Internet only and Agent only mode, on top of the internet (or the agent's own service) and your git servers. A host name, an address or a range, optionally with a port. A chat's git servers are always allowed.</p>
-          <button class="primary" type="submit" id="net-submit">Save</button>
-        </form>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="bell"></span>
+            <div class="grow"><h2>Notifications</h2><p class="muted">Hear about questions while you are in another tab.</p></div>
+          </div>
+          <p id="notif-status" class="muted"></p>
+          <button id="notif-enable" type="button">Turn on notifications</button>
+        </div>
+
+        <div class="card full">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="layers"></span>
+            <div class="grow"><h2>Saved workspaces</h2><p class="muted">Sets of repos you start chats from.</p></div>
+          </div>
+          <div id="ws-list" class="stack"></div>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="layers"></span>
-          <div class="grow"><h2>Saved workspaces</h2><p class="muted">Sets of repos you start chats from.</p></div>
+      <div class="section-title">Account &amp; Security</div>
+      <div class="settings-grid">
+        <div class="card full">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="monitor"></span>
+            <div class="grow"><h2>Logged-in devices</h2><p class="muted">Logins last 30 days and renew while you use them. They survive restarts.</p></div>
+          </div>
+          <div id="login-list" class="stack"></div>
+          <div class="item-actions"><button id="revoke-all" class="danger">Log out everywhere</button></div>
         </div>
-        <div id="ws-list" class="stack"></div>
-      </div>
 
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="bell"></span>
-          <div class="grow"><h2>Notifications</h2><p class="muted">Hear about questions while you are in another tab.</p></div>
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="key"></span>
+            <div class="grow"><h2>Change password</h2><p class="muted">Changing it logs out every other device.</p></div>
+          </div>
+          <form id="pw-form" autocomplete="off">
+            <label>Current password
+              <input id="pw-current" type="password" required autocomplete="current-password">
+            </label>
+            <label>New password (at least 10 characters)
+              <input id="pw-new" type="password" required minlength="10" autocomplete="new-password">
+            </label>
+            <button class="primary" type="submit" id="pw-submit">Change password</button>
+          </form>
         </div>
-        <p id="notif-status" class="muted"></p>
-        <button id="notif-enable" type="button">Turn on notifications</button>
-      </div>
 
-      <div class="card full">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="monitor"></span>
-          <div class="grow"><h2>Logged-in devices</h2><p class="muted">Logins last 30 days and renew while you use them. They survive restarts.</p></div>
+        <div class="card">
+          <div class="card-head">
+            <span class="icon-tile sm" data-icon="download"></span>
+            <div class="grow"><h2>Backup</h2><p class="muted">Everything needed to restore Unire.</p></div>
+          </div>
+          <p class="muted small">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
+          <a class="button" href="/api/backup" download>Download backup</a>
         </div>
-        <div id="login-list" class="stack"></div>
-        <div class="item-actions"><button id="revoke-all" class="danger">Log out everywhere</button></div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="key"></span>
-          <div class="grow"><h2>Change password</h2><p class="muted">Changing it logs out every other device.</p></div>
-        </div>
-        <form id="pw-form" autocomplete="off">
-          <label>Current password
-            <input id="pw-current" type="password" required autocomplete="current-password">
-          </label>
-          <label>New password (at least 10 characters)
-            <input id="pw-new" type="password" required minlength="10" autocomplete="new-password">
-          </label>
-          <button class="primary" type="submit" id="pw-submit">Change password</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <span class="icon-tile sm" data-icon="download"></span>
-          <div class="grow"><h2>Backup</h2><p class="muted">Everything needed to restore Unire.</p></div>
-        </div>
-        <p class="muted small">Downloads a zip with the database and the key that decrypts your saved tokens. Anyone with this file can read those tokens, so store it somewhere private. If you supply the key through the <code>UNIRE_MASTER_KEY</code> environment variable, it is not included and you must keep it yourself.</p>
-        <a class="button" href="/api/backup" download>Download backup</a>
       </div>
     </div>
   </section>

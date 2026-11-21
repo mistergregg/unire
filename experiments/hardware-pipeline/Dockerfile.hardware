@@ -1,0 +1,138 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.hardware
+#
+# Proposal for hardware engineering additions to the Unire sandbox image.
+# Supports two build targets/variants via multi-stage build:
+#
+#   Target 'variant-b' (Setup B: Small additions):
+#     - Base unire-sandbox
+#     - Python hardware CAD/mesh environment (build123d, trimesh, numpy, matplotlib)
+#     - OpenSCAD (parametric CSG CAD)
+#     - CuraEngine (headless CLI 3D printing slicer & G-code generator)
+#     - ADMesh (CLI STL mesh validation and manifold repair)
+#     - unire-* hardware CLI commands in /usr/local/bin
+#
+#   Target 'variant-c' (Setup C: Heavy additions):
+#     - All of variant-b
+#     - KiCad (kicad-cli: PCB DRC, netlist checks, Gerber export, STEP 3D PCB export)
+#     - FreeCAD (headless Python API for CAM toolpaths & STEP interchange)
+#
+# ==============================================================================
+# PACKAGE SIZE AUDIT (Debian 12 Bookworm, amd64)
+# ==============================================================================
+#
+# VARIANT B PACKAGES:
+# ------------------------------------------------------------------------------
+# Package: openscad (2021.01-6)
+#   Download-Size:    3,084,620 B  (~3.1 MB)
+#   Installed-Size:   9,343 KB     (~9.3 MB)
+#   Dependencies:     lib3mf1, libopencsg1, libqscintilla2-qt5, Qt5 libs (~15.6 MB dl / 47.7 MB inst)
+#   Total OpenSCAD:   ~18.7 MB download / ~57.0 MB installed
+#
+# Package: cura-engine (1:4.13.0-1+b1)
+#   Download-Size:    1,667,076 B  (~1.7 MB)
+#   Installed-Size:   4,560 KB     (~4.6 MB)
+#   Dependencies:     libarcus3, libpolyclipping22, libprotobuf32, libgomp1 (~1.1 MB dl / 3.9 MB inst)
+#   Total CuraEngine: ~2.8 MB download / ~8.5 MB installed
+#   * Why CuraEngine over PrusaSlicer: PrusaSlicer requires GTK3, WebKit2GTK, OpenGL/EGL
+#     (>100 MB dl, >300 MB inst) and crashes headless without display/webkit. CuraEngine is
+#     a pure CLI C++ engine with zero GUI dependencies, ideal for sandbox automation.
+#
+# Package: admesh (0.98.4-2)
+#   Download-Size:    22,840 B     (~23 KB)
+#   Installed-Size:   60 KB        (~60 KB)
+#   Dependencies:     libadmesh1 (35 KB dl / 92 KB inst)
+#   Total ADMesh:     ~58 KB download / ~152 KB installed
+#
+# Python pip packages (/opt/hardware venv):
+#   build123d (0.13.0), cadquery-ocp-novtk (8.0.1), trimesh (5.2.1), numpy (2.4.6), matplotlib (3.11.2):
+#   Download-Size:    ~148 MB wheels
+#   Installed-Size:   1,045,432,233 B (~997 MiB), measured in /tmp/hw on Debian 12
+#
+# Variant B Totals:
+#   Download size:    ~170 MB (~22 MB apt + ~148 MB pip; apt metadata estimate, pip download measured earlier)
+#   Installed size:   ~1,062 MB (~66 MB apt + 997 MiB pip; apt metadata estimate, pip measured)
+#
+# ------------------------------------------------------------------------------
+# VARIANT C PACKAGES (added on top of Variant B):
+# ------------------------------------------------------------------------------
+# Package: kicad (bookworm-backports / Debian 12)
+#   Download-Size:    40,557,252 B (~40.5 MB)
+#   Installed-Size:   161,530 KB   (~161.5 MB)
+#   Dependencies:     wxWidgets, OpenCASCADE (OCC), Boost, Cairo, ngspice (~120 MB dl / ~480 MB inst)
+#   Total KiCad:      ~160 MB download / ~642 MB installed
+#   Provides:         kicad-cli (pcb drc, pcb export step, pcb export gerber)
+#
+# Package: freecad + freecad-python3 + freecad-common (0.20.2+dfsg1-4)
+#   Download-Size:    19,962,760 B (~20.0 MB)
+#   Installed-Size:   129,172 KB   (~129.2 MB)
+#   Dependencies:     libfreecad-python3, coin3d, med-fichier, pivy (~90 MB dl / ~280 MB inst)
+#   Total FreeCAD:    ~110 MB download / ~410 MB installed
+#   Provides:         Headless FreeCAD Python scripting & Path CAM workbench
+#
+# Variant C Totals (cumulative over base sandbox):
+#   Download size:    ~440 MB (~292 MB apt + ~148 MB pip)
+#   Installed size:   ~2,125 MB (~1,118 MB apt + ~1,007 MB pip)
+# ==============================================================================
+
+ARG BASE_IMAGE=unire-sandbox:latest
+
+# ------------------------------------------------------------------------------
+# STAGE: variant-b (Small, high-leverage additions)
+# ------------------------------------------------------------------------------
+FROM ${BASE_IMAGE} AS variant-b
+USER root
+
+# Install OpenSCAD, CuraEngine, ADMesh, and Mesa software rasterizer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openscad \
+    cura-engine \
+    admesh \
+    libgl1-mesa-dri \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dedicated Python CAD virtual environment in /opt/hardware
+RUN python3 -m venv /opt/hardware && \
+    /opt/hardware/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/hardware/bin/pip install --no-cache-dir \
+      build123d==0.13.0 \
+      trimesh==5.2.1 \
+      numpy==2.4.6 \
+      matplotlib==3.11.2
+
+# Copy hardware CLI commands
+COPY experiments/hardware-pipeline/gen_enclosure.py /opt/unire-hardware/gen_enclosure.py
+COPY experiments/hardware-pipeline/render_mesh.py /opt/unire-hardware/render_mesh.py
+COPY experiments/hardware-pipeline/bin/unire-enclosure /usr/local/bin/unire-enclosure
+COPY experiments/hardware-pipeline/bin/unire-stl-shot /usr/local/bin/unire-stl-shot
+COPY experiments/hardware-pipeline/bin/unire-mesh-check /usr/local/bin/unire-mesh-check
+COPY experiments/hardware-pipeline/bin/unire-kicad-check /usr/local/bin/unire-kicad-check
+COPY experiments/hardware-pipeline/bin/unire-slice /usr/local/bin/unire-slice
+COPY experiments/hardware-pipeline/profiles /opt/unire-hardware/profiles
+RUN chmod 755 /usr/local/bin/unire-*
+
+USER node
+ENV PATH="/opt/hardware/bin:${PATH}"
+ENV UNIRE_HARDWARE_PROFILE_DIR="/opt/unire-hardware/profiles"
+ENV UNIRE_HARDWARE_HOME="/opt/unire-hardware"
+
+# ------------------------------------------------------------------------------
+# STAGE: variant-c (Full ECAD + MCAD + CAM toolchain)
+# ------------------------------------------------------------------------------
+FROM variant-b AS variant-c
+USER root
+
+# KiCad CLI is only shipped by the Bookworm backports package. Install its
+# matching hwloc plugin explicitly to avoid mixing backports libhwloc15 with
+# the older Bookworm plugin, then install FreeCAD from Bookworm.
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends -t bookworm-backports \
+      kicad \
+      libhwloc-plugins && \
+    apt-get install -y --no-install-recommends \
+      freecad \
+      freecad-python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+USER node

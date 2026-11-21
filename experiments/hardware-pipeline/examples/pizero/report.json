@@ -1,0 +1,67 @@
+{
+  "board_name": "Raspberry-Pi-Zero-2W",
+  "outer_dimensions_mm": {
+    "length": 70.0,
+    "width": 35.0,
+    "height": 17.0,
+    "base_height": 12.0,
+    "lid_height": 5.0
+  },
+  "cavity_dimensions_mm": {
+    "length": 66.0,
+    "width": 31.0,
+    "total_height": 13.0,
+    "base_cavity_height": 10.0,
+    "lid_cavity_height": 3.0
+  },
+  "volumes_mm3": {
+    "base": 9215.49,
+    "lid": 5657.21,
+    "total": 14872.7
+  },
+  "estimated_filament": {
+    "material": "PETG",
+    "density_g_cm3": 1.27,
+    "solid_weight_grams": 18.89,
+    "estimated_20pct_infill_weight_grams": 16.06
+  },
+  "design_rules_and_sources": {
+    "wall_thickness_mm": {
+      "value": 2.0,
+      "rationale": "Standard FDM parameter: 4-5 perimeters with a 0.4mm nozzle to provide rigidity and eliminate warping without excessive print time."
+    },
+    "clearance_mm": {
+      "value": 0.5,
+      "rationale": "0.5mm drop-in clearance absorbs typical \u00b10.15mm FDM printer dimensional deviation and \u00b10.2mm PCB CNC routing edge tolerance."
+    },
+    "standoff_height_mm": {
+      "value": 4.0,
+      "rationale": "Elevates PCB 4.0mm above floor, clearing bottom through-hole solder pins and surface mount components (1.4mm max) plus ventilation."
+    },
+    "heat_set_insert_spec": {
+      "screw_size": "M2.5",
+      "pilot_diameter_mm": 3.6,
+      "boss_diameter_mm": 6.0,
+      "boss_wall_annulus_mm": 1.2,
+      "rationale": "Follows CNC Kitchen / McMaster-Carr insert standards. Annular boss wall >=1.0mm prevents hoop stress blowout during hot soldering-iron insertion."
+    },
+    "tongue_and_groove_joint": {
+      "lip_height_mm": 1.4,
+      "lip_thickness_mm": 1.0,
+      "tolerance_gap_mm": 0.2,
+      "groove_depth_relief_mm": 0.3,
+      "rationale": "0.2mm horizontal tolerance gap ensures smooth lid sliding/friction mating without binding; 0.3mm groove depth relief guarantees rims mate flush."
+    }
+  },
+  "checks_passed": true,
+  "checks_status": "passed",
+  "checks": [
+    "[PASS] Mesh watertightness: base.stl (9215.5 mm3) and lid.stl (5657.2 mm3) are closed 2-manifold solids.",
+    "[PASS] Wall thickness: 2.00 mm >= 1.6 mm (ensures 4+ solid perimeters with 0.4mm nozzle).",
+    "[PASS] Cavity fit: length=66.0mm, width=31.0mm, total_height=13.0mm (provides >= 0.5mm clearance on all axes).",
+    "[PASS] Standoffs: 4 mounting holes validated within board perimeter with heat-set boss support.",
+    "[PASS] Lid screw holes: 4 open through-holes align with the base pilot locations.",
+    "[PASS] Port cutouts: 3 clearance envelopes pass through their specified walls.",
+    "[PASS] Joint mating: tongue height=1.4mm, width=1.0mm, gap=0.2mm, relief=0.3mm ensure flush mating."
+  ]
+}

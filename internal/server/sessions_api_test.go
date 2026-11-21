@@ -1030,3 +1030,41 @@ func TestModelSelectionAndSwitchingRoundTrip(t *testing.T) {
 		t.Errorf("antigravity models %v missing gemini-3.8-flash-high", foundAgents["antigravity"])
 	}
 }
+
+func TestListSessionsIncludesPulls(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	_, s1 := e.launch(base, nil)
+	id1 := s1["id"].(string)
+
+	if err := e.srv.store.AddPullRequest(store.PullRequest{
+		RootID:   id1,
+		ServerID: "srv",
+		Repo:     "greg/api",
+		Number:   42,
+		Branch:   "b",
+		Title:    "PR 42",
+		URL:      "http://pr/42",
+		State:    "open",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := e.do("GET", "/api/sessions", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/sessions = %d %s", code, body)
+	}
+	var list []map[string]any
+	json.Unmarshal([]byte(body), &list)
+	if len(list) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list))
+	}
+	pulls, ok := list[0]["pulls"].([]any)
+	if !ok || len(pulls) != 1 {
+		t.Fatalf("expected 1 pull request in session, got %v", list[0]["pulls"])
+	}
+	p := pulls[0].(map[string]any)
+	if p["number"].(float64) != 42 || p["state"] != "open" || p["repo"] != "greg/api" {
+		t.Errorf("pull mismatch: %v", p)
+	}
+}

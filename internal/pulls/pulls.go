@@ -340,7 +340,7 @@ func (s *Service) view(ctx context.Context, rec store.PullRequest) View {
 	}
 	s.mu.Unlock()
 
-	v := View{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: rec.Title, URL: rec.URL, Branch: rec.Branch, Checks: []gitprovider.Check{}, Comments: []gitprovider.Comment{}, Summary: "none"}
+	v := View{ServerID: rec.ServerID, Repo: rec.Repo, Number: rec.Number, Title: rec.Title, URL: rec.URL, Branch: rec.Branch, State: rec.State, Checks: []gitprovider.Check{}, Comments: []gitprovider.Comment{}, Summary: "none"}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	prs, _, err := s.prsFor(rec.ServerID)

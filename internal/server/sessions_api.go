@@ -356,6 +356,17 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 
 // ---- sessions ----
 
+type SessionPR struct {
+	ServerID string `json:"serverId"`
+	Repo     string `json:"repo"`
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	State    string `json:"state"` // "open", "merged", "closed"
+	Branch   string `json:"branch"`
+	Base     string `json:"base,omitempty"`
+}
+
 type sessionView struct {
 	ID           string          `json:"id"`
 	Task         string          `json:"task"`
@@ -375,6 +386,7 @@ type sessionView struct {
 	Waiting      int             `json:"waiting,omitempty"`      // list only: questions the agent is waiting on you for
 	LastActive   int64           `json:"lastActive,omitempty"`   // list only: when the owner last acted on the conversation, or its agent last finished
 	Pushed       []string        `json:"pushed,omitempty"`       // repos this session pushed a branch to (session detail only)
+	Pulls        []SessionPR     `json:"pulls,omitempty"`        // pull requests opened by this conversation
 	Repos        []store.RepoRef `json:"repos"`
 	CreatedAt    int64           `json:"createdAt"`
 	StartedAt    int64           `json:"startedAt"`
@@ -400,6 +412,24 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 		serverError(w)
 		return
 	}
+	allPRs, _ := s.store.AllPullRequests()
+	prsByRoot := map[string][]SessionPR{}
+	for _, pr := range allPRs {
+		state := pr.State
+		if state == "" {
+			state = "open"
+		}
+		prsByRoot[pr.RootID] = append(prsByRoot[pr.RootID], SessionPR{
+			ServerID: pr.ServerID,
+			Repo:     pr.Repo,
+			Number:   pr.Number,
+			Title:    pr.Title,
+			URL:      pr.URL,
+			State:    state,
+			Branch:   pr.Branch,
+			Base:     pr.Base,
+		})
+	}
 	// One row per conversation: its first turn, with the newest turn's status.
 	out := []sessionView{}
 	for _, x := range list {
@@ -417,6 +447,9 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 		v.Waiting = s.sessions.Waiting(newest.ID)
 		owner, _ := s.store.LastOwnerEvent(newest.ID)
 		v.LastActive = lastActive(newest, owner)
+		if prs, ok := prsByRoot[x.ID]; ok {
+			v.Pulls = prs
+		}
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)

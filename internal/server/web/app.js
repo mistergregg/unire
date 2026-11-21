@@ -34,6 +34,7 @@ const ICONS = {
   zoomIn: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
   zoomOut: '<path d="M4 14h6v6M20 10h-6V4M14 10l-7 7M10 14l-7 7"/>',
   close: '<path d="M18 6L6 18M6 6l12 12"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
 };
 const iconSvg = (name) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
 function iconTile(name, small) {
@@ -436,10 +437,65 @@ function downloadBlob(name, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+// ---- image share helper (Web Share API) ----
+async function shareImage({ src, name, blob, href, onShare }) {
+  if (typeof onShare === "function") {
+    try {
+      await onShare();
+      return;
+    } catch (_) {}
+  }
+  if (!navigator.share) {
+    banner("Sharing is not supported on this browser.", true);
+    return;
+  }
+  const displayName = name || "image.png";
+  try {
+    let fileBlob = blob;
+    if (!fileBlob && src) {
+      if (src.startsWith("data:")) {
+        const parts = src.split(",");
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : "image/png";
+        const bstr = atob(parts[1]);
+        const n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
+        fileBlob = new Blob([u8arr], { type: mime });
+      } else {
+        const res = await fetch(src);
+        fileBlob = await res.blob();
+      }
+    }
+    const ext = displayName.split(".").pop().toLowerCase();
+    const type = (fileBlob && fileBlob.type) ? fileBlob.type : (ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png");
+    if (fileBlob) {
+      const file = new File([fileBlob], displayName, { type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: displayName,
+          files: [file],
+        });
+        return;
+      }
+    }
+    const shareUrl = href || (src && !src.startsWith("data:") ? src : window.location.href);
+    await navigator.share({
+      title: displayName,
+      url: shareUrl,
+    });
+  } catch (err) {
+    if (err && err.name !== "AbortError") {
+      banner("Could not share image: " + err.message, true);
+    }
+  }
+}
+
 // ---- full-screen image viewer modal ----
 let lastActiveElement = null;
 let imageModalZoomed = false;
 let activeImageDownload = null;
+let activeImageShare = null;
 
 function updateImageModalZoomBtn() {
   const btn = $("image-modal-zoom");
@@ -464,15 +520,21 @@ function handleImageModalKey(e) {
   } else if ((e.key === "z" || e.key === "Z") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     toggleImageModalZoom();
+  } else if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (typeof activeImageShare === "function") {
+      e.preventDefault();
+      activeImageShare();
+    }
   }
 }
 
-function openImageModal({ src, name, onDownload, href }) {
+function openImageModal({ src, name, onDownload, href, onShare }) {
   const modal = $("image-modal");
   if (!modal) return;
   const img = $("image-modal-img");
   const title = $("image-modal-title");
   const dlBtn = $("image-modal-download");
+  const shareBtn = $("image-modal-share");
   const viewport = $("image-modal-viewport");
 
   lastActiveElement = document.activeElement;
@@ -505,6 +567,14 @@ function openImageModal({ src, name, onDownload, href }) {
     };
   }
 
+  activeImageShare = onShare || (() => shareImage({ src, name: displayName, href }));
+  if (shareBtn) {
+    shareBtn.hidden = !navigator.share;
+    shareBtn.onclick = () => {
+      if (typeof activeImageShare === "function") activeImageShare();
+    };
+  }
+
   const closeBtn = $("image-modal-close");
   if (closeBtn) closeBtn.focus();
 
@@ -520,6 +590,9 @@ function closeImageModal() {
   const img = $("image-modal-img");
   if (img) img.src = "";
   activeImageDownload = null;
+  activeImageShare = null;
+  const shareBtn = $("image-modal-share");
+  if (shareBtn) shareBtn.onclick = null;
   document.removeEventListener("keydown", handleImageModalKey);
   if (lastActiveElement && typeof lastActiveElement.focus === "function") {
     try { lastActiveElement.focus(); } catch (_) {}

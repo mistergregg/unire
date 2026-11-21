@@ -84,6 +84,7 @@ $("new-session").addEventListener("click", () => guarded(null, openNew));
 $("empty-new").addEventListener("click", () => guarded(null, openNew));
 $("new-back").addEventListener("click", () => guarded(null, openSessions));
 $("s-back").addEventListener("click", () => guarded(null, openSessions));
+document.querySelectorAll(".page-back").forEach((b) => b.addEventListener("click", () => guarded(null, openSessions)));
 
 // ---- new session ----
 let selected = []; // { serverId, fullName, cloneUrl, base, defaultBranch }

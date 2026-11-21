@@ -2,8 +2,10 @@ package agent
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseClaudeRealRateLimitSample(t *testing.T) {
@@ -173,19 +175,67 @@ func TestParseCodexLiveNotification(t *testing.T) {
 	}
 }
 
-func TestAntigravityReportsNothingUsable(t *testing.T) {
+// A real answer from `agy --print=/usage --output-format=json` (agy 1.5.9).
+const agyUsageSample = `{"conversation_id":"","status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t78%\t2026-11-25T01:12:50Z\n","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0},"command":{"name":"usage","data":{"description":"Within each group, models share a weekly limit and a 5-hour limit.","groups":[{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","description":"x","window":"weekly","remaining_fraction":0.7781962156295776,"reset_time":"2026-11-25T01:12:50Z"},{"id":"gemini-5h","name":"Five Hour Limit Remaining","description":"x","window":"5h","remaining_fraction":0.782702624797821,"reset_time":"2026-11-21T01:50:34Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":0.9879376292228699,"reset_time":"2026-11-27T22:02:00Z"},{"id":"3p-5h","window":"5h","remaining_fraction":0.975875198841095,"reset_time":"2026-11-21T03:02:00Z"}]}]}}}`
+
+func TestAntigravityUsageDefaultsToReported(t *testing.T) {
 	u := DefaultUsage("antigravity")
-	if u.AgentID != "antigravity" {
-		t.Errorf("AgentID = %q", u.AgentID)
+	if u.AgentID != "antigravity" || !u.Reported || len(u.Windows) != 0 {
+		t.Errorf("DefaultUsage = %+v; want reported, no windows yet", u)
 	}
-	if u.Reported {
-		t.Errorf("Reported = true; Antigravity should be Reported = false")
+}
+
+func TestParseAntigravityUsageRealSample(t *testing.T) {
+	u, err := ParseAntigravityUsageOutput("update available\n" + agyUsageSample + "\n")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if u.Status != "not reported" {
-		t.Errorf("Status = %q; want 'not reported'", u.Status)
+	if !u.Reported || u.AgentID != "antigravity" || len(u.Windows) != 4 {
+		t.Fatalf("usage = %+v", u)
 	}
-	if len(u.Windows) != 0 {
-		t.Errorf("Windows = %+v; want empty", u.Windows)
+	w := u.Windows[0] // Gemini 5h (shortest window first in each group)
+	reset, _ := time.Parse(time.RFC3339, "2026-11-21T01:50:34Z")
+	if w.Group != "Gemini Models" || w.Models != "Gemini 3.8 Flash" || w.Name != "5-hour" || w.DurationMins != 300 ||
+		w.ResetsAt != reset.Unix() || math.Abs(w.UsedPercent-21.7297) > 0.001 {
+		t.Errorf("Gemini 5h = %+v", w)
+	}
+	g := u.Windows[3] // Claude and GPT weekly
+	if g.Group != "Claude and GPT models" || g.Name != "7-day" || math.Abs(g.UsedPercent-1.2062) > 0.001 ||
+		g.Models != "Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B" {
+		t.Errorf("Claude/GPT weekly = %+v", g)
+	}
+}
+
+func TestParseAntigravityUsageMalformed(t *testing.T) {
+	for name, out := range map[string]string{
+		"empty":           "",
+		"text table":      "Quota:\nGemini Models  Weekly Limit Remaining  78%  2026-11-25 01:12 UTC\n",
+		"stream error":    `{"event":"result","result":{"status":"ERROR","error":"/usage is unavailable"}}`,
+		"error status":    `{"status":"ERROR","error":"not signed in"}`,
+		"no groups":       `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[]}}}`,
+		"other command":   `{"status":"SUCCESS","command":{"name":"help","data":{}}}`,
+		"no fraction":     `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","reset_time":"2026-11-21T01:50:34Z"}]}]}}}`,
+		"percent not 0-1": `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":78,"reset_time":"2026-11-21T01:50:34Z"}]}]}}}`,
+		"bad reset":       `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5,"reset_time":"tomorrow"}]}]}}}`,
+		"missing reset":   `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5}]}]}}}`,
+		"unknown window":  `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"monthly","remaining_fraction":0.5,"reset_time":"2026-11-21T01:50:34Z"}]}]}}`,
+		"no buckets":      `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[]}]}}}`,
+	} {
+		if u, err := ParseAntigravityUsageOutput(out); err == nil {
+			t.Errorf("%s: got a reading %+v, want an error", name, u)
+		}
+	}
+}
+
+func TestAntigravityUsageIsAskedWithItsOwnPrintCommand(t *testing.T) {
+	ad, err := Get("antigravity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := ad.Info()
+	want := []string{"agy", "--print=/usage", "--output-format=json"}
+	if strings.Join(info.UsageArgv, " ") != strings.Join(want, " ") || info.ParseUsage == nil {
+		t.Errorf("UsageArgv = %v; want %v (a plain --print run: stream-json refuses /usage)", info.UsageArgv, want)
 	}
 }
 
@@ -220,7 +270,7 @@ func TestParseClaudeSecondRealSample(t *testing.T) {
 	if u == nil || len(u.Windows) != 2 {
 		t.Fatalf("u = %+v", u)
 	}
-	want := []UsageWindow{{"5-hour", 300, 53, 1795225200}, {"7-day", 10080, 19, 1795694400}}
+	want := []UsageWindow{{Name: "5-hour", DurationMins: 300, UsedPercent: 53, ResetsAt: 1795225200}, {Name: "7-day", DurationMins: 10080, UsedPercent: 19, ResetsAt: 1795694400}}
 	for i, w := range want {
 		if u.Windows[i] != w {
 			t.Errorf("window %d = %+v, want %+v", i, u.Windows[i], w)
@@ -232,7 +282,7 @@ func TestParseCodexUsageOutput(t *testing.T) {
 	// Real output of codexUsageScript, signed in and signed out.
 	ok := `{"id":2,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":13,"windowDurationMins":43200,"resetsAt":1797607630},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"free","rateLimitReachedType":null},"rateLimitResetCredits":{"availableCount":0,"credits":[]},"accountId":"x","rateLimitUpsell":null}}`
 	u, err := ParseCodexUsageOutput("Unable to find image locally\n" + ok + "\n")
-	if err != nil || u.Plan != "free" || len(u.Windows) != 1 || u.Windows[0] != (UsageWindow{"30-day", 43200, 13, 1797607630}) {
+	if err != nil || u.Plan != "free" || len(u.Windows) != 1 || u.Windows[0] != (UsageWindow{Name: "30-day", DurationMins: 43200, UsedPercent: 13, ResetsAt: 1797607630}) {
 		t.Fatalf("u = %+v, err = %v", u, err)
 	}
 	out := `{"error":{"code":-32600,"message":"codex account authentication required to read rate limits"},"id":2}`

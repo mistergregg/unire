@@ -382,8 +382,17 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
 @media (max-width: 600px) {
   .usage-strip .long { display: none; }
   .usage-strip .short { display: inline; }
-  .usage-bar { width: 20px; }
-  .usage-win { gap: 3px; }
-  .usage-agent { gap: 5px; padding: 2px 7px; }
+  /* One visible key labels every compact percentage as remaining usage. */
+  .usage-strip { gap: 4px; padding-top: 12px; }
+  .usage-strip::before { content: "% = left"; position: absolute; top: -1px; left: 2px; color: var(--muted); font-size: 9px; line-height: 11px; }
+  .usage-word { display: none; }
+  .usage-bar { width: 14px; }
+  .usage-win { gap: 2px; }
+  .usage-agent { gap: 4px; padding: 2px 6px; font-size: 11px; }
+}
+@media (max-width: 380px) {
+  .usage-agent { gap: 2px; padding: 2px 4px; font-size: 9px; }
+  .usage-bar { width: 7px; }
+  .usage-win { gap: 1px; }
 }
 .usage-word { font-weight: 450; opacity: .8; }

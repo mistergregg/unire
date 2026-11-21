@@ -15,6 +15,10 @@ import (
 func (r fakeRunner) RunOnline(_ context.Context, argv []string) (string, bool, error) {
 	r.box.mu.Lock()
 	defer r.box.mu.Unlock()
+	if len(argv) > 0 && argv[0] == "agy" {
+		r.box.agyAsked++
+		return r.box.agyUsageOut, true, nil
+	}
 	r.box.usageAsked++
 	return r.box.usageOut, true, nil
 }
@@ -32,6 +36,9 @@ const (
 	codexUsageAnswer     = `{"id":2,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":13,"windowDurationMins":43200,"resetsAt":1797607630},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"free","rateLimitReachedType":null},"rateLimitResetCredits":{"availableCount":0,"credits":[]},"rateLimitUpsell":null}}`
 	codexSignedOutAnswer = `{"error":{"code":-32600,"message":"codex account authentication required to read rate limits"},"id":2}`
 )
+
+// A real answer from `agy --print=/usage --output-format=json` (agy 1.5.9).
+const agyUsageAnswer = `{"status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t78%\t2026-11-25T01:12:50Z\n","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.7781962156295776,"reset_time":"2026-11-25T01:12:50Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.782702624797821,"reset_time":"2026-11-21T01:50:34Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":0.9879376292228699,"reset_time":"2026-11-27T22:02:00Z"},{"id":"3p-5h","window":"5h","remaining_fraction":0.975875198841095,"reset_time":"2026-11-21T03:02:00Z"}]}]}}}`
 
 func (e *env) usage() map[string]agent.AgentUsage {
 	e.t.Helper()
@@ -73,7 +80,7 @@ func TestCodexUsageIsAskedInTheBackgroundAndStored(t *testing.T) {
 	if n := e.box.usageCalls(); n != 1 {
 		t.Errorf("codex asked %d times; a fresh reading must not be asked again", n)
 	}
-	// Claude cannot be asked without using its limits, and Antigravity reports nothing.
+	// Claude cannot be asked without using its limits.
 	e.box.mu.Lock()
 	e.box.usageAsked = 0
 	e.box.mu.Unlock()
@@ -161,6 +168,44 @@ func TestUsageIsNotAskedWhileAChatWithTheAgentRuns(t *testing.T) {
 	}
 }
 
+// Antigravity is asked with its own `agy --print=/usage` run (no model call),
+// in the background, and the groups and their models are kept with each window.
+func TestAntigravityUsageIsAskedInTheBackgroundAndStored(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.agyUsageOut = agyUsageAnswer
+	e.usage()
+	e.waitUsageProbes()
+	agy := e.usage()["antigravity"]
+	if !agy.Reported || agy.UpdatedAt == 0 || agy.Stale || len(agy.Windows) != 4 {
+		t.Fatalf("antigravity = %+v", agy)
+	}
+	if w := agy.Windows[0]; w.Group != "Gemini Models" || w.Name != "5-hour" || w.Models != "Gemini 3.8 Flash" {
+		t.Errorf("first window = %+v", w)
+	}
+	e.waitUsageProbes()
+	e.box.mu.Lock()
+	asked := e.box.agyAsked
+	e.box.mu.Unlock()
+	if asked != 1 {
+		t.Errorf("agy asked %d times; a fresh reading must not be asked again", asked)
+	}
+}
+
+// An answer in a shape Unire does not know gives "no reading" and a note,
+// never a number.
+func TestAntigravityUsageWithAnUnknownShapeIsNoReading(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.box.agyUsageOut = `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":"most"}]}]}}}`
+	e.usage()
+	e.waitUsageProbes()
+	agy := e.usage()["antigravity"]
+	if agy.UpdatedAt != 0 || len(agy.Windows) != 0 || agy.Note == "" {
+		t.Errorf("antigravity = %+v; want no reading with a note", agy)
+	}
+}
+
 func TestUsageAPIAuthenticationRequired(t *testing.T) {
 	e := newEnv(t)
 	// Not set up or logged in
@@ -195,16 +240,13 @@ func TestUsageAPIDefaultsAndAntigravity(t *testing.T) {
 		}
 	}
 
-	// Antigravity does not report usage limits
+	// Antigravity reports its limits too; there is just no reading yet.
 	agy := byID["antigravity"]
-	if agy.Reported {
-		t.Errorf("antigravity Reported = true; want false")
+	if !agy.Reported {
+		t.Errorf("antigravity Reported = false; want true")
 	}
-	if agy.Status != "not reported" {
-		t.Errorf("antigravity Status = %q; want 'not reported'", agy.Status)
-	}
-	if agy.Stale {
-		t.Errorf("antigravity Stale = true; want false (not reported is not stale)")
+	if agy.Stale || agy.UpdatedAt != 0 {
+		t.Errorf("antigravity without a reading = %+v", agy)
 	}
 	if len(agy.Windows) != 0 {
 		t.Errorf("antigravity Windows = %+v; want empty", agy.Windows)

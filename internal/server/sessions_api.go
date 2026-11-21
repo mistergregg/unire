@@ -373,6 +373,7 @@ type sessionView struct {
 	Latest       string          `json:"latest,omitempty"`       // list only: the newest turn of this conversation
 	LatestStatus string          `json:"latestStatus,omitempty"` // list only
 	Waiting      int             `json:"waiting,omitempty"`      // list only: questions the agent is waiting on you for
+	LastActive   int64           `json:"lastActive,omitempty"`   // list only: when the owner last acted on the conversation, or its agent last finished
 	Pushed       []string        `json:"pushed,omitempty"`       // repos this session pushed a branch to (session detail only)
 	Repos        []store.RepoRef `json:"repos"`
 	CreatedAt    int64           `json:"createdAt"`
@@ -414,6 +415,8 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 			v.Latest, v.LatestStatus = newest.ID, newest.Status
 		}
 		v.Waiting = s.sessions.Waiting(newest.ID)
+		owner, _ := s.store.LastOwnerEvent(newest.ID)
+		v.LastActive = lastActive(newest, owner)
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -721,4 +724,17 @@ func allowedEntries(saved []string) []egress.Entry {
 		out = append(out, e)
 	}
 	return out
+}
+
+// lastActive is when a conversation was last acted on, from its newest turn: when it was
+// sent, started or finished, or when the owner last said something to it while it ran.
+// The chat list is ordered by it, so the chat you touched last comes first.
+func lastActive(newest store.Session, ownerEvent time.Time) int64 {
+	last := newest.CreatedAt
+	for _, t := range []time.Time{newest.StartedAt, newest.FinishedAt, ownerEvent} {
+		if t.After(last) {
+			last = t
+		}
+	}
+	return last.Unix()
 }

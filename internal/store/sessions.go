@@ -433,3 +433,14 @@ func (s *Store) SetAgentConv(id, conv string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET agent_conv = ? WHERE id = ?`, conv, id)
 	return err
 }
+
+// LastOwnerEvent is when the owner last said something to a session while it ran (a
+// message to the agent, or an answer to its question), or the zero time if never.
+func (s *Store) LastOwnerEvent(id string) (time.Time, error) {
+	var ts int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(ts), 0) FROM session_events WHERE session_id = ? AND kind IN ('steer', 'answer')`, id).Scan(&ts)
+	if err != nil || ts == 0 {
+		return time.Time{}, err
+	}
+	return time.Unix(ts, 0), nil
+}

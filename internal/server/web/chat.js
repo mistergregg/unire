@@ -245,7 +245,7 @@ function steerCard(t, e) {
   entry.card = card;
   entry.now = now;
   t.steers[id] = entry;
-  t.steerBox.append(card);
+  splitTurn(t, card); // in the timeline where you sent it, not in a pile after the activity
 }
 
 function steerState(t, e) {
@@ -279,8 +279,11 @@ let agentChoices = [];
 const agentLabel = (id) => (agentChoices.find((a) => a.id === id) || { label: id }).label;
 const initialOf = (id) => (agentLabel(id) || "?").trim().charAt(0).toUpperCase();
 
-// One turn: your message, then the agent's reply with what it is doing above it.
-function makeTurn(s) {
+// A turn is a timeline. The agent works (its activity, then maybe some text), you say
+// something while it works, and what it does after that comes below your message, not
+// above it. Each stretch between your messages is a "segment": its activity, its
+// questions, its text and the files it shared. t.* always points at the newest one.
+function newSegment(running) {
   const spin = el("span", { class: "spin" });
   const stepText = el("span", { class: "step-text" });
   const dots = el("span", { class: "working-dots" });
@@ -288,11 +291,17 @@ function makeTurn(s) {
   const steps = el("div", { class: "steps" });
   // Open while the agent works, so what it is doing is in view; folded away when it is done.
   const activity = el("details", { class: "activity" }, summary, steps);
-  activity.open = !isFinished(s.status);
+  activity.open = running;
   const askBox = el("div", { class: "asks" });
-  const steerBox = el("div", { class: "steers" });
   const shareBox = el("div", { class: "shares" });
   const answer = el("div", { class: "agent-text" });
+  const segRoot = el("div", { class: "seg" }, activity, askBox, answer, shareBox);
+  return { segRoot, spin, stepText, dots, summary, steps, activity, askBox, shareBox, answer, count: 0, text: "", lastStep: "", shown: "" };
+}
+
+// One turn: your message, then the agent's reply with what it is doing above it.
+function makeTurn(s) {
+  const seg = newSegment(!isFinished(s.status));
   const foot = el("div", { class: "turn-foot muted" });
   const avatar = el("div", { class: "avatar", "aria-hidden": "true" }, initialOf(s.agent));
   const head = el("div", { class: "msg-head" }, el("span", { class: "name" }, agentLabel(s.agent)),
@@ -300,12 +309,36 @@ function makeTurn(s) {
     el("span", { class: "time" }, ago(s.startedAt || s.createdAt)));
   const userThumbs = el("div", { class: "attach-thumbs" });
   const user = el("div", { class: "msg user" }, el("div", { class: "bubble user" }, el("div", { class: "said" }, s.prompt), userThumbs), el("div", { class: "time" }, ago(s.createdAt)));
-  const body = el("div", { class: "msg-body" }, head, activity, askBox, steerBox, answer, shareBox, foot);
+  const body = el("div", { class: "msg-body" }, head, seg.segRoot, foot);
   const root = el("div", { class: "turn" }, user, el("div", { class: "msg agent" }, avatar, body));
-  const t = { s, root, steps, summary, spin, stepText, dots, activity, askBox, steerBox, shareBox, answer, foot, avatar, userThumbs, asks: {}, steers: {}, attached: {}, text: "", count: 0, after: 0, shownDone: false, shown: "" };
+  const t = { s, root, body, foot, avatar, userThumbs, ...seg, replies: [], asks: {}, steers: {}, attached: {}, after: 0, shownDone: false };
   renderSummary(t);
   renderAnswer(t);
   return t;
+}
+
+// Your message goes in the timeline at the point where you sent it: what the agent did
+// so far is closed off above it, and what it does next starts a new block below.
+function splitTurn(t, card) {
+  // Close the stretch before your message: it shows what it did, not that it is working.
+  t.activity.classList.remove("running");
+  t.spin.hidden = t.dots.hidden = true;
+  t.stepText.textContent = "Activity · " + t.count + " step" + (t.count === 1 ? "" : "s");
+  if (!t.needsLook) t.activity.open = false;
+  if (t.text) {
+    t.answer.replaceChildren(el("div", { class: "md" }, renderMarkdown(t.text)));
+    t.replies.push(t.text);
+  } else {
+    t.answer.remove(); // nothing was said in this stretch: no skeleton, no "printed no reply"
+  }
+  if (!t.count && !t.text && !t.askBox.children.length && !t.shareBox.children.length) t.segRoot.remove();
+  const seg = newSegment(!isFinished(t.s.status));
+  t.body.insertBefore(card, t.foot);
+  t.body.insertBefore(seg.segRoot, t.foot);
+  Object.assign(t, seg);
+  t.needsLook = false;
+  renderSummary(t);
+  renderAnswer(t);
 }
 
 // The one line that says what the agent is doing now, or how much it did.
@@ -320,12 +353,13 @@ function renderSummary(t) {
 function renderAnswer(t) {
   const running = !isFinished(t.s.status);
   if (!t.text) {
-    const state = running ? "skeleton" : "none";
+    // After your message the agent may have said nothing more: say so only when the
+    // whole turn said nothing.
+    const state = running ? "skeleton" : t.replies.length ? "quiet" : "none";
     if (t.shown === state) return; // keep the animation running instead of restarting it
     t.shown = state;
-    t.answer.replaceChildren(running
-      ? el("div", { class: "skeleton" }, el("i"), el("i"), el("i"))
-      : el("div", { class: "muted" }, "The agent printed no reply."));
+    t.answer.replaceChildren(...(running ? [el("div", { class: "skeleton" }, el("i"), el("i"), el("i"))]
+      : t.replies.length ? [] : [el("div", { class: "muted" }, "The agent printed no reply.")]));
     return;
   }
   t.shown = "text";
@@ -371,9 +405,10 @@ async function finishTurn(t) {
   } else if (t.s.status === "done") {
     bits.push(el("span", {}, "No changes were pushed."));
   }
-  if (t.text) {
+  const whole = [...t.replies, t.text].filter(Boolean).join("\n\n"); // every stretch of the reply
+  if (whole) {
     const copy = el("button", { type: "button", class: "tiny" }, "Copy reply");
-    copy.addEventListener("click", () => copyText(t.text, copy));
+    copy.addEventListener("click", () => copyText(whole, copy));
     bits.push(el("span", { class: "actions" }, copy));
   }
   t.foot.replaceChildren(...bits);
@@ -471,6 +506,40 @@ async function openSession(id) {
   // button that opened this chat disabled until the agent has finished.
   (async () => { for (const t of thread) await watch(t, token); })().catch((e) => banner(e.message, true));
   watchPulls(token);
+  syncThread(token);
+}
+
+// A turn can be added to the chat you have open from somewhere else: a reply sent from
+// your phone, an automatic fix. Look every few seconds and show new turns as they
+// appear, so there is no need to reload the page. (The chat list does the same from
+// attention.js.) While a message of yours is on its way, wait: it would show twice.
+async function syncThread(token) {
+  const waiting = () => thread.some((t) => t.s.id.startsWith("pending-"));
+  while (pollToken === token && currentView === "session") {
+    await new Promise((res) => setTimeout(res, 4000));
+    if (pollToken !== token || currentView !== "session" || document.hidden || waiting()) continue;
+    try {
+      const turns = await api("GET", "/api/sessions/" + encodeURIComponent(selectedRoot) + "/thread");
+      if (pollToken !== token || currentView !== "session" || waiting() || !turns.length) continue;
+      const known = new Set(thread.map((t) => t.s.id));
+      const stick = nearBottom();
+      let changed = false;
+      for (const s of turns) {
+        if (known.has(s.id)) continue;
+        const t = makeTurn(s);
+        thread.push(t);
+        $("chat").append(t.root);
+        watch(t, token);
+        changed = true;
+      }
+      if (turns[0].task !== thread[0].s.task) { thread[0].s.task = turns[0].task; changed = true; } // the agent named the chat
+      if (changed) {
+        setComposer();
+        renderPulls();
+        if (stick) window.scrollTo(0, document.body.scrollHeight);
+      }
+    } catch (_) { /* the next look will do */ }
+  }
 }
 
 // Reads a turn's log until it ends. Finished turns are read once; the running

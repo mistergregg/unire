@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // UsageWindow is how much of one usage limit window (e.g. 5 hours, 7 days) is used.
@@ -14,6 +15,8 @@ type UsageWindow struct {
 	DurationMins int     `json:"durationMins,omitempty"` // window length in minutes; 0 when the CLI does not say
 	UsedPercent  float64 `json:"usedPercent"`            // 0 to 100
 	ResetsAt     int64   `json:"resetsAt,omitempty"`     // Unix seconds, as the CLI reported it; 0 when unknown
+	Group        string  `json:"group,omitempty"`        // the models' group when limits are per group (Antigravity: "Gemini Models")
+	Models       string  `json:"models,omitempty"`       // which models share the group's limits, as the CLI says
 }
 
 // AgentUsage is the latest usage limits reading for an agent.
@@ -43,12 +46,12 @@ func WindowName(mins int, fallback string) string {
 	return fmt.Sprintf("%d-min", mins)
 }
 
-// DefaultUsage is the reading for an agent before anything was read: Claude and
-// Codex report their limits, the others do not.
+// DefaultUsage is the reading for an agent before anything was read: Claude,
+// Codex and Antigravity report their limits, the others do not.
 func DefaultUsage(agentID string) AgentUsage {
 	u := AgentUsage{AgentID: agentID, Windows: []UsageWindow{}}
 	switch agentID {
-	case "claude", "codex":
+	case "claude", "codex", "antigravity":
 		u.Reported = true
 	default:
 		u.Status = "not reported"
@@ -189,6 +192,101 @@ func ParseCodexUsageOutput(out string) (*AgentUsage, error) {
 		return nil, errors.New("codex reported no usage window")
 	}
 	return nil, errors.New("codex gave no answer about its usage")
+}
+
+// antigravityUsageArgv asks agy for its quota. agy answers the /usage slash
+// command itself, without a model call or any tokens, but only as its own
+// --print invocation (it refuses it in stream-json mode). This is a CLI
+// command, not a documented API, so the format may change.
+var antigravityUsageArgv = []string{"agy", "--print=/usage", "--output-format=json"}
+
+// antigravityWindowMins maps the bucket "window" names agy uses to minutes.
+var antigravityWindowMins = map[string]int{"5h": 300, "weekly": 10080}
+
+// ParseAntigravityUsageOutput reads what `agy --print=/usage --output-format=json`
+// printed, e.g.
+//
+//	{"status":"SUCCESS","response":"<text table>","command":{"name":"usage","data":{
+//	 "groups":[{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash",
+//	 "buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.78,
+//	 "reset_time":"2026-11-21T01:50:34Z"},{"id":"gemini-weekly","window":"weekly",...}]}]}}}
+//
+// remaining_fraction is 0 to 1 and is what is LEFT, so used percent is 100
+// minus it. The structured JSON is used, never the text table. Anything that is
+// not the expected shape is an error ("no reading"), not a guess.
+func ParseAntigravityUsageOutput(out string) (*AgentUsage, error) {
+	var m struct {
+		Status  string `json:"status"`
+		Error   string `json:"error"`
+		Command struct {
+			Name string `json:"name"`
+			Data struct {
+				Groups []struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
+					Buckets     []struct {
+						Window    string   `json:"window"`
+						Remaining *float64 `json:"remaining_fraction"`
+						ResetTime string   `json:"reset_time"`
+					} `json:"buckets"`
+				} `json:"groups"`
+			} `json:"data"`
+		} `json:"command"`
+	}
+	// The answer is one JSON object; skip any other output (an update notice).
+	parsed := false
+	trimmed := strings.TrimSpace(out)
+	if json.Unmarshal([]byte(trimmed), &m) == nil {
+		parsed = true
+	} else if i := strings.Index(trimmed, "\n{"); i >= 0 {
+		parsed = json.Unmarshal([]byte(trimmed[i+1:]), &m) == nil
+	}
+	if !parsed {
+		return nil, errors.New("agy gave no JSON answer about its usage")
+	}
+	if m.Status != "SUCCESS" {
+		msg := m.Error
+		if msg == "" {
+			msg = "status " + m.Status
+		}
+		return nil, errors.New("agy: " + clip(msg, 200))
+	}
+	if m.Command.Name != "usage" || len(m.Command.Data.Groups) == 0 {
+		return nil, errors.New("agy's usage answer has an unexpected shape")
+	}
+	var windows []UsageWindow
+	for _, g := range m.Command.Data.Groups {
+		start := len(windows)
+		models := strings.TrimSpace(strings.TrimPrefix(g.Description, "Models within this group:"))
+		for _, b := range g.Buckets {
+			if g.Name == "" || b.Remaining == nil || *b.Remaining < 0 || *b.Remaining > 1 {
+				return nil, errors.New("agy's usage answer has an unexpected shape")
+			}
+			mins := antigravityWindowMins[b.Window]
+			w := UsageWindow{
+				Name: WindowName(mins, b.Window), DurationMins: mins, Group: g.Name, Models: models,
+				UsedPercent: clampPercent(100 - *b.Remaining*100),
+			}
+			if b.ResetTime != "" {
+				t, err := time.Parse(time.RFC3339, b.ResetTime)
+				if err != nil {
+					return nil, errors.New("agy's usage answer has an unexpected reset time")
+				}
+				w.ResetsAt = t.Unix()
+			}
+			windows = append(windows, w)
+		}
+		// Shortest window first within the group (agy lists weekly first).
+		grp := windows[start:]
+		sort.SliceStable(grp, func(i, j int) bool {
+			a, b := grp[i].DurationMins, grp[j].DurationMins
+			return a != 0 && (b == 0 || a < b)
+		})
+	}
+	if len(windows) == 0 {
+		return nil, errors.New("agy reported no usage window")
+	}
+	return &AgentUsage{AgentID: "antigravity", Reported: true, Status: "allowed", Windows: windows}, nil
 }
 
 func clampPercent(p float64) float64 {

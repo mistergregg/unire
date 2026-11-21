@@ -38,6 +38,8 @@ type fakeBox struct {
 	statusAsked []string
 	usageOut    string // what the usage command prints (RunOnline)
 	usageAsked  int
+	agyUsageOut string // what `agy --print=/usage` prints (RunOnline)
+	agyAsked    int
 }
 
 type fakeRunner struct{ box *fakeBox }

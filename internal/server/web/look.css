@@ -382,8 +382,16 @@ button.tiny { padding: 2px 9px; font-size: 12px; border-radius: 8px; background:
 @media (max-width: 600px) {
   .usage-strip .long { display: none; }
   .usage-strip .short { display: inline; }
-  .usage-bar { width: 20px; }
-  .usage-win { gap: 3px; }
-  .usage-agent { gap: 5px; padding: 2px 7px; }
+  /* four items (Claude, Codex, Antigravity's two groups) must fit on two rows */
+  .usage-strip { gap: 4px; }
+  .usage-bar { width: 14px; }
+  .usage-win { gap: 2px; }
+  .usage-agent { gap: 4px; padding: 2px 6px; font-size: 11px; }
+  .usage-word { display: none; }
+}
+@media (max-width: 380px) {
+  .usage-agent { gap: 3px; padding: 2px 5px; font-size: 10px; }
+  .usage-bar { width: 10px; }
+  .usage-win { gap: 1px; }
 }
 .usage-word { font-weight: 450; opacity: .8; }

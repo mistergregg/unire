@@ -40,9 +40,29 @@ function usageWindowChip(w) {
     el("span", { class: "usage-left" }, left + "%", el("span", { class: "usage-word" }, " left")));
 }
 
+// Some agents keep one set of limits per group of models (Antigravity: "Gemini
+// Models", "Claude and GPT models"). The strip shows each group like an agent:
+// "Gemini", "Claude/GPT".
+const groupLabel = (g) => g.replace(/\s+models$/i, "").replace(/\s+and\s+/gi, "/");
+
+// The reading as the items to show: one per group when the windows have groups
+// (each keeps the agent's id, label and notes), otherwise the reading itself.
+function usageItems(u) {
+  if (!u.reported || !u.windows || !u.windows.some((w) => w.group)) return [u];
+  const groups = [];
+  for (const w of u.windows) {
+    let g = groups.find((x) => x.group === (w.group || ""));
+    if (!g) groups.push((g = { ...u, group: w.group || "", key: u.agentId + "/" + (w.group || ""), agentLabel: u.label || u.agentId, label: groupLabel(w.group || u.label || u.agentId), models: w.models || "", windows: [] }));
+    g.windows.push(w);
+  }
+  return groups;
+}
+
 function usageDetails(u) {
   const now = Date.now() / 1000;
-  const rows = [el("div", { class: "usage-pop-head" }, u.label || u.agentId, u.plan ? el("span", { class: "muted" }, " · " + u.plan + " plan") : "")];
+  const head = u.group ? u.agentLabel + " · " + u.group : u.label || u.agentId;
+  const rows = [el("div", { class: "usage-pop-head" }, head, u.plan ? el("span", { class: "muted" }, " · " + u.plan + " plan") : "")];
+  if (u.models) rows.push(el("div", { class: "muted" }, "Models: " + u.models));
   if (!u.reported) {
     rows.push(el("div", {}, "Usage is not reported by " + (u.label || u.agentId) + ", so Unire cannot show how much is left."));
     return rows;
@@ -55,7 +75,7 @@ function usageDetails(u) {
   for (const w of u.windows || []) {
     const left = Math.round(100 - w.usedPercent);
     let reset = "";
-    if (w.resetsAt) reset = w.resetsAt > now ? "resets in " + spanText(w.resetsAt - now) : "has reset since this reading";
+    if (w.resetsAt) reset = w.resetsAt > now ? "resets in " + spanText(w.resetsAt - now) + (u.group ? " (" + new Date(w.resetsAt * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) + ")" : "") : "has reset since this reading";
     rows.push(el("div", { class: "usage-pop-row" },
       el("b", {}, w.name + ": " + left + "% left"),
       el("span", { class: "muted" }, " · " + Math.round(w.usedPercent) + "% used" + (reset ? " · " + reset : ""))));
@@ -66,7 +86,8 @@ function usageDetails(u) {
   return rows;
 }
 
-function usageAgent(u) {
+function usageAgent(u, last = true) {
+  const id = u.key || u.agentId;
   const name = u.label || u.agentId;
   const body = [el("span", { class: "usage-name" }, el("span", { class: "long" }, name), el("span", { class: "short" }, name.split(" ")[0]))];
   let cls = "usage-agent";
@@ -78,19 +99,19 @@ function usageAgent(u) {
     body.push(el("span", { class: "usage-none" }, "no reading yet"));
   } else {
     body.push(...u.windows.map(usageWindowChip));
-    if (u.stale) {
-      cls += " stale";
+    if (u.stale) cls += " stale";
+    if (u.stale && last) {
       body.push(el("span", { class: "usage-age" }, el("span", { class: "long" }, "as of " + ago(u.updatedAt)), el("span", { class: "short" }, "old")));
     }
   }
-  const chip = el("button", { type: "button", class: cls, "aria-expanded": String(usageOpen === u.agentId) }, ...body);
+  const chip = el("button", { type: "button", class: cls, "aria-expanded": String(usageOpen === id) }, ...body);
   const pop = el("div", { class: "usage-pop", role: "tooltip" }, ...usageDetails(u));
   chip.addEventListener("click", (e) => {
     e.stopPropagation();
-    usageOpen = usageOpen === u.agentId ? "" : u.agentId;
+    usageOpen = usageOpen === id ? "" : id;
     renderUsage();
   });
-  return el("div", { class: "usage-item" + (usageOpen === u.agentId ? " open" : "") }, chip, pop);
+  return el("div", { class: "usage-item" + (usageOpen === id ? " open" : "") }, chip, pop);
 }
 
 function renderUsage() {
@@ -99,7 +120,7 @@ function renderUsage() {
     strip.hidden = false;
     // Agents that report their usage first; the order among them is the server's.
     const sorted = [...usageData].sort((a, b) => Number(b.reported) - Number(a.reported));
-    strip.replaceChildren(...sorted.map(usageAgent));
+    strip.replaceChildren(...sorted.flatMap((u) => { const items = usageItems(u); return items.map((it, i) => usageAgent(it, i === items.length - 1)); }));
   }
 }
 

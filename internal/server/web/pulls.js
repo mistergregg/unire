@@ -30,6 +30,7 @@ function resetPulls() {
   proposalEls.clear();
   updateEls.clear();
   $("pulls").replaceChildren();
+  if (typeof renderSidePRs === "function") renderSidePRs({ proposals: [], pulls: [] });
 }
 
 async function refreshPulls() {
@@ -199,6 +200,7 @@ function renderPulls() {
   }
   if (later.length) cards.push(el("div", { class: "pr-later" }, ...later));
   box.replaceChildren(...cards);
+  if (typeof renderSidePRs === "function") renderSidePRs(pullsData);
 }
 
 function stateButton(p, open, label) {
@@ -320,7 +322,7 @@ function autoFixRow() {
     pullsData.autoFix = r.autoFix;
   }));
   return el("label", { class: "pr-auto" }, box,
-    el("span", {}, " Fix failing checks automatically"),
+    el("span", {}, " Fix failing checks and keep the branch up to date"),
     el("span", { class: "muted" }, " · Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request."));
 }
 

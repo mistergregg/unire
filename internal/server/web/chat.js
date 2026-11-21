@@ -800,6 +800,7 @@ function initSidePanel() {
   const toggleBtn = $("s-toggle-side");
   const closeBtn = $("side-panel-close");
   const tabFiles = $("side-tab-files");
+  const tabPrs = $("side-tab-prs");
   const tabInfo = $("side-tab-info");
   const viewerBack = $("side-viewer-back");
 
@@ -815,6 +816,9 @@ function initSidePanel() {
   }
   if (tabFiles) {
     tabFiles.addEventListener("click", () => selectSideTab("files"));
+  }
+  if (tabPrs) {
+    tabPrs.addEventListener("click", () => selectSideTab("prs"));
   }
   if (tabInfo) {
     tabInfo.addEventListener("click", () => selectSideTab("info"));
@@ -845,20 +849,39 @@ function setSidePanelOpen(open) {
 function selectSideTab(tab) {
   sideActiveTab = tab;
   const isFiles = tab === "files";
+  const isPrs = tab === "prs";
+  const isInfo = tab === "info";
   const tabF = $("side-tab-files");
+  const tabP = $("side-tab-prs");
   const tabI = $("side-tab-info");
   const paneF = $("side-pane-files");
+  const paneP = $("side-pane-prs");
   const paneI = $("side-pane-info");
   if (tabF) {
     tabF.classList.toggle("active", isFiles);
     tabF.setAttribute("aria-selected", String(isFiles));
   }
+  if (tabP) {
+    tabP.classList.toggle("active", isPrs);
+    tabP.setAttribute("aria-selected", String(isPrs));
+  }
   if (tabI) {
-    tabI.classList.toggle("active", !isFiles);
-    tabI.setAttribute("aria-selected", String(!isFiles));
+    tabI.classList.toggle("active", isInfo);
+    tabI.setAttribute("aria-selected", String(isInfo));
   }
   if (paneF) paneF.hidden = !isFiles;
-  if (paneI) paneI.hidden = isFiles;
+  if (paneP) paneP.hidden = !isPrs;
+  if (paneI) paneI.hidden = !isInfo;
+}
+
+function updateSideBadge() {
+  const sideBadge = $("s-side-badge");
+  if (!sideBadge) return;
+  const filesCount = sessionFiles ? sessionFiles.size : 0;
+  const prsCount = (typeof pullsData !== "undefined" && pullsData && pullsData.pulls) ? pullsData.pulls.length : 0;
+  const total = filesCount + prsCount;
+  sideBadge.textContent = total;
+  sideBadge.hidden = total === 0;
 }
 
 function resetSidePanel() {
@@ -876,14 +899,94 @@ function resetSidePanel() {
   }
   const badge = $("side-files-count");
   if (badge) badge.hidden = true;
+  const prsBadge = $("side-prs-count");
+  if (prsBadge) prsBadge.hidden = true;
   const sideBadge = $("s-side-badge");
   if (sideBadge) sideBadge.hidden = true;
+  const prsEmpty = $("side-prs-empty");
+  if (prsEmpty) prsEmpty.hidden = false;
+  const prsList = $("side-prs-list");
+  if (prsList) {
+    prsList.hidden = true;
+    prsList.replaceChildren();
+  }
   selectSideTab("files");
   if (window.innerWidth >= 1100) {
     setSidePanelOpen(true);
   } else {
     setSidePanelOpen(false);
   }
+}
+
+function renderSidePRs(data) {
+  const prs = (data && data.pulls) || [];
+  const proposals = (data && data.proposals) || [];
+  const count = prs.length;
+  const countBadge = $("side-prs-count");
+  if (countBadge) {
+    countBadge.textContent = count;
+    countBadge.hidden = count === 0;
+  }
+  updateSideBadge();
+
+  const empty = $("side-prs-empty");
+  const list = $("side-prs-list");
+  if (!list) return;
+
+  if (count === 0 && proposals.length === 0) {
+    if (empty) empty.hidden = false;
+    list.hidden = true;
+    list.replaceChildren();
+    return;
+  }
+
+  if (empty) empty.hidden = true;
+  list.hidden = false;
+
+  const items = [];
+  for (const p of prs) {
+    const state = p.state || "open";
+    const failedChecks = (p.checks || []).filter((c) => c.state === "failure").length;
+    let checksLabel = p.summary === "success" ? "checks passed" :
+                      p.summary === "failure" ? (failedChecks + " checks failing") :
+                      p.summary === "pending" ? "checks running" : "no checks";
+    const commentsCount = (p.comments || []).length;
+    const commentsLabel = commentsCount ? (commentsCount + (commentsCount === 1 ? " comment" : " comments")) : "";
+    const metaLine = [p.repo, "#" + p.number, p.branch + (p.base ? " → " + p.base : "")].join(" · ");
+
+    const card = el("div", { class: "side-pr-card " + state },
+      el("div", { class: "side-pr-head" },
+        el("span", { class: "pr-state " + state }, state),
+        el("a", { class: "side-pr-title", href: p.url, target: "_blank", rel: "noopener noreferrer" },
+          "#" + p.number + " " + p.title)
+      ),
+      el("div", { class: "side-pr-meta muted" }, metaLine),
+      el("div", { class: "side-pr-sub" },
+        el("span", { class: "pr-checks " + (p.summary || "none") }, checksLabel),
+        commentsLabel ? el("span", { class: "muted" }, " · " + commentsLabel) : ""
+      ),
+      el("div", { class: "side-pr-actions" },
+        el("a", { class: "button ghost tiny", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "Open on git server ↗")
+      )
+    );
+    items.push(card);
+  }
+
+  if (proposals.length > 0) {
+    items.push(el("div", { class: "side-section-heading" }, "Proposed branches"));
+    for (const prop of proposals) {
+      const propCard = el("div", { class: "side-pr-card proposal" },
+        el("div", { class: "side-pr-head" },
+          el("span", { class: "pr-state proposal" }, "ready to open"),
+          el("span", { class: "side-pr-title" }, prop.title || prop.branch)
+        ),
+        el("div", { class: "side-pr-meta muted" }, prop.repo + " · " + prop.branch + (prop.base ? " → " + prop.base : ""))
+      );
+      items.push(propCard);
+    }
+  }
+
+  list.replaceChildren(...items);
 }
 
 function registerSideFile(file) {
@@ -894,11 +997,7 @@ function registerSideFile(file) {
     badge.textContent = count;
     badge.hidden = false;
   }
-  const sideBadge = $("s-side-badge");
-  if (sideBadge) {
-    sideBadge.textContent = count;
-    sideBadge.hidden = false;
-  }
+  updateSideBadge();
   const empty = $("side-files-empty");
   if (empty) empty.hidden = true;
   const list = $("side-files-list");

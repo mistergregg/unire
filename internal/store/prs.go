@@ -13,6 +13,7 @@ type PullRequest struct {
 	Base        string // the branch it was asked to go into; empty means the repo's default
 	Title       string
 	URL         string
+	State       string // "open", "merged", "closed" (empty means open)
 	CreatedAt   time.Time
 	FixAttempts int       // times a fix was started by itself for failing checks
 	FixSHA      string    // the commit that was last tried (a new commit may be tried again)
@@ -21,14 +22,18 @@ type PullRequest struct {
 
 // AddPullRequest records a pull request a conversation opened.
 func (s *Store) AddPullRequest(p PullRequest) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO pull_requests (root_id, server_id, repo, number, branch, base, title, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.RootID, p.ServerID, p.Repo, p.Number, p.Branch, p.Base, p.Title, p.URL, s.now().Unix())
+	state := p.State
+	if state == "" {
+		state = "open"
+	}
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO pull_requests (root_id, server_id, repo, number, branch, base, title, url, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.RootID, p.ServerID, p.Repo, p.Number, p.Branch, p.Base, p.Title, p.URL, s.now().Unix(), state)
 	return err
 }
 
 // PullRequests lists a conversation's pull requests, oldest first.
 func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
-	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, fix_attempts, fix_sha, described_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
 	if err != nil {
 		return nil, err
 	}
@@ -37,8 +42,38 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 	for rows.Next() {
 		var p PullRequest
 		var at, described int64
-		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.FixAttempts, &p.FixSHA, &described); err != nil {
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described); err != nil {
 			return nil, err
+		}
+		if p.State == "" {
+			p.State = "open"
+		}
+		p.CreatedAt = time.Unix(at, 0)
+		p.DescribedAt = p.CreatedAt
+		if described > 0 {
+			p.DescribedAt = time.Unix(described, 0)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AllPullRequests lists all pull requests across all conversations, oldest first.
+func (s *Store) AllPullRequests() ([]PullRequest, error) {
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at FROM pull_requests ORDER BY created_at, number`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PullRequest
+	for rows.Next() {
+		var p PullRequest
+		var at, described int64
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described); err != nil {
+			return nil, err
+		}
+		if p.State == "" {
+			p.State = "open"
 		}
 		p.CreatedAt = time.Unix(at, 0)
 		p.DescribedAt = p.CreatedAt

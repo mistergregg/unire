@@ -289,9 +289,9 @@ function newSegment(running) {
   const dots = el("span", { class: "working-dots" });
   const summary = el("summary", {}, spin, stepText, dots);
   const steps = el("div", { class: "steps" });
-  // Open while the agent works, so what it is doing is in view; folded away when it is done.
+  // Folded away like when done so it does not take up room; click to expand, or opens when blocked.
   const activity = el("details", { class: "activity" }, summary, steps);
-  activity.open = running;
+  activity.open = false;
   const askBox = el("div", { class: "asks" });
   const shareBox = el("div", { class: "shares" });
   const answer = el("div", { class: "agent-text" });
@@ -454,8 +454,15 @@ function setComposer() {
   replyModel.disabled = running;
   $("s-title").textContent = thread[0].s.task;
   const badge = $("s-status");
-  badge.className = "badge st-" + tail.s.status;
-  badge.textContent = tail.s.status;
+  const status = tail.s.status;
+  if (!status || status === "running" || status === "done") {
+    badge.hidden = true;
+    badge.textContent = "";
+  } else {
+    badge.hidden = false;
+    badge.className = "badge st-" + status;
+    badge.textContent = status;
+  }
   const repos = thread[0].s.repos.map((r) => r.fullName.split("/").pop());
   $("s-meta").replaceChildren(
     pill(agentLabel(tail.s.agent) + (tail.s.model ? " · " + tail.s.model : "")),

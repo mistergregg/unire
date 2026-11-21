@@ -140,7 +140,7 @@ function sessionRow(s) {
   }
 
   const row = el("div", { class: "side-item " + light + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
-    el("span", { class: "dot" }),
+    el("span", { class: "dot", title: status }),
     el("div", { class: "side-item-content" },
       el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(lastTouched(s)))),
       el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),

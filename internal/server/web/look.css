@@ -225,7 +225,7 @@ input, select, textarea { border-radius: 6px; border-color: var(--line); }
 }
 .chat-head::before { display: none; }
 .chat-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.chat-head-main h1 { margin: 0; font-size: 16.5px; font-weight: 650; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.chat-head-main h1 { margin: 0; font-size: 16.5px; font-weight: 650; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .chat-head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .side-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .side-toggle svg { width: 14px; height: 14px; }
@@ -602,7 +602,7 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
     line-height: 1.35;
     font-weight: 650;
     letter-spacing: -.02em;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-width: 0;
     display: -webkit-box;
     -webkit-line-clamp: 2;

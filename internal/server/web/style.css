@@ -26,7 +26,7 @@ nav { display: flex; gap: 4px; flex: 1; align-items: center; }
 .tab { background: none; border: 1px solid transparent; padding: 5px 11px; border-radius: 6px; color: var(--muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s ease; }
 .tab:hover { background: var(--panel-subtle); color: var(--text); }
 .tab[aria-current="true"] { background: var(--panel-subtle); color: var(--text); font-weight: 600; border-color: var(--line); }
-main { max-width: 1360px; margin: 0 auto; padding: 18px 24px; }
+main { width: 100%; min-height: 100vh; margin: 0; padding: 0; max-width: none; }
 h1 { font-size: 20px; margin: 8px 0; font-weight: 650; letter-spacing: -.02em; }
 h2 { font-size: 16px; margin: 0 0 10px; font-weight: 650; letter-spacing: -.01em; }
 .muted { color: var(--muted); }
@@ -126,26 +126,31 @@ code { font-family: ui-monospace, "SF Mono", Monaco, Consolas, "Liberation Mono"
 .ask-form textarea { margin-bottom: 6px; }
 .st-attention { color: #d97706; border-color: #d97706; font-weight: 600; }
 
-/* Chats: the list of conversations on the left, the open one on the right. */
-main.wide { max-width: 1680px; }
-.workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 24px; align-items: start; }
-.side { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+/* Unified app layout: full-height sidebar on the left, pane on the right */
+main.wide { max-width: none; }
+.workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 0; min-height: 100vh; align-items: stretch; }
+.side {
+  position: sticky; top: 0; height: 100vh; max-height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--panel); border-right: 1px solid var(--line); box-sizing: border-box; z-index: 10;
+}
 .side .primary { width: 100%; }
 .side-list { display: flex; flex-direction: column; gap: 4px; }
 .side-item { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; cursor: pointer; background: var(--panel); }
 .side-item:hover, .side-item:focus-visible { border-color: var(--accent); outline: none; }
 .side-item.selected { border-color: var(--accent); background: var(--panel-subtle); box-shadow: inset 3px 0 0 var(--accent); }
 .small-line { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pane { min-width: 0; }
+.pane { min-width: 0; min-height: 100vh; padding: 16px 28px 32px; background: var(--bg); box-sizing: border-box; }
 .pane > section { max-width: 100%; }
 .empty { padding: 24px 0; }
 .back { display: none; }
 @media (max-width: 800px) {
   .workspace { grid-template-columns: 1fr; }
-  .side { position: static; max-height: none; }
+  .side { position: static; height: auto; max-height: none; min-height: 100vh; border-right: none; }
+  .pane { padding: 12px 16px 24px; }
   .workspace.chat-open .side { display: none; }
   .workspace:not(.chat-open) .pane { display: none; }
-  .back { display: inline-block; }
+  .back { display: inline-flex; }
 }
 
 /* files the agent shared: a card you expand to read, copy or download */

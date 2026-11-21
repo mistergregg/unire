@@ -157,12 +157,9 @@ input, select, textarea { border-radius: 6px; border-color: var(--line); }
 .chat-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 42px; padding: 6px 0 10px; margin-bottom: 6px; border-bottom: 1px solid var(--line);
-  position: sticky; top: var(--top-h); z-index: 6; background: var(--bg);
+  position: sticky; top: 0; z-index: 6; background: var(--bg);
 }
-.chat-head::before {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 80px;
-  background: var(--bg); pointer-events: none;
-}
+.chat-head::before { display: none; }
 .chat-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .chat-head-main h1 { margin: 0; font-size: 16.5px; font-weight: 650; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .chat-head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
@@ -184,7 +181,7 @@ input, select, textarea { border-radius: 6px; border-color: var(--line); }
 /* Side Inspector Panel */
 .chat-side-panel {
   display: none; flex-direction: column; width: 340px; flex: none;
-  position: sticky; top: calc(var(--top-h) + 52px); max-height: calc(100vh - var(--top-h) - 64px);
+  position: sticky; top: 56px; max-height: calc(100vh - 72px);
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow);
   overflow: hidden; animation: rise .2s cubic-bezier(.16, 1, .3, 1) both;
 }
@@ -405,23 +402,80 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
 
 .side-item > div { min-width: 0; }
 
-/* The chat list stays in view under the header. "New chat" and the search stay
-   at the top of it; only the list of chats scrolls. */
-:root { --top-h: 52px; }
+/* Unified full-height sidebar with Brand, Actions, Chats, and Navigation */
+:root { --top-h: 0px; }
 .side {
-  top: calc(var(--top-h) + 12px); max-height: calc(100vh - var(--top-h) - 24px);
-  overflow: hidden; display: flex; flex-direction: column; gap: 10px;
+  position: sticky; top: 0; height: 100vh; max-height: 100vh;
+  overflow: hidden; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; background: var(--panel); border-right: 1px solid var(--line);
+  box-sizing: border-box; z-index: 10;
 }
-.side-list { overflow-y: auto; min-height: 0; flex: 1; padding: 0 2px 6px 0; }
+.side-brand-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 4px 6px; min-height: 30px;
+}
+.side-brand-row .brand {
+  font-size: 15.5px; font-weight: 700; color: var(--text); letter-spacing: -.02em;
+}
+.side-logout {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+  padding: 3px 8px; min-height: 24px; color: var(--muted); border-radius: 4px;
+}
+.side-logout:hover { color: var(--text); }
+.side-logout svg {
+  width: 14px; height: 14px; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.side-search {
+  margin: 0; padding: 6px 10px; font-size: 12.5px; border-radius: 6px;
+  background: var(--panel-subtle); border: 1px solid var(--line); color: var(--text);
+}
+.side-search:focus { border-color: var(--accent); outline: none; }
+.side-list-wrap {
+  flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column;
+  overflow: hidden; margin-top: 4px;
+}
+.side-group {
+  font-size: 10.5px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); padding: 6px 4px 4px; flex: none;
+}
+.side-list {
+  flex: 1 1 0; overflow-y: auto; min-height: 0; display: flex;
+  flex-direction: column; gap: 4px; padding: 0 2px 4px 0;
+}
+.side-nav {
+  flex: none; display: flex; flex-direction: column; gap: 2px;
+  padding-top: 8px; border-top: 1px solid var(--line);
+}
+.side-nav-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 6px 10px; min-height: 32px; border-radius: 6px;
+  font-size: 13px; font-weight: 500; color: var(--muted);
+  background: transparent; border: 1px solid transparent;
+  text-align: left; cursor: pointer; transition: color .15s, background .15s, border-color .15s;
+}
+.side-nav-item:hover {
+  background: var(--panel-subtle); color: var(--text); border-color: transparent;
+}
+.side-nav-item[aria-current="true"] {
+  background: var(--panel-subtle); color: var(--text); font-weight: 600;
+  border-color: var(--line);
+}
+.tab-icon {
+  width: 16px; height: 16px; flex: none; fill: none;
+  stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
 @media (max-width: 800px) {
-  .side { position: static; max-height: none; overflow: visible; }
+  .side { position: static; height: auto; max-height: none; overflow: visible; border-right: none; }
+  .side-list-wrap { overflow: visible; min-height: auto; }
   .side-list { overflow: visible; }
+  .side-nav { margin-top: 12px; }
 }
 
 @media (max-width: 1100px) {
   .session-body.side-open .chat-side-panel {
-    position: fixed; top: var(--top-h); right: 0; bottom: 0;
-    max-height: calc(100vh - var(--top-h)); width: min(380px, 92vw);
+    position: fixed; top: 0; right: 0; bottom: 0;
+    max-height: 100vh; width: min(380px, 92vw);
     z-index: 30; border-radius: 0; border-right: 0; border-top: 0; border-bottom: 0;
     box-shadow: -4px 0 24px rgba(0, 0, 0, .3);
   }

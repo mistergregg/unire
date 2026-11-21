@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -366,6 +367,7 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		startHeads[dir] = head
 	}
 	w.mu.Unlock()
+	w.ad, w.ref = adapter, ref
 	outcomes, err := w.finish(ctx, spec, startHeads)
 	if err != nil {
 		return res, err
@@ -408,6 +410,8 @@ type worker struct {
 	added       []session.Repo    // repos brought in while the agent ran
 	addedTokens map[string]string // their tokens, by directory
 	addedHeads  map[string]string // where each started
+	ad          agent.Adapter     // the agent that worked this turn, asked to fix a push that fails
+	ref         string            // its conversation
 	sb          runner.Sandbox
 	opt         Options
 }
@@ -555,7 +559,7 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 			outcomes[repo.Name] = o
 			continue
 		}
-		if _, err := w.git(ctx, dir, &repo, "push", "-u", "origin", spec.Branch()); err != nil {
+		if err := w.pushBranch(ctx, dir, &repo, spec.Branch()); err != nil {
 			return outcomes, fmt.Errorf("push %s: %w%s", repo.Name, err, pushHint(err))
 		}
 		o.pushed = true
@@ -761,7 +765,7 @@ func (w *worker) pushExtraBranches(ctx context.Context, dir string, repo *sessio
 		} else if b, err := w.git(ctx, dir, repo, "config", "--get", "branch."+name+".unire-base"); err == nil {
 			base = strings.TrimSpace(b)
 		}
-		if _, err := w.git(ctx, dir, repo, "push", "-u", "origin", name); err != nil {
+		if err := w.pushBranch(ctx, dir, repo, name); err != nil {
 			fmt.Fprintf(w.opt.Err, "%s: could not push %s: %v\n", repo.Name, name, err)
 			continue
 		}
@@ -871,6 +875,248 @@ func (w *worker) hasUnpushedWork(ctx context.Context, dir string, repo *session.
 	}
 	ahead, err := strconv.Atoi(strings.TrimSpace(n))
 	return err == nil && ahead > 0
+}
+
+// maxPushFixes is how many times the agent is asked to repair a branch that cannot
+// be pushed before Unire gives up and reports the problem.
+const maxPushFixes = 2
+
+// pushBranch pushes a branch, keeping it up to date first so the push is not
+// refused and the pull request is not left behind (see syncAndPush). When that
+// still fails in a way the agent can repair (a conflict with newer commits, or the
+// server refusing what was pushed), the agent is asked to fix it, in the same
+// conversation, and the push is tried again, up to maxPushFixes times. Problems
+// the agent cannot fix (a token that cannot write, no network) are reported at once.
+func (w *worker) pushBranch(ctx context.Context, dir string, repo *session.Repo, name string) error {
+	var err error
+	for fixes := 0; ; fixes++ {
+		if err = w.syncAndPush(ctx, dir, repo, name); err == nil {
+			return nil
+		}
+		if fixes >= maxPushFixes || w.ad == nil || ctx.Err() != nil || !agentCanFix(err) {
+			w.abortMerge(ctx, dir, repo)
+			return err
+		}
+		if !w.askAgentToFixPush(ctx, dir, repo, name, err) {
+			w.abortMerge(ctx, dir, repo)
+			return err
+		}
+	}
+}
+
+// syncAndPush is one try at pushing:
+//  1. Commits that appeared on the server's copy of the branch (the owner pressed
+//     "Update branch", or something pushed from elsewhere) are brought in.
+//  2. When the branch has fallen behind the branch it is meant for (usually main),
+//     that is merged in, as "Update branch" would, if it merges cleanly.
+//  3. A push that is refused anyway (something moved in between) brings the newer
+//     commits in again and retries.
+//
+// A conflict that automatic merging cannot resolve is returned as a *conflictError
+// with the merge left open in the working tree, for the agent to finish.
+func (w *worker) syncAndPush(ctx context.Context, dir string, repo *session.Repo, name string) error {
+	_, _ = w.git(ctx, dir, repo, "fetch", "origin") // best effort: the branch may not exist on the server yet
+	if err := w.integrate(ctx, dir, repo, "origin/"+name, false); err != nil {
+		return err
+	}
+	if err := w.updateFromBase(ctx, dir, repo, name); err != nil {
+		// A conflict with the base: the agent gets a go at it, but if it cannot
+		// resolve it the branch is still pushed as it is.
+		var c *conflictError
+		if !errors.As(err, &c) || w.ad == nil || !w.askAgentToFixPush(ctx, dir, repo, name, err) {
+			w.abortMerge(ctx, dir, repo)
+			fmt.Fprintf(w.opt.Err, "%s: %v; the branch is left as it is\n", repo.Name, err)
+		}
+	}
+	_, err := w.git(ctx, dir, repo, "push", "-u", "origin", name)
+	for try := 0; err != nil && rejectedPush(err) && try < 3; try++ {
+		fmt.Fprintf(w.opt.Err, "%s: the server has newer commits on %s; bringing them in and pushing again\n", repo.Name, name)
+		if _, ferr := w.git(ctx, dir, repo, "fetch", "origin", name); ferr != nil {
+			return fmt.Errorf("%w (and fetching the newer commits failed: %v)", err, ferr)
+		}
+		if ierr := w.integrate(ctx, dir, repo, "origin/"+name, true); ierr != nil {
+			return ierr
+		}
+		_, err = w.git(ctx, dir, repo, "push", "-u", "origin", name)
+	}
+	return err
+}
+
+// conflictError is a merge that stopped on conflicts. The merge is still open in
+// the working tree.
+type conflictError struct {
+	ref   string
+	files []string
+	err   error
+}
+
+func (c *conflictError) Error() string {
+	return fmt.Sprintf("the newer commits on %s conflict with this branch (in %s), so they could not be brought in automatically: %v", c.ref, strings.Join(c.files, ", "), c.err)
+}
+func (c *conflictError) Unwrap() error { return c.err }
+
+// integrate brings the commits of ref that the current branch lacks into it: a
+// rebase (keeps the history straight), or a merge when the rebase conflicts. With
+// force false it does nothing when there is nothing to bring in. A conflict that
+// neither can resolve is returned as a *conflictError, the merge left open.
+func (w *worker) integrate(ctx context.Context, dir string, repo *session.Repo, ref string, force bool) error {
+	if !force && w.behindBy(ctx, dir, repo, ref) == 0 {
+		return nil
+	}
+	if _, err := w.git(ctx, dir, repo, append(gitIdentity(), "rebase", ref)...); err == nil {
+		return nil
+	}
+	_, _ = w.git(ctx, dir, repo, "rebase", "--abort")
+	return w.mergeIn(ctx, dir, repo, ref, "the rebase conflicted, so %s was merged in instead")
+}
+
+// mergeIn merges ref into the current branch. When it stops on conflicts they are
+// left in the working tree and returned as a *conflictError; any other failure
+// aborts the merge.
+func (w *worker) mergeIn(ctx context.Context, dir string, repo *session.Repo, ref, note string) error {
+	_, err := w.git(ctx, dir, repo, append(gitIdentity(), "merge", "--no-edit", ref)...)
+	if err == nil {
+		fmt.Fprintf(w.opt.Err, "%s: "+note+"\n", repo.Name, ref)
+		return nil
+	}
+	if files := w.unmerged(ctx, dir, repo); len(files) > 0 {
+		return &conflictError{ref: ref, files: files, err: err}
+	}
+	w.abortMerge(ctx, dir, repo)
+	return fmt.Errorf("could not bring in %s: %w", ref, err)
+}
+
+func gitIdentity() []string {
+	return []string{"-c", "user.name=" + commitName, "-c", "user.email=" + commitEmail}
+}
+
+// unmerged lists the files with unresolved conflicts.
+func (w *worker) unmerged(ctx context.Context, dir string, repo *session.Repo) []string {
+	out, err := w.git(ctx, dir, repo, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(out)
+}
+
+// abortMerge puts the working tree back as it was before a merge that is still
+// open (a no-op when none is).
+func (w *worker) abortMerge(ctx context.Context, dir string, repo *session.Repo) {
+	_, _ = w.git(ctx, dir, repo, "merge", "--abort")
+}
+
+// behindBy is how many commits ref has that the current branch lacks (0 when ref
+// does not exist or cannot be compared).
+func (w *worker) behindBy(ctx context.Context, dir string, repo *session.Repo, ref string) int {
+	out, err := w.git(ctx, dir, repo, "rev-list", "--count", "HEAD.."+ref)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// updateFromBase merges the branch this one is meant for (the repo's base, else
+// its default branch) into it when it has moved on, so the pull request is not
+// out of date. A conflict is returned as a *conflictError, the merge left open.
+func (w *worker) updateFromBase(ctx context.Context, dir string, repo *session.Repo, name string) error {
+	base := "origin/HEAD"
+	if repo.Base != "" {
+		base = "origin/" + repo.Base
+	}
+	if base == "origin/"+name || w.behindBy(ctx, dir, repo, base) == 0 {
+		return nil
+	}
+	return w.mergeIn(ctx, dir, repo, base, "brought %s in so the pull request is not out of date")
+}
+
+// agentCanFix says whether asking the agent could help with a failed push: a
+// conflict it can resolve, or the server refusing the push for a reason in the
+// code (a hook, a file that is too large). Not a token that cannot write, or a
+// network that is down: those are the owner's to fix.
+func agentCanFix(err error) bool {
+	var c *conflictError
+	if errors.As(err, &c) {
+		return true
+	}
+	m := err.Error()
+	if pushHint(err) != "" || strings.Contains(m, "unable to access") || strings.Contains(m, "Could not resolve host") ||
+		strings.Contains(m, "timed out") || strings.Contains(m, "Connection") || strings.Contains(m, "Authentication failed") {
+		return false
+	}
+	return strings.Contains(m, "rejected") || strings.Contains(m, "remote:")
+}
+
+// askAgentToFixPush asks the agent, in the conversation it just worked in, to
+// repair what stopped the push, and reports whether the branch is ready to push
+// again. For a conflict the merge is left open in the working tree for it to
+// finish; Unire commits the merge if the agent only resolved the files. The agent
+// is told not to push: only Unire holds the token.
+func (w *worker) askAgentToFixPush(ctx context.Context, dir string, repo *session.Repo, name string, cause error) bool {
+	var c *conflictError
+	isConflict := errors.As(cause, &c)
+	var prompt string
+	if isConflict {
+		prompt = fmt.Sprintf("Unire tried to bring %s into your branch %s (repo %s, in %s) so the pull request stays up to date, and git stopped on conflicts in: %s.\n\n"+
+			"The merge is open in the working tree. Resolve every conflict so that both sides' intent is kept and nothing that works breaks (read both versions, do not just pick one side), run the tests if there are any, `git add` the resolved files and finish with `git commit --no-edit`. "+
+			"Do NOT run `git merge --abort`, and do not push: Unire pushes for you afterwards.",
+			c.ref, name, repo.Name, dir, strings.Join(c.files, ", "))
+	} else {
+		prompt = fmt.Sprintf("Unire tried to push your branch %s (repo %s, in %s) and the server refused:\n\n%s\n\n"+
+			"Fix the repository so the push can succeed (for example: remove or shrink what the server objects to, and amend or add a commit). Do not push: Unire pushes for you afterwards, and it already fetches and merges newer commits itself.",
+			name, repo.Name, dir, truncate(cause.Error(), 1500))
+	}
+	argv, resumed := w.ad.FollowUp(prompt, w.spec.Mode, w.ref)
+	if !resumed {
+		fresh := prompt + "\n\nThe task you were given was:\n<task>\n" + w.spec.Prompt + "\n</task>\nYou are in a new conversation: use git log and git diff to see what was done."
+		var err error
+		if argv, err = w.ad.Command(fresh, w.spec.Mode, ""); err != nil {
+			return false
+		}
+	}
+	timeout := w.opt.MemoryTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Minute
+	}
+	fctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	fmt.Fprintf(w.opt.Err, "%s: the push did not work (%s); asking the agent to fix it\n", repo.Name, truncate(strings.Join(strings.Fields(cause.Error()), " "), 200))
+	var errb bytes.Buffer
+	if err := w.sb.Exec(fctx, runner.ExecOpts{Argv: argv, Dir: workspace, Stdout: io.Discard, Stderr: &errb}); err != nil {
+		fmt.Fprintf(w.opt.Err, "%s: the agent could not fix it: %v\n", repo.Name, err)
+		return false
+	}
+	if !isConflict {
+		return true // syncAndPush runs again and shows whether it worked
+	}
+	// The conflict must be gone, and the merge finished.
+	if left := w.unmerged(ctx, dir, repo); len(left) > 0 {
+		fmt.Fprintf(w.opt.Err, "%s: the agent left conflicts in %s\n", repo.Name, strings.Join(left, ", "))
+		return false
+	}
+	if w.behindBy(ctx, dir, repo, c.ref) > 0 { // resolved but not committed
+		if _, err := w.git(ctx, dir, repo, append(gitIdentity(), "commit", "--no-edit")...); err != nil {
+			fmt.Fprintf(w.opt.Err, "%s: could not finish the merge: %v\n", repo.Name, err)
+			return false
+		}
+	}
+	fmt.Fprintf(w.opt.Err, "%s: the agent resolved the conflicts\n", repo.Name)
+	return true
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// rejectedPush reports whether git refused a push because the remote branch has
+// commits this clone lacks (as opposed to a permission or network problem).
+func rejectedPush(err error) bool {
+	m := err.Error()
+	return strings.Contains(m, "fetch first") || strings.Contains(m, "non-fast-forward") ||
+		(strings.Contains(m, "[rejected]") && strings.Contains(m, "remote contains work"))
 }
 
 // pushHint says what is probably wrong when a push is refused for lack of permission.

@@ -6,7 +6,30 @@
 // every few seconds while Unire is open. Browsers only allow notifications on
 // https (or localhost); the count and the title work everywhere.
 
-const attention = { started: false, notified: new Set() };
+const attention = { started: false, notified: new Set(), knownPRs: new Set(), prsInitialized: false };
+
+function playPRChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    // Pleasant two-tone bell chime: D5 (587.33Hz) -> A5 (880Hz)
+    const notes = [587.33, 880];
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + idx * 0.09);
+      gain.gain.setValueAtTime(0.12, now + idx * 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.09);
+      osc.stop(now + idx * 0.09 + 0.36);
+    });
+  } catch (_) { /* audio disabled or not allowed yet */ }
+}
 
 function startAttention() {
   if (attention.started) return;
@@ -37,6 +60,20 @@ async function checkAttention() {
     if (!looking) tellOwner(s, tail);
   }
   attention.notified = now; // a later question in the same session is new again
+
+  // Track pull requests and alert when a new one is opened
+  const currentPRs = new Set();
+  for (const s of list) {
+    for (const p of (s.pulls || [])) {
+      const prKey = s.id + "/" + p.serverId + "/" + p.repo + "/" + p.number;
+      currentPRs.add(prKey);
+      if (attention.prsInitialized && !attention.knownPRs.has(prKey)) {
+        tellOwnerNewPR(s, p);
+      }
+    }
+  }
+  attention.knownPRs = currentPRs;
+  attention.prsInitialized = true;
 }
 
 function tellOwner(s, tail) {
@@ -45,6 +82,28 @@ function tellOwner(s, tail) {
     const n = new Notification("Unire", { body: text, tag: tail });
     n.onclick = () => { window.focus(); guarded(null, () => openSession(s.id)); n.close(); };
   } else if (!document.hidden) {
+    banner(text);
+  }
+}
+
+function tellOwnerNewPR(s, p) {
+  playPRChime();
+  const text = "Pull request #" + p.number + " opened in " + p.repo + " for “" + s.task + "”";
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    const n = new Notification("Unire: Pull request #" + p.number + " opened", {
+      body: p.repo + ": " + p.title,
+      tag: s.id + "/" + p.number
+    });
+    n.onclick = () => {
+      window.focus();
+      guarded(null, async () => {
+        await openSession(s.id);
+        if (typeof setSidePanelOpen === "function") setSidePanelOpen(true);
+        if (typeof selectSideTab === "function") selectSideTab("prs");
+      });
+      n.close();
+    };
+  } else {
     banner(text);
   }
 }

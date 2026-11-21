@@ -45,18 +45,18 @@ func (f *fakeCI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(fmt.Sprintf(`{"behind_by":%d}`, behind)))
 	case "/api/v3/repos/o/r/pulls/5/update-branch":
 		if r.Method != "PUT" {
-			http.Error(w, "{}", 405)
+			http.Error(w, "{}", http.StatusMethodNotAllowed)
 			return
 		}
 		if conflict {
-			http.Error(w, `{"message":"merge conflict between base and head"}`, 422)
+			http.Error(w, `{"message":"merge conflict between base and head"}`, http.StatusUnprocessableEntity)
 			return
 		}
 		f.mu.Lock()
 		f.updates++
 		f.behind = 0
 		f.mu.Unlock()
-		w.WriteHeader(202)
+		w.WriteHeader(http.StatusAccepted)
 		w.Write([]byte(`{"message":"Updating pull request branch."}`))
 	case "/api/v3/repos/o/r/commits/" + sha + "/check-runs":
 		if noChecks {

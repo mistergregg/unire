@@ -19,6 +19,8 @@ unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gco
 
 `unire-slice` uses the bundled CuraEngine 4.x definition files and `profiles/petg_0.2mm.json`. The printer geometry and temperatures are generic example settings; set them for the actual printer before using the G-code. The script reports time, layer count, and material volume from CuraEngine's slice output. It does not treat the G-code header's summary fields as authoritative.
 
+The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`profiles/NOTICE.md`](profiles/NOTICE.md). The PETG profile is project-authored.
+
 ## What works
 
 - `gen_enclosure.py` reads board and enclosure JSON and writes base/lid STL and STEP files, three headless PNG previews using a Pillow z-buffer renderer, and `report.json`.

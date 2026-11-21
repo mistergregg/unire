@@ -873,31 +873,87 @@ func (w *worker) hasUnpushedWork(ctx context.Context, dir string, repo *session.
 	return err == nil && ahead > 0
 }
 
-// pushBranch pushes a branch. When the server refuses because the branch moved on
-// (someone used "Update branch" on the pull request, merged something into it, or
-// pushed from elsewhere), it brings those commits in and tries again, so the
-// owner never has to fix it by hand: first a rebase (keeps the history straight),
-// then a merge when the rebase hits conflicts. Only when both conflict does it
-// give up, with the branch left clean.
+// pushBranch pushes a branch, keeping it up to date first so the push is not
+// refused and the pull request is not left behind:
+//  1. Commits that appeared on the server's copy of the branch (the owner pressed
+//     "Update branch", or something pushed from elsewhere) are brought in.
+//  2. When the branch has fallen behind the branch it is meant for (usually main),
+//     that is merged in, as "Update branch" would, if it merges cleanly.
+//
+// A push that is refused anyway (something moved in between) brings the newer
+// commits in again and retries. Only a conflict that nothing can resolve
+// automatically is reported, with the branch left clean.
 func (w *worker) pushBranch(ctx context.Context, dir string, repo *session.Repo, name string) error {
+	_, _ = w.git(ctx, dir, repo, "fetch", "origin") // best effort: the branch may not exist on the server yet
+	if err := w.integrate(ctx, dir, repo, name, "origin/"+name, false); err != nil {
+		return err
+	}
+	w.updateFromBase(ctx, dir, repo, name)
 	_, err := w.git(ctx, dir, repo, "push", "-u", "origin", name)
 	for try := 0; err != nil && rejectedPush(err) && try < 3; try++ {
 		fmt.Fprintf(w.opt.Err, "%s: the server has newer commits on %s; bringing them in and pushing again\n", repo.Name, name)
 		if _, ferr := w.git(ctx, dir, repo, "fetch", "origin", name); ferr != nil {
 			return fmt.Errorf("%w (and fetching the newer commits failed: %v)", err, ferr)
 		}
-		id := []string{"-c", "user.name=" + commitName, "-c", "user.email=" + commitEmail}
-		if _, rerr := w.git(ctx, dir, repo, append(id, "rebase", "origin/"+name)...); rerr != nil {
-			_, _ = w.git(ctx, dir, repo, "rebase", "--abort")
-			if _, merr := w.git(ctx, dir, repo, append(id, "merge", "--no-edit", "origin/"+name)...); merr != nil {
-				_, _ = w.git(ctx, dir, repo, "merge", "--abort")
-				return fmt.Errorf("%w (the newer commits conflict with this branch, so they could not be merged automatically: %v)", err, merr)
-			}
-			fmt.Fprintf(w.opt.Err, "%s: the rebase conflicted, so the newer commits were merged in instead\n", repo.Name)
+		if ierr := w.integrate(ctx, dir, repo, name, "origin/"+name, true); ierr != nil {
+			return fmt.Errorf("%w (%v)", err, ierr)
 		}
 		_, err = w.git(ctx, dir, repo, "push", "-u", "origin", name)
 	}
 	return err
+}
+
+// integrate brings the commits of ref that the current branch lacks into it: a
+// rebase (keeps the history straight), or a merge when the rebase conflicts. With
+// force false it does nothing when there is nothing to bring in. A conflict that
+// neither can resolve is aborted, leaving the branch as it was, and returned.
+func (w *worker) integrate(ctx context.Context, dir string, repo *session.Repo, name, ref string, force bool) error {
+	if !force && w.behindBy(ctx, dir, repo, ref) == 0 {
+		return nil
+	}
+	id := []string{"-c", "user.name=" + commitName, "-c", "user.email=" + commitEmail}
+	if _, err := w.git(ctx, dir, repo, append(id, "rebase", ref)...); err == nil {
+		return nil
+	}
+	_, _ = w.git(ctx, dir, repo, "rebase", "--abort")
+	if _, err := w.git(ctx, dir, repo, append(id, "merge", "--no-edit", ref)...); err != nil {
+		_, _ = w.git(ctx, dir, repo, "merge", "--abort")
+		return fmt.Errorf("the newer commits on %s conflict with this branch, so they could not be brought in automatically: %v", ref, err)
+	}
+	fmt.Fprintf(w.opt.Err, "%s: the rebase conflicted, so %s was merged in instead\n", repo.Name, ref)
+	return nil
+}
+
+// behindBy is how many commits ref has that the current branch lacks (0 when ref
+// does not exist or cannot be compared).
+func (w *worker) behindBy(ctx context.Context, dir string, repo *session.Repo, ref string) int {
+	out, err := w.git(ctx, dir, repo, "rev-list", "--count", "HEAD.."+ref)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// updateFromBase merges the branch this one is meant for (the repo's base, else
+// its default branch) into it when it has moved on, so the pull request is not
+// out of date. It never fails the push: a conflict is left for the owner and the
+// agent, and the branch is left as it was.
+func (w *worker) updateFromBase(ctx context.Context, dir string, repo *session.Repo, name string) {
+	base := "origin/HEAD"
+	if repo.Base != "" {
+		base = "origin/" + repo.Base
+	}
+	if base == "origin/"+name || w.behindBy(ctx, dir, repo, base) == 0 {
+		return
+	}
+	id := []string{"-c", "user.name=" + commitName, "-c", "user.email=" + commitEmail}
+	if _, err := w.git(ctx, dir, repo, append(id, "merge", "--no-edit", base)...); err != nil {
+		_, _ = w.git(ctx, dir, repo, "merge", "--abort")
+		fmt.Fprintf(w.opt.Err, "%s: %s has moved on but does not merge cleanly into %s; left as it is\n", repo.Name, base, name)
+		return
+	}
+	fmt.Fprintf(w.opt.Err, "%s: brought %s into %s so the pull request is not out of date\n", repo.Name, base, name)
 }
 
 // rejectedPush reports whether git refused a push because the remote branch has

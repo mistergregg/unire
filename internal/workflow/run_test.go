@@ -23,18 +23,20 @@ import (
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
 // and "claude" behaves as the test configures.
 type fakeSandbox struct {
-	mu         sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
-	calls      []runner.ExecOpts
-	heads      int
-	noChange   bool   // the agent changes nothing: HEAD stays where it was
-	refs       string // what `git for-each-ref` prints: local branches and their upstreams
-	branchName string // what `git rev-parse --abbrev-ref HEAD` prints
-	noIdentity bool   // git has no user.name or user.email configured
-	unpushed   bool   // the branch holds commits the server does not have
-	pushErr    string // if set, a push fails with this message
-	rejects    int    // this many pushes are refused because the branch moved on
-	rebaseErr  string // if set, a rebase fails (a conflict)
-	mergeErr   string // if set, a merge fails (a conflict)
+	mu           sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
+	calls        []runner.ExecOpts
+	heads        int
+	noChange     bool   // the agent changes nothing: HEAD stays where it was
+	refs         string // what `git for-each-ref` prints: local branches and their upstreams
+	branchName   string // what `git rev-parse --abbrev-ref HEAD` prints
+	noIdentity   bool   // git has no user.name or user.email configured
+	unpushed     bool   // the branch holds commits the server does not have
+	pushErr      string // if set, a push fails with this message
+	rejects      int    // this many pushes are refused because the branch moved on
+	behindRemote int    // commits the server has on the branch that the clone lacks
+	behindBase   int    // commits the base branch has that the branch lacks
+	rebaseErr    string // if set, a rebase fails (a conflict)
+	mergeErr     string // if set, a merge fails (a conflict)
 
 	files     map[string]string // files the workflow wrote
 	outFiles  map[string]string // files the follow-up agent "writes"
@@ -132,6 +134,12 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			return nil
 		case contains(o.Argv, "--verify"):
 			return nil // the server has no copy of the branch
+		case contains(o.Argv, "rev-list") && contains(o.Argv, "HEAD..origin/HEAD"):
+			fmt.Fprintln(o.Stdout, f.behindBase)
+			return nil
+		case contains(o.Argv, "rev-list") && strings.Contains(strings.Join(o.Argv, " "), "HEAD..origin/"):
+			fmt.Fprintln(o.Stdout, f.behindRemote)
+			return nil
 		case contains(o.Argv, "rev-list"):
 			if f.unpushed {
 				io.WriteString(o.Stdout, "3\n")
@@ -1207,8 +1215,8 @@ func TestRejectedPushIsFetchedRebasedAndRetried(t *testing.T) {
 	if _, err := run(t, sb, baseSpec(), o); err != nil {
 		t.Fatalf("a branch that moved on should be synced, got: %v", err)
 	}
-	if gitCalls(sb, "fetch") != 1 || gitCalls(sb, "rebase") != 1 || gitCalls(sb, "push") != 2 {
-		t.Fatalf("want one fetch, one rebase and two pushes, got fetch=%d rebase=%d push=%d", gitCalls(sb, "fetch"), gitCalls(sb, "rebase"), gitCalls(sb, "push"))
+	if gitCalls(sb, "fetch") != 2 || gitCalls(sb, "rebase") != 1 || gitCalls(sb, "push") != 2 {
+		t.Fatalf("want a fetch before and after the refusal, one rebase and two pushes, got fetch=%d rebase=%d push=%d", gitCalls(sb, "fetch"), gitCalls(sb, "rebase"), gitCalls(sb, "push"))
 	}
 	if gitCalls(sb, "merge") != 0 {
 		t.Fatal("a clean rebase must not fall back to a merge")
@@ -1241,7 +1249,53 @@ func TestPermissionErrorsAreNotRetried(t *testing.T) {
 	if _, err := run(t, sb, baseSpec(), opts(nil)); err == nil {
 		t.Fatal("a refused token must still fail")
 	}
-	if gitCalls(sb, "fetch") != 0 {
-		t.Fatal("a permission error must not trigger a sync")
+	if gitCalls(sb, "rebase") != 0 || gitCalls(sb, "merge") != 0 || gitCalls(sb, "push") != 1 {
+		t.Fatal("a permission error must not trigger a rebase, merge or second push")
+	}
+}
+
+func TestNewerCommitsOnTheBranchAreBroughtInBeforePushing(t *testing.T) {
+	sb := &fakeSandbox{behindRemote: 2}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "rebase") != 1 || gitCalls(sb, "push") != 1 {
+		t.Fatalf("want a rebase before a single push (never refused), got rebase=%d push=%d", gitCalls(sb, "rebase"), gitCalls(sb, "push"))
+	}
+}
+
+func TestNothingToBringInMeansNoRebaseOrMerge(t *testing.T) {
+	sb := &fakeSandbox{}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "rebase") != 0 || gitCalls(sb, "merge") != 0 {
+		t.Fatal("an up to date branch must be left alone")
+	}
+	if gitCalls(sb, "fetch") < 1 {
+		t.Fatal("the push must fetch first")
+	}
+}
+
+func TestBranchBehindItsBaseGetsTheBaseMergedIn(t *testing.T) {
+	sb := &fakeSandbox{behindBase: 4}
+	var log bytes.Buffer
+	o := opts(nil)
+	o.Err = &log
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "merge") != 1 || !strings.Contains(log.String(), "not out of date") {
+		t.Fatalf("want the base merged in, got merges=%d log=%q", gitCalls(sb, "merge"), log.String())
+	}
+}
+
+func TestBaseThatConflictsIsLeftAloneAndThePushStillHappens(t *testing.T) {
+	sb := &fakeSandbox{behindBase: 4, mergeErr: "exit status 1: CONFLICT"}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatalf("a conflict with the base must not fail the push: %v", err)
+	}
+	if gitCalls(sb, "--abort") != 1 || gitCalls(sb, "push") != 1 {
+		t.Fatalf("want the merge aborted and the push done, got aborts=%d pushes=%d", gitCalls(sb, "--abort"), gitCalls(sb, "push"))
 	}
 }

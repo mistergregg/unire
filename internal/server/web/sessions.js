@@ -28,11 +28,11 @@ async function refreshSidebar() {
   try { renderSidebar(await api("GET", "/api/sessions")); } catch (e) { banner(e.message, true); }
 }
 
-// Waiting on you first, then running, then the rest, newest first.
-function sidebarRank(s) {
-  const st = s.latestStatus || s.status;
-  return s.waiting ? 0 : (st === "running" || st === "queued") ? 1 : 2;
-}
+// One list, the chat you acted on last first. The server says when that was (lastActive:
+// a message you sent or an answer you gave, a reply, or its agent finishing). A chat whose
+// agent is working has the pulsing blue dot, and one that waits for you says so, wherever
+// it is in the list.
+const lastTouched = (s) => s.lastActive || s.startedAt || s.createdAt;
 
 
 let sideSignature = "";
@@ -42,19 +42,14 @@ function renderSidebar(list) {
   const q = ($("side-search").value || "").trim().toLowerCase();
   const shown = !q ? list : list.filter((s) =>
     (s.task + " " + s.agent + " " + s.repos.map((r) => r.fullName).join(" ")).toLowerCase().includes(q));
-  const sorted = [...shown].sort((a, b) => sidebarRank(a) - sidebarRank(b) || (b.createdAt - a.createdAt));
+  const sorted = [...shown].sort((a, b) => lastTouched(b) - lastTouched(a) || b.createdAt - a.createdAt);
   // Draw again only when something changed, so the little lights keep pulsing
   // instead of starting over every few seconds.
   const sig = q + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
-    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting].join(":")).join(",");
+    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive].join(":")).join(",");
   if (sig === sideSignature) return;
   sideSignature = sig;
-  const out = [];
-  for (const [rank, label] of [[0, "Needs you"], [1, "Running"], [2, "Earlier"]]) {
-    const rows = sorted.filter((s) => sidebarRank(s) === rank);
-    if (rows.length) out.push(el("div", { class: "side-group" }, label), ...rows.map(sessionRow));
-  }
-  $("session-list").replaceChildren(...(out.length ? out
+  $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
     : [el("p", { class: "muted" }, q ? "No chats match." : "No chats yet. Add a git server, then press New chat.")]));
 }
 $("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
@@ -67,7 +62,7 @@ function sessionRow(s) {
   const row = el("div", { class: "side-item " + light + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
     el("span", { class: "dot" }),
     el("div", {},
-      el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(s.startedAt || s.createdAt))),
+      el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(lastTouched(s)))),
       el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
       s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : ""));
   row.addEventListener("click", open);

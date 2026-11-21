@@ -313,3 +313,25 @@ func TestCodexUsageEdgeCases(t *testing.T) {
 		t.Errorf("no windows = %+v", u)
 	}
 }
+
+func TestParseClaudeUsageOutput(t *testing.T) {
+	out := `{"is_error":false,"result":"You are currently using your subscription\n\nCurrent session: 45% used · resets Nov 21, 6:50am (UTC)\nCurrent week (all models): 30% used · resets Nov 26, 12pm (UTC)\nCurrent week (Opus): 5% used","type":"result"}`
+	now := time.Date(2026, 11, 21, 3, 0, 0, 0, time.UTC)
+	u, err := parseClaudeUsageOutput(out, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Windows) != 2 || u.Windows[0].Name != "5-hour" || u.Windows[0].UsedPercent != 45 ||
+		u.Windows[1].Name != "7-day" || u.Windows[1].UsedPercent != 30 {
+		t.Fatalf("windows: %+v", u.Windows)
+	}
+	if want := time.Date(2026, 11, 21, 6, 50, 0, 0, time.UTC).Unix(); u.Windows[0].ResetsAt != want {
+		t.Fatalf("reset %d want %d", u.Windows[0].ResetsAt, want)
+	}
+	if want := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC).Unix(); u.Windows[1].ResetsAt != want {
+		t.Fatalf("reset %d want %d", u.Windows[1].ResetsAt, want)
+	}
+	if _, err := parseClaudeUsageOutput(`{"result":"hello"}`, now); err == nil {
+		t.Fatal("want an error for an unexpected shape")
+	}
+}

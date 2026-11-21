@@ -448,6 +448,7 @@ async function openSession(id) {
   resetPulls();
   linksData = null;
   $("s-links").replaceChildren();
+  resetSidePanel();
   $("reply-text").value = "";
   replyAttach.clear();
   autoGrow();
@@ -679,6 +680,9 @@ function shareCard(t, e) {
   const ext = name.split(".").pop().toLowerCase();
   const mime = SHARE_IMAGES[ext];
   const actions = el("span", { class: "actions" });
+  const viewSide = el("button", { type: "button", class: "tiny", title: "View this file in the side inspector" }, "View side");
+  viewSide.addEventListener("click", () => viewSideFile(name));
+  actions.append(viewSide);
   let body;
   if (kind === "image" && mime) {
     const src = "data:" + mime + ";base64," + content;
@@ -710,4 +714,192 @@ function shareCard(t, e) {
   const older = [...t.shareBox.children].find((c) => c.dataset.filename === name);
   if (older) older.replaceWith(card);
   else t.shareBox.append(card);
+
+  registerSideFile({ name, kind, content, ext, mime });
 }
+
+// ---- Side Panel: Files & Session Info Inspector ----
+let sessionFiles = new Map();
+let sidePanelOpen = false;
+let sideActiveTab = "files";
+
+function initSidePanel() {
+  const toggleBtn = $("s-toggle-side");
+  const closeBtn = $("side-panel-close");
+  const tabFiles = $("side-tab-files");
+  const tabInfo = $("side-tab-info");
+  const viewerBack = $("side-viewer-back");
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      setSidePanelOpen(!sidePanelOpen);
+    });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      setSidePanelOpen(false);
+    });
+  }
+  if (tabFiles) {
+    tabFiles.addEventListener("click", () => selectSideTab("files"));
+  }
+  if (tabInfo) {
+    tabInfo.addEventListener("click", () => selectSideTab("info"));
+  }
+  if (viewerBack) {
+    viewerBack.addEventListener("click", () => {
+      const viewer = $("side-file-viewer");
+      const list = $("side-files-list-view");
+      if (viewer) viewer.hidden = true;
+      if (list) list.hidden = false;
+    });
+  }
+}
+
+function setSidePanelOpen(open) {
+  sidePanelOpen = open;
+  const body = document.querySelector(".session-body");
+  if (body) {
+    body.classList.toggle("side-open", open);
+  }
+  const toggleBtn = $("s-toggle-side");
+  if (toggleBtn) {
+    toggleBtn.setAttribute("aria-expanded", String(open));
+    toggleBtn.classList.toggle("active", open);
+  }
+}
+
+function selectSideTab(tab) {
+  sideActiveTab = tab;
+  const isFiles = tab === "files";
+  const tabF = $("side-tab-files");
+  const tabI = $("side-tab-info");
+  const paneF = $("side-pane-files");
+  const paneI = $("side-pane-info");
+  if (tabF) {
+    tabF.classList.toggle("active", isFiles);
+    tabF.setAttribute("aria-selected", String(isFiles));
+  }
+  if (tabI) {
+    tabI.classList.toggle("active", !isFiles);
+    tabI.setAttribute("aria-selected", String(!isFiles));
+  }
+  if (paneF) paneF.hidden = !isFiles;
+  if (paneI) paneI.hidden = isFiles;
+}
+
+function resetSidePanel() {
+  sessionFiles.clear();
+  const fileViewer = $("side-file-viewer");
+  const fileListView = $("side-files-list-view");
+  if (fileViewer) fileViewer.hidden = true;
+  if (fileListView) fileListView.hidden = false;
+  const empty = $("side-files-empty");
+  if (empty) empty.hidden = false;
+  const list = $("side-files-list");
+  if (list) {
+    list.hidden = true;
+    list.replaceChildren();
+  }
+  const badge = $("side-files-count");
+  if (badge) badge.hidden = true;
+  const sideBadge = $("s-side-badge");
+  if (sideBadge) sideBadge.hidden = true;
+  selectSideTab("files");
+  if (window.innerWidth >= 1100) {
+    setSidePanelOpen(true);
+  } else {
+    setSidePanelOpen(false);
+  }
+}
+
+function registerSideFile(file) {
+  sessionFiles.set(file.name, file);
+  const count = sessionFiles.size;
+  const badge = $("side-files-count");
+  if (badge) {
+    badge.textContent = count;
+    badge.hidden = false;
+  }
+  const sideBadge = $("s-side-badge");
+  if (sideBadge) {
+    sideBadge.textContent = count;
+    sideBadge.hidden = false;
+  }
+  const empty = $("side-files-empty");
+  if (empty) empty.hidden = true;
+  const list = $("side-files-list");
+  if (list) {
+    list.hidden = false;
+    renderSideFilesList();
+  }
+}
+
+function renderSideFilesList() {
+  const list = $("side-files-list");
+  if (!list) return;
+  const items = [];
+  for (const [name, file] of sessionFiles.entries()) {
+    const isImg = file.kind === "image";
+    const sizeStr = isImg ? "Image preview" : Math.max(1, Math.round(file.content.length / 1024)) + " KB";
+    const item = el("div", { class: "side-file-item", role: "button", tabindex: "0" },
+      el("div", { class: "side-file-meta" },
+        el("span", { class: "side-file-name" }, name),
+        el("span", { class: "side-file-sub" }, sizeStr)),
+      el("button", { type: "button", class: "ghost tiny" }, "View"));
+    item.addEventListener("click", () => viewSideFile(name));
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        viewSideFile(name);
+      }
+    });
+    items.push(item);
+  }
+  list.replaceChildren(...items);
+}
+
+function viewSideFile(name) {
+  const file = sessionFiles.get(name);
+  if (!file) return;
+  setSidePanelOpen(true);
+  selectSideTab("files");
+  const fileListView = $("side-files-list-view");
+  if (fileListView) fileListView.hidden = true;
+  const viewer = $("side-file-viewer");
+  if (!viewer) return;
+  viewer.hidden = false;
+  const viewerTitle = $("side-viewer-title");
+  if (viewerTitle) {
+    viewerTitle.textContent = name;
+    viewerTitle.title = name;
+  }
+
+  const actions = $("side-viewer-actions");
+  actions.replaceChildren();
+
+  const isImg = file.kind === "image" && file.mime;
+  let body;
+  if (isImg) {
+    const src = "data:" + file.mime + ";base64," + file.content;
+    body = el("img", { class: "share-img", src, alt: name });
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", () => {
+      const bin = atob(file.content);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      download(name, new Blob([bytes], { type: file.mime }));
+    });
+    actions.append(save);
+  } else {
+    const isMd = /\.(md|markdown)$/i.test(name);
+    body = isMd ? el("div", { class: "md" }, renderMarkdown(file.content)) : el("pre", { class: "log" }, file.content);
+    const copy = el("button", { type: "button", class: "tiny" }, "Copy");
+    copy.addEventListener("click", () => copyText(file.content, copy));
+    const save = el("button", { type: "button", class: "tiny" }, "Download");
+    save.addEventListener("click", () => download(name, new Blob([file.content], { type: "text/plain;charset=utf-8" })));
+    actions.append(copy, save);
+  }
+  $("side-viewer-body").replaceChildren(body);
+}
+
+initSidePanel();

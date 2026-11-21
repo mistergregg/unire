@@ -1,0 +1,57 @@
+{
+  "board_name": "ESP32-DevKitC",
+  "outer_dimensions_mm": {
+    "length": 56.5,
+    "width": 33.3,
+    "height": 16.9,
+    "base_height": 11.9,
+    "lid_height": 5.0
+  },
+  "cavity_dimensions_mm": {
+    "length": 52.5,
+    "width": 29.3,
+    "total_height": 12.9,
+    "base_cavity_height": 9.9,
+    "lid_cavity_height": 3.0
+  },
+  "volumes_mm3": {
+    "base": 7622.71,
+    "lid": 4448.96,
+    "total": 12071.68
+  },
+  "estimated_filament": {
+    "material": "PETG",
+    "density_g_cm3": 1.27,
+    "solid_weight_grams": 15.33,
+    "estimated_20pct_infill_weight_grams": 13.03
+  },
+  "design_rules_and_sources": {
+    "wall_thickness_mm": {
+      "value": 2.0,
+      "rationale": "Standard FDM parameter: 4-5 perimeters with a 0.4mm nozzle to provide rigidity and eliminate warping without excessive print time."
+    },
+    "clearance_mm": {
+      "value": 0.5,
+      "rationale": "0.5mm drop-in clearance absorbs typical \u00b10.15mm FDM printer dimensional deviation and \u00b10.2mm PCB CNC routing edge tolerance."
+    },
+    "standoff_height_mm": {
+      "value": 3.5,
+      "rationale": "Elevates PCB 3.5mm above floor, clearing bottom through-hole solder pins and surface mount components (1.8mm max) plus ventilation."
+    },
+    "heat_set_insert_spec": {
+      "screw_size": "M2.5",
+      "pilot_diameter_mm": 3.6,
+      "boss_diameter_mm": 6.0,
+      "boss_wall_annulus_mm": 1.2,
+      "rationale": "Follows CNC Kitchen / McMaster-Carr insert standards. Annular boss wall >=1.0mm prevents hoop stress blowout during hot soldering-iron insertion."
+    },
+    "tongue_and_groove_joint": {
+      "lip_height_mm": 1.4,
+      "lip_thickness_mm": 1.0,
+      "tolerance_gap_mm": 0.2,
+      "groove_depth_relief_mm": 0.3,
+      "rationale": "0.2mm horizontal tolerance gap ensures smooth lid sliding/friction mating without binding; 0.3mm groove depth relief guarantees rims mate flush."
+    }
+  },
+  "checks_passed": true
+}

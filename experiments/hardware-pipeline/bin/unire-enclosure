@@ -1,0 +1,31 @@
+#!/bin/sh
+# unire-enclosure: generate parametric 3D printable enclosure from board JSON.
+#   unire-enclosure <board.json> [outdir]
+# Works in Setup A today using build123d, trimesh, and matplotlib.
+
+set -e
+
+BOARD="$1"
+OUTDIR="${2:-}"
+
+if [ -z "$BOARD" ]; then
+    echo "usage: unire-enclosure <board.json> [outdir]" >&2
+    exit 2
+fi
+
+if [ ! -f "$BOARD" ]; then
+    echo "unire-enclosure: board specification not found: $BOARD" >&2
+    exit 1
+fi
+
+# Detect python environment (prefer /tmp/hw virtualenv if present, otherwise system python3)
+if [ -x "/tmp/hw/bin/python3" ]; then
+    PYTHON="/tmp/hw/bin/python3"
+elif [ -x "/opt/hardware/bin/python3" ]; then
+    PYTHON="/opt/hardware/bin/python3"
+else
+    PYTHON="python3"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$PYTHON" "$SCRIPT_DIR/gen_enclosure.py" "$BOARD" "$OUTDIR"

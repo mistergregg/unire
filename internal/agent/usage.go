@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -309,4 +311,89 @@ func toFloat(v any) (float64, bool) {
 func toInt64(v any) (int64, bool) {
 	f, ok := toFloat(v)
 	return int64(f), ok
+}
+
+// claudeUsageArgv asks Claude Code for its usage limits. It answers the /usage
+// slash command itself in --print mode: no model call and no tokens (0 turns).
+// Only a text report is given, so it is parsed with claudeUsageLine; Claude
+// cannot be asked this way in a chat turn, where rate_limit_event carries it.
+var claudeUsageArgv = []string{"claude", "-p", "/usage", "--output-format", "json"}
+
+// claudeUsageLine matches e.g. "Current session: 45% used · resets Nov 21, 6:50am (UTC)".
+var claudeUsageLine = regexp.MustCompile(`(?m)^\s*Current (session|week[^:]*):\s*([0-9.]+)%\s*used(?:\s*[·•-]\s*resets\s+(.+?))?\s*$`)
+
+// claudeResetLayouts are the forms of the reset time, without the zone.
+var claudeResetLayouts = []string{"Jan 2, 3:04pm", "Jan 2, 3pm", "Jan 2 3:04pm", "Jan 2 3pm"}
+
+// parseClaudeReset reads "Nov 21, 6:50am (UTC)": a date without a year in the
+// named zone (UTC when none). It returns 0 when it cannot read it.
+func parseClaudeReset(s string, now time.Time) int64 {
+	s = strings.TrimSpace(s)
+	loc := time.UTC
+	if i := strings.LastIndex(s, "("); i >= 0 && strings.HasSuffix(s, ")") {
+		if l, err := time.LoadLocation(strings.TrimSpace(s[i+1 : len(s)-1])); err == nil {
+			loc = l
+		}
+		s = strings.TrimSpace(s[:i])
+	}
+	for _, layout := range claudeResetLayouts {
+		t, err := time.ParseInLocation(layout, s, loc)
+		if err != nil {
+			continue
+		}
+		t = time.Date(now.In(loc).Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+		if t.Before(now.Add(-48 * time.Hour)) {
+			t = t.AddDate(1, 0, 0)
+		}
+		return t.Unix()
+	}
+	return 0
+}
+
+// ParseClaudeUsageOutput reads what `claude -p /usage --output-format json`
+// printed: a JSON result whose "result" text has a line per limit ("Current
+// session" is the 5-hour window, "Current week" the 7-day one). Anything else
+// is an error ("no reading"), not a guess.
+func ParseClaudeUsageOutput(out string) (*AgentUsage, error) {
+	return parseClaudeUsageOutput(out, time.Now())
+}
+
+func parseClaudeUsageOutput(out string, now time.Time) (*AgentUsage, error) {
+	var m struct {
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	trimmed := strings.TrimSpace(out)
+	if json.Unmarshal([]byte(trimmed), &m) != nil {
+		i := strings.Index(trimmed, "\n{")
+		if i < 0 || json.Unmarshal([]byte(trimmed[i+1:]), &m) != nil {
+			return nil, errors.New("claude gave no JSON answer about its usage")
+		}
+	}
+	if m.IsError {
+		return nil, errors.New("claude: " + clip(m.Result, 200))
+	}
+	var windows []UsageWindow
+	for _, sub := range claudeUsageLine.FindAllStringSubmatch(m.Result, -1) {
+		used, err := strconv.ParseFloat(sub[2], 64)
+		if err != nil {
+			continue
+		}
+		mins := 300
+		if strings.HasPrefix(sub[1], "week") {
+			mins = 10080
+			if !strings.Contains(sub[1], "all models") && strings.TrimSpace(sub[1]) != "week" {
+				continue // a per-model weekly limit: only the overall one is shown
+			}
+		}
+		w := UsageWindow{Name: WindowName(mins, ""), DurationMins: mins, UsedPercent: clampPercent(used)}
+		if len(sub) > 3 && sub[3] != "" {
+			w.ResetsAt = parseClaudeReset(sub[3], now)
+		}
+		windows = append(windows, w)
+	}
+	if len(windows) == 0 {
+		return nil, errors.New("claude's usage answer has an unexpected shape")
+	}
+	return &AgentUsage{AgentID: "claude", Reported: true, Status: "allowed", Windows: windows}, nil
 }

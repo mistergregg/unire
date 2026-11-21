@@ -17,7 +17,7 @@ Unire shows only what each CLI reports; it never estimates.
 
 | Agent | What it reports | When Unire reads it |
 | --- | --- | --- |
-| Claude Code | `rate_limit_event` in its stream-json: `rate_limit_info.unifiedWindows.five_hour` and `.seven_day`, each with `utilization` (0 to 1) and `resetsAt` (Unix seconds) | During each turn. Claude has no way to ask without sending a prompt, so there is no reading until the first Claude turn |
+| Claude Code | `rate_limit_event` in its stream-json: `rate_limit_info.unifiedWindows.five_hour` and `.seven_day`, each with `utilization` (0 to 1) and `resetsAt` (Unix seconds) | During each turn, and outside chats: when the reading is over 5 minutes old and a page asks for it, Unire runs `claude -p /usage --output-format json` in a throwaway sandbox (no model call, no tokens). That gives only a text report ("Current session: 45% used · resets ..."), which is parsed into the 5-hour and 7-day windows; if its shape changes, it shows "no reading" with a note |
 | Codex | app-server `account/rateLimits/read` and the `account/rateLimits/updated` notification: `primary` / `secondary` windows with `usedPercent` (0 to 100), `windowDurationMins` and `resetsAt`, and `planType` | During each turn, and outside chats: when the reading is over 5 minutes old and a page asks for it, Unire runs `codex app-server` with just those two requests in a throwaway sandbox (the agent login volume and the network, no repos, no tokens). It uses none of the limits and takes about a second |
 | Antigravity CLI | `agy --print=/usage --output-format=json`: `command.data.groups[].buckets[]`, each with `window` (`5h` or `weekly`), `remaining_fraction` (0 to 1, what is left) and `reset_time` (RFC 3339), and the group's name and models | Only outside chats (agy refuses `/usage` in stream-json mode, so no turn carries it): when the reading is over 5 minutes old and a page asks for it, Unire runs that command in a throwaway sandbox (the agent login volume and the network, no repos, no tokens). agy answers it itself: no model call, no tokens, about a second |
 
@@ -30,7 +30,7 @@ used percent is 100 minus `remaining_fraction`.
 Window names come from the window length: 300 minutes is "5-hour", 10080 is
 "7-day", 43200 is "30-day".
 
-The background Codex and Antigravity check never makes a page wait: the request returns what is
+The background Claude, Codex and Antigravity check never makes a page wait: the request returns what is
 saved and the new reading shows on the next poll. It is not run while a chat with that agent is queued or running (both would use
 the same login), nor when the agent is known to be signed out, and after any try the next waits at least a minute, so
 polling pages do not start a sandbox on every request. Why the last try failed

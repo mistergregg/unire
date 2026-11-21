@@ -435,7 +435,7 @@ function setComposer() {
 function autoGrow() {
   const box = $("reply-text");
   box.style.height = "auto";
-  box.style.height = Math.min(box.scrollHeight, 200) + "px";
+  box.style.height = Math.min(Math.max(box.scrollHeight, 44), 320) + "px";
 }
 $("reply-text").addEventListener("input", autoGrow);
 

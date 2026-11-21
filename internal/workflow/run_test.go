@@ -23,15 +23,22 @@ import (
 // fakeSandbox plays a sandbox: git answers, files can be written and read,
 // and "claude" behaves as the test configures.
 type fakeSandbox struct {
-	mu         sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
-	calls      []runner.ExecOpts
-	heads      int
-	noChange   bool   // the agent changes nothing: HEAD stays where it was
-	refs       string // what `git for-each-ref` prints: local branches and their upstreams
-	branchName string // what `git rev-parse --abbrev-ref HEAD` prints
-	noIdentity bool   // git has no user.name or user.email configured
-	unpushed   bool   // the branch holds commits the server does not have
-	pushErr    string // if set, a push fails with this message
+	mu           sync.Mutex // the workflow now talks to the sandbox from more than one goroutine
+	calls        []runner.ExecOpts
+	heads        int
+	noChange     bool                 // the agent changes nothing: HEAD stays where it was
+	refs         string               // what `git for-each-ref` prints: local branches and their upstreams
+	branchName   string               // what `git rev-parse --abbrev-ref HEAD` prints
+	noIdentity   bool                 // git has no user.name or user.email configured
+	unpushed     bool                 // the branch holds commits the server does not have
+	pushErr      string               // if set, a push fails with this message
+	rejects      int                  // this many pushes are refused because the branch moved on
+	behindRemote int                  // commits the server has on the branch that the clone lacks
+	behindBase   int                  // commits the base branch has that the branch lacks
+	unmerged     string               // what `git diff --diff-filter=U` prints: files left with conflicts
+	fixHook      func(f *fakeSandbox) // runs when the agent is asked to fix something (it may change the fake)
+	rebaseErr    string               // if set, a rebase fails (a conflict)
+	mergeErr     string               // if set, a merge fails (a conflict)
 
 	files     map[string]string // files the workflow wrote
 	outFiles  map[string]string // files the follow-up agent "writes"
@@ -129,6 +136,12 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 			return nil
 		case contains(o.Argv, "--verify"):
 			return nil // the server has no copy of the branch
+		case contains(o.Argv, "rev-list") && contains(o.Argv, "HEAD..origin/HEAD"):
+			fmt.Fprintln(o.Stdout, f.behindBase)
+			return nil
+		case contains(o.Argv, "rev-list") && strings.Contains(strings.Join(o.Argv, " "), "HEAD..origin/"):
+			fmt.Fprintln(o.Stdout, f.behindRemote)
+			return nil
 		case contains(o.Argv, "rev-list"):
 			if f.unpushed {
 				io.WriteString(o.Stdout, "3\n")
@@ -136,6 +149,16 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 				io.WriteString(o.Stdout, "0\n")
 			}
 			return nil
+		case contains(o.Argv, "push") && f.rejects > 0:
+			f.rejects--
+			return errors.New("exit status 1: ! [rejected] a -> a (fetch first) hint: remote contains work that you do not have locally")
+		case contains(o.Argv, "--diff-filter=U"):
+			io.WriteString(o.Stdout, f.unmerged)
+			return nil
+		case contains(o.Argv, "rebase") && !contains(o.Argv, "--abort") && f.rebaseErr != "":
+			return errors.New(f.rebaseErr)
+		case contains(o.Argv, "merge") && !contains(o.Argv, "--abort") && f.mergeErr != "":
+			return errors.New(f.mergeErr)
 		case contains(o.Argv, "push") && f.pushErr != "":
 			return errors.New(f.pushErr)
 		}
@@ -169,6 +192,9 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		return errors.New("exit status 1")
 	case "claude":
 		if contains(o.Argv, "--resume") {
+			if f.fixHook != nil {
+				f.fixHook(f)
+			}
 			if f.block {
 				<-ctx.Done()
 				return ctx.Err()
@@ -1176,5 +1202,185 @@ func TestTheChosenModelReachesEveryAgentCallAndNoneIsAddedWithout(t *testing.T) 
 	}
 	if calls, _ := modelOf(baseSpec()); calls < 2 {
 		t.Errorf("expected the run and its follow-up, saw %d agent calls", calls)
+	}
+}
+
+func gitCalls(sb *fakeSandbox, verb string) int {
+	n := 0
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "git" && contains(c.Argv, verb) && (verb == "--abort" || !contains(c.Argv, "--abort")) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestRejectedPushIsFetchedRebasedAndRetried(t *testing.T) {
+	sb := &fakeSandbox{rejects: 1}
+	var log bytes.Buffer
+	o := opts(nil)
+	o.Err = &log
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatalf("a branch that moved on should be synced, got: %v", err)
+	}
+	if gitCalls(sb, "fetch") != 2 || gitCalls(sb, "rebase") != 1 || gitCalls(sb, "push") != 2 {
+		t.Fatalf("want a fetch before and after the refusal, one rebase and two pushes, got fetch=%d rebase=%d push=%d", gitCalls(sb, "fetch"), gitCalls(sb, "rebase"), gitCalls(sb, "push"))
+	}
+	if gitCalls(sb, "merge") != 0 {
+		t.Fatal("a clean rebase must not fall back to a merge")
+	}
+}
+
+func TestConflictingRebaseFallsBackToMerge(t *testing.T) {
+	sb := &fakeSandbox{rejects: 1, rebaseErr: "exit status 1: CONFLICT"}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatalf("a merge should save it, got: %v", err)
+	}
+	if gitCalls(sb, "merge") != 1 || gitCalls(sb, "push") != 2 {
+		t.Fatalf("want a merge and a second push, got merge=%d push=%d", gitCalls(sb, "merge"), gitCalls(sb, "push"))
+	}
+}
+
+func TestUnresolvableConflictLeavesTheBranchCleanAndSaysSo(t *testing.T) {
+	sb := &fakeSandbox{rejects: 1, rebaseErr: "exit status 1: CONFLICT", mergeErr: "exit status 1: CONFLICT", unmerged: "a.go", followErr: errors.New("exit status 1")}
+	_, err := run(t, sb, baseSpec(), opts(nil))
+	if err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("want an error that explains the conflict, got: %v", err)
+	}
+	if gitCalls(sb, "--abort") != 2 {
+		t.Fatalf("the failed rebase and merge must both be aborted, got %d aborts", gitCalls(sb, "--abort"))
+	}
+}
+
+func TestPermissionErrorsAreNotRetried(t *testing.T) {
+	sb := &fakeSandbox{pushErr: "remote: Permission to me/api.git denied to me. 403"}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err == nil {
+		t.Fatal("a refused token must still fail")
+	}
+	if gitCalls(sb, "rebase") != 0 || gitCalls(sb, "merge") != 0 || gitCalls(sb, "push") != 1 {
+		t.Fatal("a permission error must not trigger a rebase, merge or second push")
+	}
+}
+
+func TestNewerCommitsOnTheBranchAreBroughtInBeforePushing(t *testing.T) {
+	sb := &fakeSandbox{behindRemote: 2}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "rebase") != 1 || gitCalls(sb, "push") != 1 {
+		t.Fatalf("want a rebase before a single push (never refused), got rebase=%d push=%d", gitCalls(sb, "rebase"), gitCalls(sb, "push"))
+	}
+}
+
+func TestNothingToBringInMeansNoRebaseOrMerge(t *testing.T) {
+	sb := &fakeSandbox{}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "rebase") != 0 || gitCalls(sb, "merge") != 0 {
+		t.Fatal("an up to date branch must be left alone")
+	}
+	if gitCalls(sb, "fetch") < 1 {
+		t.Fatal("the push must fetch first")
+	}
+}
+
+func TestBranchBehindItsBaseGetsTheBaseMergedIn(t *testing.T) {
+	sb := &fakeSandbox{behindBase: 4}
+	var log bytes.Buffer
+	o := opts(nil)
+	o.Err = &log
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+	if gitCalls(sb, "merge") != 1 || !strings.Contains(log.String(), "not out of date") {
+		t.Fatalf("want the base merged in, got merges=%d log=%q", gitCalls(sb, "merge"), log.String())
+	}
+}
+
+func TestBaseThatConflictsIsLeftAloneAndThePushStillHappens(t *testing.T) {
+	sb := &fakeSandbox{behindBase: 4, mergeErr: "exit status 1: CONFLICT", unmerged: "a.go", followErr: errors.New("exit status 1")}
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatalf("a conflict with the base must not fail the push: %v", err)
+	}
+	if gitCalls(sb, "--abort") != 1 || gitCalls(sb, "push") != 1 {
+		t.Fatalf("want the merge aborted and the push done, got aborts=%d pushes=%d", gitCalls(sb, "--abort"), gitCalls(sb, "push"))
+	}
+}
+
+func resumeCalls(sb *fakeSandbox) int {
+	n := 0
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "claude" && contains(c.Argv, "--resume") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestAgentResolvesAConflictAndThePushThenWorks(t *testing.T) {
+	sb := &fakeSandbox{rejects: 1, rebaseErr: "exit status 1: CONFLICT", mergeErr: "exit status 1: CONFLICT", unmerged: "a.go"}
+	sb.fixHook = func(f *fakeSandbox) { f.unmerged = ""; f.mergeErr = ""; f.rebaseErr = "" }
+	var log bytes.Buffer
+	o := opts(nil)
+	o.Err = &log
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatalf("the agent resolved it, the push should work: %v", err)
+	}
+	if resumeCalls(sb) != 1 || gitCalls(sb, "push") != 2 {
+		t.Fatalf("want one ask and a second push, got asks=%d pushes=%d", resumeCalls(sb), gitCalls(sb, "push"))
+	}
+	if !strings.Contains(log.String(), "the agent resolved the conflicts") {
+		t.Fatalf("the log should say so: %s", log.String())
+	}
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "claude" && contains(c.Argv, "--resume") {
+			if joined := strings.Join(c.Argv, " "); !strings.Contains(joined, "a.go") || !strings.Contains(joined, "Do NOT run `git merge --abort`") {
+				t.Fatalf("the agent must be told which files conflict and not to abort: %s", joined)
+			}
+		}
+	}
+}
+
+func TestAgentThatLeavesConflictsIsGivenUpOnAndTheBranchAborted(t *testing.T) {
+	sb := &fakeSandbox{rejects: 1, rebaseErr: "exit status 1: CONFLICT", mergeErr: "exit status 1: CONFLICT", unmerged: "a.go"}
+	_, err := run(t, sb, baseSpec(), opts(nil)) // the agent runs but resolves nothing
+	if err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("want the conflict reported, got: %v", err)
+	}
+	if resumeCalls(sb) != 1 || gitCalls(sb, "--abort") < 2 {
+		t.Fatalf("want one ask, then the merge aborted: asks=%d aborts=%d", resumeCalls(sb), gitCalls(sb, "--abort"))
+	}
+}
+
+func TestAgentIsAskedToFixAServerRefusalAndTriesAreLimited(t *testing.T) {
+	sb := &fakeSandbox{pushErr: "exit status 1: remote: error: file too large ! [remote rejected] (pre-receive hook declined)"}
+	_, err := run(t, sb, baseSpec(), opts(nil))
+	if err == nil {
+		t.Fatal("a refusal nothing fixes must still fail")
+	}
+	if resumeCalls(sb) != maxPushFixes {
+		t.Fatalf("the agent gets %d tries, got %d", maxPushFixes, resumeCalls(sb))
+	}
+
+	sb = &fakeSandbox{pushErr: "exit status 1: remote: error: file too large ! [remote rejected]"}
+	sb.fixHook = func(f *fakeSandbox) { f.pushErr = "" }
+	if _, err := run(t, sb, baseSpec(), opts(nil)); err != nil {
+		t.Fatalf("once the agent fixed it the push should work: %v", err)
+	}
+	if resumeCalls(sb) != 1 {
+		t.Fatalf("want one ask, got %d", resumeCalls(sb))
+	}
+}
+
+func TestAgentIsNotAskedAboutTokensOrNetwork(t *testing.T) {
+	for _, msg := range []string{"remote: Permission to me/api.git denied to me. 403", "fatal: unable to access: Could not resolve host"} {
+		sb := &fakeSandbox{pushErr: msg}
+		if _, err := run(t, sb, baseSpec(), opts(nil)); err == nil {
+			t.Fatalf("%q must fail", msg)
+		}
+		if resumeCalls(sb) != 0 {
+			t.Fatalf("the agent cannot fix %q", msg)
+		}
 	}
 }

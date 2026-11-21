@@ -122,12 +122,17 @@ ENV UNIRE_HARDWARE_HOME="/opt/unire-hardware"
 FROM variant-b AS variant-c
 USER root
 
-# Install KiCad and FreeCAD from the same Debian Bookworm package set.
-# Mixing bookworm-backports with Bookworm caused incompatible libhwloc versions.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# KiCad CLI is only shipped by the Bookworm backports package. Install its
+# matching hwloc plugin explicitly to avoid mixing backports libhwloc15 with
+# the older Bookworm plugin, then install FreeCAD from Bookworm.
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends -t bookworm-backports \
       kicad \
+      libhwloc-plugins && \
+    apt-get install -y --no-install-recommends \
       freecad \
-      freecad-python3 \
-    && rm -rf /var/lib/apt/lists/*
+      freecad-python3 && \
+    rm -rf /var/lib/apt/lists/*
 
 USER node

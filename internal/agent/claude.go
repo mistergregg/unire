@@ -35,6 +35,8 @@ func (claude) Info() Info {
 		InspectArgv: []string{"claude", "auth", "status"},
 		ResetArgv:   []string{"claude", "auth", "logout"},
 		ResetHelp:   "Signs Claude Code out of the saved login.",
+		UsageArgv:   claudeUsageArgv,
+		ParseUsage:  ParseClaudeUsageOutput,
 		Models:      []string{"sonnet", "opus", "fable"},
 		Verified:    Verified{Unattended: true, Status: true, Hosts: true},
 	}

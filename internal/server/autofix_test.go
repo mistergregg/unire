@@ -16,10 +16,14 @@ import (
 
 // A GitHub whose pull request 5 has one failing check on whatever commit is current.
 type fakeCI struct {
-	svc     *pulls.Service
-	mu      sync.Mutex
-	sha     string
-	pending bool
+	svc      *pulls.Service
+	mu       sync.Mutex
+	sha      string
+	pending  bool
+	behind   int  // commits main has that the branch lacks
+	conflict bool // updating the branch from main conflicts
+	noChecks bool // no checks run
+	updates  int  // how many times the branch was updated
 }
 
 func (f *fakeCI) set(sha string, pending bool) {
@@ -34,18 +38,40 @@ func (f *fakeCI) set(sha string, pending bool) {
 func (f *fakeCI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	sha, pending := f.sha, f.pending
+	behind, conflict, noChecks := f.behind, f.conflict, f.noChecks
 	f.mu.Unlock()
 	switch r.URL.Path {
-	case "/api/v3/user":
-		w.Write([]byte(`{"login":"greg"}`))
-	case "/api/v3/repos/o/r/pulls/5":
-		w.Write([]byte(fmt.Sprintf(`{"number":5,"title":"T","html_url":"http://gh/pr/5","state":"open","head":{"ref":"agent/b","sha":%q},"base":{"ref":"main"}}`, sha)))
+	case "/api/v3/repos/o/r/compare/main..." + sha:
+		w.Write([]byte(fmt.Sprintf(`{"behind_by":%d}`, behind)))
+	case "/api/v3/repos/o/r/pulls/5/update-branch":
+		if r.Method != "PUT" {
+			http.Error(w, "{}", 405)
+			return
+		}
+		if conflict {
+			http.Error(w, `{"message":"merge conflict between base and head"}`, 422)
+			return
+		}
+		f.mu.Lock()
+		f.updates++
+		f.behind = 0
+		f.mu.Unlock()
+		w.WriteHeader(202)
+		w.Write([]byte(`{"message":"Updating pull request branch."}`))
 	case "/api/v3/repos/o/r/commits/" + sha + "/check-runs":
+		if noChecks {
+			w.Write([]byte(`{"check_runs":[]}`))
+			return
+		}
 		status := "completed"
 		if pending {
 			status = "in_progress"
 		}
 		w.Write([]byte(fmt.Sprintf(`{"check_runs":[{"id":2,"name":"test","status":%q,"conclusion":"failure","html_url":"http://gh/job/2"}]}`, status)))
+	case "/api/v3/user":
+		w.Write([]byte(`{"login":"greg"}`))
+	case "/api/v3/repos/o/r/pulls/5":
+		w.Write([]byte(fmt.Sprintf(`{"number":5,"title":"T","html_url":"http://gh/pr/5","state":"open","head":{"ref":"agent/b","sha":%q},"base":{"ref":"main"}}`, sha)))
 	case "/api/v3/repos/o/r/commits/" + sha + "/status":
 		w.Write([]byte(`{"statuses":[]}`))
 	case "/api/v3/repos/o/r/issues/5/comments", "/api/v3/repos/o/r/pulls/5/reviews", "/api/v3/repos/o/r/pulls/5/comments":

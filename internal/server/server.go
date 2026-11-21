@@ -58,6 +58,7 @@ type Server struct {
 
 	sessions      *sessions.Manager
 	pulls         *pulls.Service
+	keep          keepTries // pull requests being brought up to date with their base
 	catalog       catalogCache
 	stopCleanup   chan struct{}
 	stopOnce      sync.Once

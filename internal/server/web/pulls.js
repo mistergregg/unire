@@ -322,7 +322,7 @@ function autoFixRow() {
     pullsData.autoFix = r.autoFix;
   }));
   return el("label", { class: "pr-auto" }, box,
-    el("span", {}, " Fix failing checks automatically"),
+    el("span", {}, " Fix failing checks and keep the branch up to date"),
     el("span", { class: "muted" }, " · Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request."));
 }
 

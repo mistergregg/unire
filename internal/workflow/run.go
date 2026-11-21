@@ -555,7 +555,7 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 			outcomes[repo.Name] = o
 			continue
 		}
-		if _, err := w.git(ctx, dir, &repo, "push", "-u", "origin", spec.Branch()); err != nil {
+		if err := w.pushBranch(ctx, dir, &repo, spec.Branch()); err != nil {
 			return outcomes, fmt.Errorf("push %s: %w%s", repo.Name, err, pushHint(err))
 		}
 		o.pushed = true
@@ -761,7 +761,7 @@ func (w *worker) pushExtraBranches(ctx context.Context, dir string, repo *sessio
 		} else if b, err := w.git(ctx, dir, repo, "config", "--get", "branch."+name+".unire-base"); err == nil {
 			base = strings.TrimSpace(b)
 		}
-		if _, err := w.git(ctx, dir, repo, "push", "-u", "origin", name); err != nil {
+		if err := w.pushBranch(ctx, dir, repo, name); err != nil {
 			fmt.Fprintf(w.opt.Err, "%s: could not push %s: %v\n", repo.Name, name, err)
 			continue
 		}
@@ -871,6 +871,41 @@ func (w *worker) hasUnpushedWork(ctx context.Context, dir string, repo *session.
 	}
 	ahead, err := strconv.Atoi(strings.TrimSpace(n))
 	return err == nil && ahead > 0
+}
+
+// pushBranch pushes a branch. When the server refuses because the branch moved on
+// (someone used "Update branch" on the pull request, merged something into it, or
+// pushed from elsewhere), it brings those commits in and tries again, so the
+// owner never has to fix it by hand: first a rebase (keeps the history straight),
+// then a merge when the rebase hits conflicts. Only when both conflict does it
+// give up, with the branch left clean.
+func (w *worker) pushBranch(ctx context.Context, dir string, repo *session.Repo, name string) error {
+	_, err := w.git(ctx, dir, repo, "push", "-u", "origin", name)
+	for try := 0; err != nil && rejectedPush(err) && try < 3; try++ {
+		fmt.Fprintf(w.opt.Err, "%s: the server has newer commits on %s; bringing them in and pushing again\n", repo.Name, name)
+		if _, ferr := w.git(ctx, dir, repo, "fetch", "origin", name); ferr != nil {
+			return fmt.Errorf("%w (and fetching the newer commits failed: %v)", err, ferr)
+		}
+		id := []string{"-c", "user.name=" + commitName, "-c", "user.email=" + commitEmail}
+		if _, rerr := w.git(ctx, dir, repo, append(id, "rebase", "origin/"+name)...); rerr != nil {
+			_, _ = w.git(ctx, dir, repo, "rebase", "--abort")
+			if _, merr := w.git(ctx, dir, repo, append(id, "merge", "--no-edit", "origin/"+name)...); merr != nil {
+				_, _ = w.git(ctx, dir, repo, "merge", "--abort")
+				return fmt.Errorf("%w (the newer commits conflict with this branch, so they could not be merged automatically: %v)", err, merr)
+			}
+			fmt.Fprintf(w.opt.Err, "%s: the rebase conflicted, so the newer commits were merged in instead\n", repo.Name)
+		}
+		_, err = w.git(ctx, dir, repo, "push", "-u", "origin", name)
+	}
+	return err
+}
+
+// rejectedPush reports whether git refused a push because the remote branch has
+// commits this clone lacks (as opposed to a permission or network problem).
+func rejectedPush(err error) bool {
+	m := err.Error()
+	return strings.Contains(m, "fetch first") || strings.Contains(m, "non-fast-forward") ||
+		(strings.Contains(m, "[rejected]") && strings.Contains(m, "remote contains work"))
 }
 
 // pushHint says what is probably wrong when a push is refused for lack of permission.

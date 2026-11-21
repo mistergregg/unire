@@ -69,8 +69,8 @@ def ray_hits(mesh, origin, direction, max_distance):
     return np.sort(t[hits])
 
 
-def check_enclosure(board_json_path, out_dir):
-    """Run all verification checks on the generated enclosure outputs."""
+def check_enclosure(board_json_path, out_dir, record_report=True):
+    """Run checks and optionally record the result in report.json."""
     if not os.path.isfile(board_json_path):
         raise VerificationError(f"Board JSON not found: {board_json_path}")
         
@@ -96,10 +96,11 @@ def check_enclosure(board_json_path, out_dir):
         
     with open(report_path, "r") as f:
         report = json.load(f)
-    report["checks_passed"] = False
-    report["checks_status"] = "checks running"
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    if record_report:
+        report["checks_passed"] = False
+        report["checks_status"] = "checks running"
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
         
     base_stl = os.path.join(out_dir, "base.stl")
     lid_stl = os.path.join(out_dir, "lid.stl")
@@ -263,11 +264,12 @@ def check_enclosure(board_json_path, out_dir):
         raise VerificationError("Lid outer footprint does not match the base footprint; tongue and groove cannot mate.")
     results.append(f"[PASS] Joint mating: tongue height={lip_h}mm, width={lip_t}mm, gap={lip_gap}mm, relief={groove_relief}mm ensure flush mating.")
 
-    report["checks_passed"] = True
-    report["checks_status"] = "passed"
-    report["checks"] = results
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    if record_report:
+        report["checks_passed"] = True
+        report["checks_status"] = "passed"
+        report["checks"] = results
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
     return results
 
 
@@ -286,7 +288,7 @@ def run_tests():
     for name, json_path, out_dir in examples:
         print(f"\n--- Checking {name} ---")
         try:
-            results = check_enclosure(json_path, out_dir)
+            results = check_enclosure(json_path, out_dir, record_report=False)
             for r in results:
                 print(r)
             print(f"SUCCESS: {name} passed all design checks!")
@@ -319,7 +321,7 @@ def run_tests():
     shutil.copy(f"{base_dir}/examples/esp32/lid.stl", f"{tmp_test_dir}/lid.stl")
     
     try:
-        check_enclosure(f"{tmp_test_dir}/bad1.json", tmp_test_dir)
+        check_enclosure(f"{tmp_test_dir}/bad1.json", tmp_test_dir, record_report=False)
         print("FAIL: Bad height was NOT caught!", file=sys.stderr)
         sys.exit(1)
     except VerificationError as ve:
@@ -338,7 +340,7 @@ def run_tests():
     with open(shifted_path, "w", encoding="utf-8") as f:
         json.dump(shifted, f)
     try:
-        check_enclosure(shifted_path, good_out)
+        check_enclosure(shifted_path, good_out, record_report=False)
         raise AssertionError("5 mm port misalignment was NOT caught")
     except VerificationError as ve:
         if "clearance envelope" not in str(ve):
@@ -353,7 +355,7 @@ def run_tests():
     with tempfile.TemporaryDirectory(prefix="unire-no-boss-") as bad_out:
         generate_enclosure(missing_boss, bad_out)
         try:
-            check_enclosure(good_json, bad_out)
+            check_enclosure(good_json, bad_out, record_report=False)
             raise AssertionError("missing standoff was NOT caught")
         except VerificationError as ve:
             if "Standoff #1 is missing" not in str(ve):
@@ -371,7 +373,7 @@ def run_tests():
         solid_lid.apply_translation((0, 0, outer["lid_height"] / 2.0))
         solid_lid.export(os.path.join(bad_out, "lid.stl"))
         try:
-            check_enclosure(good_json, bad_out)
+            check_enclosure(good_json, bad_out, record_report=False)
             raise AssertionError("lid without screw holes was NOT caught")
         except VerificationError as ve:
             if "Lid screw clearance hole #1" not in str(ve):
@@ -385,7 +387,7 @@ def run_tests():
     with open(thin_path, "w", encoding="utf-8") as f:
         json.dump(thin, f)
     try:
-        check_enclosure(thin_path, good_out)
+        check_enclosure(thin_path, good_out, record_report=False)
         raise AssertionError("1.2 mm wall was NOT caught")
     except VerificationError as ve:
         if "below the 1.6 mm minimum" not in str(ve):
@@ -401,7 +403,7 @@ def run_tests():
     with open(f"{tmp_test_dir}/bad2.json", "w") as f:
         json.dump(bad_spec2, f)
     try:
-        check_enclosure(f"{tmp_test_dir}/bad2.json", tmp_test_dir)
+        check_enclosure(f"{tmp_test_dir}/bad2.json", tmp_test_dir, record_report=False)
         print("FAIL: Thin wall was NOT caught!", file=sys.stderr)
         sys.exit(1)
     except VerificationError as ve:
@@ -416,7 +418,7 @@ def run_tests():
     with open(f"{tmp_test_dir}/bad3.json", "w") as f:
         json.dump(bad_spec3, f)
     try:
-        check_enclosure(f"{tmp_test_dir}/bad3.json", tmp_test_dir)
+        check_enclosure(f"{tmp_test_dir}/bad3.json", tmp_test_dir, record_report=False)
         print("FAIL: Out of bounds mounting hole was NOT caught!", file=sys.stderr)
         sys.exit(1)
     except VerificationError as ve:
@@ -437,16 +439,11 @@ def run_tests():
     with open(f"{tmp_test_dir}/report.json", "w") as f:
         json.dump(bad_report4, f)
     try:
-        check_enclosure(f"{tmp_test_dir}/bad4.json", tmp_test_dir)
+        check_enclosure(f"{tmp_test_dir}/bad4.json", tmp_test_dir, record_report=False)
         print("FAIL: Too tight joint gap was NOT caught!", file=sys.stderr)
         sys.exit(1)
     except VerificationError as ve:
         print(f"  [CAUGHT AS EXPECTED]: {ve}")
-
-    # Negative checks may intentionally point at the committed output folders;
-    # restore their success records only after both original designs pass again.
-    for name, json_path, out_dir in examples:
-        check_enclosure(json_path, out_dir)
 
     print("\n======================================================================")
     print("ALL TESTS PASSED: Valid designs verified; defects caught with loud errors.")

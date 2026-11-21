@@ -1,93 +1,64 @@
-# Parametric 3D Hardware Pipeline for Autonomous Agents
+# CLI 3D enclosure prototype
 
-This pipeline demonstrates that an autonomous agent running entirely from the command line inside Unire's Debian 12 sandbox can generate, verify, and document production-ready 3D-printed electronics enclosures and validate PCB constraints.
+This prototype shows what an agent can generate and inspect from a Debian command line for two-part, FDM-printed electronics enclosures. It is an engineering prototype, not a manufacturing sign-off tool.
 
----
+## Run it
 
-## Quickstart (Two Commands)
+From the repository root, with Python packages installed and CuraEngine on `PATH`:
 
-Generate full enclosure outputs (STL, STEP, previews, report) and verify design rules:
-
-```bash
-# 1. Generate enclosure (base & lid STLs, STEP CAD models, preview PNGs, report.json)
-python3 experiments/hardware-pipeline/gen_enclosure.py \
-  experiments/hardware-pipeline/examples/esp32/esp32.json \
-  experiments/hardware-pipeline/examples/esp32/
-
-# 2. Run automated design-rule and physical fit verification test suite
+```sh
+python3 experiments/hardware-pipeline/gen_enclosure.py experiments/hardware-pipeline/examples/esp32/esp32.json experiments/hardware-pipeline/examples/esp32
 python3 experiments/hardware-pipeline/check_enclosure.py --test
 ```
 
-*(Note: In Setup A, run under the python virtual environment: `/tmp/hw/bin/python3 ...`)*
+To generate G-code and a slice summary:
 
----
+```sh
+unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gcode
+```
 
-## What the Pipeline Does
+`unire-slice` uses the bundled CuraEngine 4.x definition files and `profiles/petg_0.2mm.json`. The printer geometry and temperatures are generic example settings; set them for the actual printer before using the G-code. The script reports time, layer count, and material volume from CuraEngine's slice output. It does not treat the G-code header's summary fields as authoritative.
 
-Given a board description in JSON (dimensions, component heights, mounting holes, port cutouts, and fastener specifications):
-1. **Parametric B-Rep CAD Modeling:** Uses `build123d` (OpenCASCADE kernel) to build solid geometry for a mating two-part enclosure (Base and Lid).
-   * **Standoffs & Bosses:** Models cylindrical bosses with pilot holes for brass heat-set inserts (M2, M2.5, M3). Automatically blends corner standoffs into outer walls to form structural gussets and eliminate non-manifold degenerate contacts.
-   * **Tongue-and-Groove Joint:** Generates a precision alignment lip (1.4 mm height, 1.0 mm thickness) on the base with a matching 0.2 mm tolerance groove on the lid to guarantee flush friction mating.
-   * **Through-Wall Port Openings:** Cuts clean openings for connectors (USB-C, mini HDMI, micro USB) with user-configurable clearances.
-2. **Dual-Format Export:** Writes high-resolution **`.stl`** (for 3D printing slicing) and standard ISO 10303 **`.step`** (for CAD interchange and assembly modeling).
-3. **Headless Visual Shading:** Generates crisp isometric shaded preview images (`preview_base.png`, `preview_lid.png`, `preview_assembled.png`) using matplotlib's Agg renderer and trimesh directional Lambertian lighting—operating completely headless with zero X11/display dependencies.
-4. **Engineering Report:** Emits `report.json` with external bounding dimensions, cavity volumes, PETG filament mass estimates, and the engineering rationale for all 3D printing tolerances.
-5. **Strict Automated Verification:** `check_enclosure.py` runs 6 deterministic mechanical checks that **fail loudly (exit 1)** on any defect:
-   * Mesh watertightness and 2-manifold verification.
-   * Cavity clearances on X, Y, and Z (including bottom pin clearances).
-   * Standoff alignment with board mounting holes and insert wall thicknesses.
-   * Port opening clearances and wall bounds.
-   * Tongue-and-groove tolerance gap (>=0.15 mm) and groove depth relief (>=0.2 mm).
-   * Wall thickness threshold (>=1.6 mm minimum for 4 solid perimeters).
+## What works
 
----
+- `gen_enclosure.py` reads board and enclosure JSON and writes base/lid STL and STEP files, three headless PNG previews using a Pillow z-buffer renderer, and `report.json`.
+- Base has insert pilot holes, standoffs, port openings and a tongue. The lid has screw clearance holes at the same mounting locations and a matching groove.
+- `check_enclosure.py` checks watertight meshes, cavity dimensions, standoffs and lid holes against the actual mesh, port opening clearance envelopes using ray/triangle probes, nominal wall thickness, and base/lid footprint and joint parameters.
+- `report.json` starts with `checks_passed: false`; a successful checker run records the passing results and flips it to true. Failed checks leave it false.
+- `check_enclosure.py --test` runs both examples and expects deliberately broken height, 5 mm port alignment, missing standoff, missing lid holes, and 1.2 mm wall cases to fail with diagnostic messages.
+- CuraEngine 4.13.0 was extracted to `/tmp` without root along with its four runtime libraries (2,793,360 bytes downloaded; about 8.3 MB installed-size metadata). It sliced the generated ESP32 base to a 653,702 byte G-code file in under one second. With this bundled profile, its run output reported 3,255 seconds (54m 15s), 66 layers, and 7,724 mm³ of filament, about 3.21 m of 1.75 mm filament. These are slicer estimates for the example settings, not measured printer results. CuraEngine's G-code header for this stripped profile still contains placeholders (`TIME:6666`, `Filament used: 0m`, and sentinel bounds); the wrapper intentionally reports the run output instead. This G-code is a slicing proof, not a file to send to a printer.
+- Both example previews were inspected. The first renders showed false diagonal seams from plotting STL triangles through matplotlib's 3D painter. The renderer now uses a z-buffered software rasterizer. The assembled views show the closed enclosure with four lid screw openings; separate lid previews show the same holes clearly.
 
-## Comparison Summary & Recommendation
+## What is not verified
 
-For detailed benchmark numbers, package sizes, and risk assessments, see [COMPARISON.md](./COMPARISON.md).
+- Fit, strength, heat-set insert dimensions, port alignment to a real connector, lid retention, and print tolerances have not been validated by a physical print. The provided board/port dimensions are illustrative approximations.
+- The checker confirms nominal wall thickness from the JSON rule, not every local wall in the STL. Port and hole probes check sample rays, not complete dimensional metrology or self-intersections.
+- CuraEngine ran and produced G-code, but the machine profile is generic and not associated with a specific printer. Use a printer-specific profile and inspect the toolpath before printing.
+- OpenSCAD's extracted AppImage was previously tested for command-line STL export; offscreen PNG rendering failed without an X server. PrusaSlicer failed to start because WebKit/GTK dependencies were absent. `kicad-cli` and FreeCAD were not run in this sandbox; their proposed image target is not evidence that they work here. `apt-get update` in this non-root sandbox fails because apt lists are not writable.
+- The earlier pip run measured about 148 MB of downloads and 26 seconds. In this rerun the installed Python environment occupies 1,045,432,233 bytes (about 997 MiB). The larger download/install footprint is a material image cost; OpenSCAD and the slicer are much smaller by comparison.
 
-| Setup | Image Addition | Session Delay | Key Capabilities | Recommendation |
-| :--- | :--- | :--- | :--- | :--- |
-| **Setup A** (Status Quo) | 0 MB (ephemeral in `/tmp`) | ~26s install | STL + STEP generation, PNG render, trimesh checks | Good for prototyping |
-| **Setup B** (Small Additions) | **~66 MB apt** (+1GB venv) | **0s** | A + OpenSCAD + CLI slicing (`CuraEngine`) + `admesh` | **RECOMMENDED** |
-| **Setup C** (Heavy Tools) | **~1.12 GB apt** (+1GB venv) | **0s** | B + PCB DRC & Gerber export (`kicad-cli`) + FreeCAD CAM | Dedicated hardware image |
+## How to provide the Python stack
 
-**Recommendation:** Adopt **Setup B**. It adds only ~66 MB of apt packages (`openscad`, `cura-engine`, `admesh`), pre-bakes the Python CAD stack so agents start immediately without downloading 1 GB on every session, and gives agents real CLI slicing (`CuraEngine`) without the crashes and heavy GUI baggage of PrusaSlicer.
+The three options have different costs:
 
----
+| Method | Image size added | First session | Later sessions |
+| --- | ---: | ---: | ---: |
+| Bake Python stack into the image | about 997 MiB, measured | no install delay | no install delay |
+| Cache it in a persistent volume | 0 MiB in the image | about 26 s and 148 MB download once | no install if retained |
+| Install per session | 0 MiB in the image | about 26 s and 148 MB download | same cost every session |
 
-## What is Verified vs. What is NOT (Honest Status)
+For this prototype, the best tradeoff is a persistent cache at `/home/node/.cache/unire/hardware-venv`. Unire's Docker runner mounts the same configured agent login volume at `/home/node` for each session, and Sandbox Settings expose the image and that volume name. That makes the cache survive sessions without a ~1 GiB image layer. It does share the existing login volume; a separate cache volume would need a new mount setting in Unire. The proposed `Dockerfile.hardware` remains useful for an opt-in image where immediate offline availability matters.
 
-### Real Results (Verified & Working in Sandbox):
-* **`build123d` + `trimesh` + `numpy` + `matplotlib`:** Fully tested in user-space venv `/tmp/hw`. Installation took **25.9s** (downloading ~148 MB wheels, installed disk: 1,007 MB). Both example enclosures built, exported valid STL and STEP files, rendered isometric PNGs in <0.5s, and passed all 6 verification checks.
-* **OpenSCAD without root:** Tested using extracted AppImage (40.7 MB). Successfully exported STL models headless. However, rendering offscreen PNGs failed with a segmentation fault because OpenSCAD requires an X display or `xvfb`. Headless rendering is therefore handled via `trimesh`/`matplotlib`.
-* **CuraEngine without root:** Extracted Debian 12 packages (`cura-engine`, `libarcus3`, `libpolyclipping22`, `libprotobuf32`, `libgomp1` totaling 2.8 MB download / 8.5 MB disk). Tested CLI help and confirmed zero GUI/X11 dependencies.
-* **Intentional Defect Catching:** Verified that `check_enclosure.py --test` catches tall components exceeding cavity height, sub-1.6mm thin walls, out-of-bounds mounting holes, and tight tolerance gaps with explicit loud errors.
+The non-Python package figures in `COMPARISON.md` are apt metadata estimates collected during the earlier package audit, not measured image deltas. The current unprivileged sandbox has no apt package lists, so those figures could not be independently refreshed in this run.
 
-### What Could NOT Run in the Unmodified Sandbox (and Why):
-* **PrusaSlicer:** Failed to run. Modern PrusaSlicer AppImages require `libwebkit2gtk-4.1.so.0` and GTK3 desktop libraries. The sandbox container does not contain WebKit or an X desktop, causing dynamic linker failure on startup.
-* **`kicad-cli` & FreeCAD:** Could not be installed cheaply in user space without root because of deep system dependencies (wxWidgets, OpenCASCADE, Qt5, Boost) requiring ~800 MB to 1.5 GB of debian packages. These are formally evaluated via `Dockerfile.hardware` (Target `variant-c`) and `.github/workflows/hardware-image.yml`.
+## What not to do unattended
 
----
+- Never send G-code to a physical printer unattended.
+- Do not trust enclosure clearances or press fits without a test print and measurement.
+- Do not treat mesh checks as electrical or mechanical certification.
 
-## What an Agent Should NEVER Do Unattended
+## Next steps
 
-When working with hardware and fabrication, autonomous agents must operate under strict safety boundaries:
-
-1. **NEVER send G-code directly to a physical machine unattended.**
-   * An agent must never stream G-code over USB/serial or OctoPrint/Moonraker APIs to a physical 3D printer or CNC mill without human supervision. Flawed toolpaths, invalid Z-offsets, thermal runaway, or mechanical collisions can cause nozzle crashes, fire hazards, or machine destruction.
-2. **NEVER trust dimensional tolerances without a physical test print.**
-   * Calipers and CAD are approximations of real-world physics. Filament shrinkage (e.g. ABS/ASA shrinks ~0.7–1.5%, PETG ~0.2–0.5%), thermal warping, elephant's foot, and machine backlash mean an agent cannot guarantee snap fits without printing a small tolerance calibration coupon first.
-3. **NEVER bypass DRC violations on PCB layouts.**
-   * Minimum trace clearances (e.g. 0.15 mm) and annular rings exist to prevent short circuits and board fabrication failures. An agent must never suppress or override DRC rules to force routing completion.
-
----
-
-## Next Steps
-
-1. **Integrate `kicad-cli` for ECAD-MCAD Handoff:**
-   * Run `kicad-cli pcb export step` to export an exact 3D model of the populated circuit board, then import the STEP directly into `build123d` to subtract connector volumes and generate clearance envelopes dynamically.
-2. **Standardize Slicing with `CuraEngine`:**
-   * Create standard slicer profiles (`0.2mm_petg_quality.def.json`) in `experiments/hardware-pipeline/profiles/` so `unire-enclosure` can automatically generate G-code and report exact layer print times.
-3. **Tolerance Test Coupon Generator:**
-   * Provide a quick script to generate a 10-minute test coupon (stepping gaps from 0.10 mm to 0.40 mm in 0.05 mm increments) for testing joint friction on a specific printer/filament batch before committing to a 4-hour box print.
+1. Import real board geometry from KiCad with `kicad-cli` and validate PCB DRC in an image where it is installed and tested.
+2. Replace the generic Cura settings with printer/material-specific profiles and compare estimates to actual prints.
+3. Print a tolerance coupon for the lid joint, screw holes, and connector openings, then update the design clearances from measured results.

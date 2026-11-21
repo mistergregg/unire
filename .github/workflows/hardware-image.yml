@@ -18,6 +18,7 @@ permissions:
 jobs:
   build-and-verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -29,6 +30,7 @@ jobs:
       # VARIANT B: Small additions (OpenSCAD, CuraEngine, ADMesh, Python CAD)
       # ------------------------------------------------------------------------
       - name: Build Variant B image
+        id: build_b
         run: |
           START_TIME=$(date +%s)
           docker build --target variant-b -t unire-hardware:variant-b -f experiments/hardware-pipeline/Dockerfile.hardware .
@@ -39,6 +41,7 @@ jobs:
           echo "B_SIZE=${SIZE}" >> $GITHUB_ENV
 
       - name: Test Variant B tools and pipeline
+        id: verify_b
         run: |
           docker run --rm -v "$PWD":/workspace -w /workspace unire-hardware:variant-b sh -c '
             set -e
@@ -46,23 +49,26 @@ jobs:
             openscad --version
             CuraEngine help | head -n 3
             admesh --version
-            python3 -c "import build123d, trimesh, numpy, matplotlib; print(\"build123d:\", build123d.__version__, \"trimesh:\", trimesh.__version__)"
+            python3 -c "import build123d, trimesh, numpy, PIL; print(\"build123d:\", build123d.__version__, \"trimesh:\", trimesh.__version__)"
 
             echo "=== Generating & Checking Enclosures in Variant B ==="
-            python3 experiments/hardware-pipeline/gen_enclosure.py experiments/hardware-pipeline/examples/esp32/esp32.json /tmp/esp32
-            python3 experiments/hardware-pipeline/gen_enclosure.py experiments/hardware-pipeline/examples/pizero/pizero.json /tmp/pizero
+            unire-enclosure experiments/hardware-pipeline/examples/esp32/esp32.json /tmp/esp32
+            unire-enclosure experiments/hardware-pipeline/examples/pizero/pizero.json /tmp/pizero
             python3 experiments/hardware-pipeline/check_enclosure.py --test
 
             echo "=== Testing CLI Commands ==="
             unire-mesh-check /tmp/esp32/base.stl
             unire-stl-shot /tmp/esp32/base.stl /tmp/test_shot.png 600x500
             test -s /tmp/test_shot.png
+            unire-slice /tmp/esp32/base.stl /tmp/esp32.gcode
+            test -s /tmp/esp32.gcode
           '
 
       # ------------------------------------------------------------------------
       # VARIANT C: Heavy additions (KiCad, FreeCAD)
       # ------------------------------------------------------------------------
       - name: Build Variant C image
+        id: build_c
         run: |
           START_TIME=$(date +%s)
           docker build --target variant-c -t unire-hardware:variant-c -f experiments/hardware-pipeline/Dockerfile.hardware .
@@ -73,16 +79,21 @@ jobs:
           echo "C_SIZE=${SIZE}" >> $GITHUB_ENV
 
       - name: Test Variant C tools and KiCad DRC
+        id: verify_c
         run: |
           docker run --rm -v "$PWD":/workspace -w /workspace unire-hardware:variant-c sh -c '
             set -e
             echo "=== Tool Versions in Variant C ==="
-            if command -v kicad-cli >/dev/null 2>&1; then
-              kicad-cli --version
+            command -v kicad-cli >/dev/null
+            kicad-cli --version
+            if command -v freecad >/dev/null 2>&1; then
+              freecad --version
+            elif command -v freecadcmd >/dev/null 2>&1; then
+              freecadcmd --version
             else
-              kicad --version
+              echo "FreeCAD CLI executable is missing" >&2
+              exit 1
             fi
-            freecad --version || freecadcmd --version || true
 
             echo "=== Running PCB Design Rule Check ==="
             unire-kicad-check experiments/hardware-pipeline/examples/sample.kicad_pcb
@@ -96,12 +107,14 @@ jobs:
 
           | Variant | Tools Added | Build Time | Measured Image Size | Verification Status |
           | :--- | :--- | :--- | :--- | :--- |
-          | **Variant B (Setup B)** | OpenSCAD, CuraEngine, ADMesh, build123d, trimesh | ${{ env.B_BUILD_TIME }} | ${{ env.B_SIZE }} | PASS |
-          | **Variant C (Setup C)** | B + KiCad (kicad-cli), FreeCAD | ${{ env.C_BUILD_TIME }} | ${{ env.C_SIZE }} | PASS |
+          | **Variant B (Setup B)** | OpenSCAD, CuraEngine, ADMesh, build123d, trimesh | ${{ env.B_BUILD_TIME }} | ${{ env.B_SIZE }} | build: ${{ steps.build_b.outcome }}; verification: ${{ steps.verify_b.outcome }} |
+          | **Variant C (Setup C)** | B + KiCad (kicad-cli), FreeCAD | ${{ env.C_BUILD_TIME }} | ${{ env.C_SIZE }} | build: ${{ steps.build_c.outcome }}; verification: ${{ steps.verify_c.outcome }} |
 
           ### Verification Results:
-          - Both example boards (ESP32 DevKit and Raspberry Pi Zero) generated watertight STL & STEP models.
-          - Design rule verification (\`check_enclosure.py --test\`) passed all positive and intentional defect tests.
-          - Slicing and mesh validation confirmed in Variant B (\`CuraEngine\`, \`admesh\`).
-          - PCB design rule checking confirmed in Variant C (\`kicad-cli\`).
           EOF
+          if [ '${{ steps.verify_b.outcome }}' = success ]; then
+            echo '- Variant B verification ran: both example generators, enclosure checks and defect tests, mesh checks, preview rendering, and the ESP32 CuraEngine slice.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ '${{ steps.verify_c.outcome }}' = success ]; then
+            echo '- Variant C verification ran: KiCad version check, FreeCAD version probe, and PCB DRC command.' >> "$GITHUB_STEP_SUMMARY"
+          fi

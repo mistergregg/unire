@@ -1,0 +1,29 @@
+{
+  "material": "PETG",
+  "description": "Generic 0.4 mm nozzle, 1.75 mm filament, 0.2 mm layers; machine dependent start/end G-code is intentionally omitted.",
+  "settings": {
+    "machine_width": "220",
+    "machine_depth": "220",
+    "machine_height": "250",
+    "machine_center_is_zero": "false",
+    "machine_gcode_flavor": "RepRap (Marlin/Sprinter)",
+    "machine_nozzle_size": "0.4",
+    "material_diameter": "1.75",
+    "material_print_temperature": "240",
+    "material_print_temperature_layer_0": "240",
+    "material_bed_temperature": "75",
+    "material_bed_temperature_layer_0": "75",
+    "layer_height": "0.2",
+    "layer_height_0": "0.24",
+    "wall_line_count": "3",
+    "top_layers": "5",
+    "bottom_layers": "5",
+    "infill_sparse_density": "20",
+    "speed_print": "45",
+    "speed_print_layer_0": "20",
+    "speed_travel": "120",
+    "retraction_enable": "true",
+    "support_enable": "false",
+    "adhesion_type": "none"
+  }
+}

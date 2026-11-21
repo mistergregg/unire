@@ -1,32 +1,21 @@
 #!/bin/sh
-# unire-stl-shot: render an STL model to a shaded isometric PNG image headless.
-#   unire-stl-shot <model.stl> <out.png> [WIDTHxHEIGHT]
-# Works in Setup A today using matplotlib and trimesh (pure offscreen Agg backend).
-
-set -e
-
-STL="$1"
+# Render an STL headlessly with the pipeline's z-buffered software renderer.
+set -eu
+STL="${1:-}"
 OUT="${2:-shot.png}"
 SIZE="${3:-840x700}"
-
-if [ -z "$STL" ] || [ -z "$OUT" ]; then
+if [ -z "$STL" ]; then
     echo "usage: unire-stl-shot <model.stl> <out.png> [WIDTHxHEIGHT]" >&2
     exit 2
 fi
-
 if [ ! -f "$STL" ]; then
     echo "unire-stl-shot: model file not found: $STL" >&2
     exit 1
 fi
-
 case "$SIZE" in
     [0-9]*x[0-9]*) ;;
     *) echo "unire-stl-shot: size format is WIDTHxHEIGHT (e.g. 840x700)" >&2; exit 2 ;;
 esac
-
-W=${SIZE%x*}
-H=${SIZE#*x}
-
 if [ -x "/tmp/hw/bin/python3" ]; then
     PYTHON="/tmp/hw/bin/python3"
 elif [ -x "/opt/hardware/bin/python3" ]; then
@@ -34,53 +23,5 @@ elif [ -x "/opt/hardware/bin/python3" ]; then
 else
     PYTHON="python3"
 fi
-
-"$PYTHON" - "$STL" "$OUT" "$W" "$H" <<'EOF'
-import sys
-import numpy as np
-import trimesh
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-stl_path, out_path, w_str, h_str = sys.argv[1:5]
-w_in = float(w_str) / 100.0
-h_in = float(h_str) / 100.0
-
-mesh = trimesh.load(stl_path)
-fig = plt.figure(figsize=(w_in, h_in), dpi=100)
-ax = fig.add_subplot(111, projection='3d')
-
-verts = mesh.vertices
-faces = mesh.faces
-poly = [[verts[i] for i in face] for face in faces]
-
-normals = mesh.face_normals
-light = np.array([0.45, 0.65, 0.95])
-light /= np.linalg.norm(light)
-shading = np.clip(np.dot(normals, light), 0.22, 1.0)
-
-colors = np.zeros((len(faces), 4))
-colors[:, 0] = 0.22 * shading  # Blue-ish slate
-colors[:, 1] = 0.45 * shading
-colors[:, 2] = 0.75 * shading
-colors[:, 3] = 1.0
-
-col = Poly3DCollection(poly, facecolors=colors, edgecolors=(0.08, 0.08, 0.08, 0.25), linewidths=0.35)
-ax.add_collection3d(col)
-
-min_v = verts.min(axis=0)
-max_v = verts.max(axis=0)
-mid = (max_v + min_v) / 2.0
-radius = max((max_v - min_v).max() / 2.0 * 1.15, 1.0)
-ax.set_xlim(mid[0] - radius, mid[0] + radius)
-ax.set_ylim(mid[1] - radius, mid[1] + radius)
-ax.set_zlim(mid[2] - radius, mid[2] + radius)
-
-ax.view_init(elev=28, azim=45)
-ax.axis('off')
-plt.savefig(out_path, bbox_inches='tight', pad_inches=0.04, dpi=100)
-plt.close(fig)
-print(f"ok {out_path} ({w_str}x{h_str})")
-EOF
+SCRIPT_DIR="${UNIRE_HARDWARE_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+exec "$PYTHON" "$SCRIPT_DIR/render_mesh.py" "$STL" "$OUT" "$SIZE"

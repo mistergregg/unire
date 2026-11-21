@@ -16,14 +16,14 @@
   },
   "volumes_mm3": {
     "base": 9215.49,
-    "lid": 5706.45,
-    "total": 14921.94
+    "lid": 5657.21,
+    "total": 14872.7
   },
   "estimated_filament": {
     "material": "PETG",
     "density_g_cm3": 1.27,
-    "solid_weight_grams": 18.95,
-    "estimated_20pct_infill_weight_grams": 16.11
+    "solid_weight_grams": 18.89,
+    "estimated_20pct_infill_weight_grams": 16.06
   },
   "design_rules_and_sources": {
     "wall_thickness_mm": {
@@ -53,5 +53,15 @@
       "rationale": "0.2mm horizontal tolerance gap ensures smooth lid sliding/friction mating without binding; 0.3mm groove depth relief guarantees rims mate flush."
     }
   },
-  "checks_passed": true
+  "checks_passed": true,
+  "checks_status": "passed",
+  "checks": [
+    "[PASS] Mesh watertightness: base.stl (9215.5 mm3) and lid.stl (5657.2 mm3) are closed 2-manifold solids.",
+    "[PASS] Wall thickness: 2.00 mm >= 1.6 mm (ensures 4+ solid perimeters with 0.4mm nozzle).",
+    "[PASS] Cavity fit: length=66.0mm, width=31.0mm, total_height=13.0mm (provides >= 0.5mm clearance on all axes).",
+    "[PASS] Standoffs: 4 mounting holes validated within board perimeter with heat-set boss support.",
+    "[PASS] Lid screw holes: 4 open through-holes align with the base pilot locations.",
+    "[PASS] Port cutouts: 3 clearance envelopes pass through their specified walls.",
+    "[PASS] Joint mating: tongue height=1.4mm, width=1.0mm, gap=0.2mm, relief=0.3mm ensure flush mating."
+  ]
 }

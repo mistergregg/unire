@@ -20,11 +20,7 @@ import numpy as np
 import trimesh
 import build123d as bd
 
-# Use headless Agg backend for matplotlib
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from PIL import Image
 
 # Heat-set threaded insert standards (dimensions in mm)
 # Sourced from standard CNC Kitchen / McMaster-Carr M2/M2.5/M3 brass insert specs:
@@ -54,92 +50,77 @@ INSERT_SPECS = {
 PETG_DENSITY_G_MM3 = 0.00127
 
 
+def render_meshes_to_png(mesh_colors, out_path, size=(840, 700), view=(28, 45)):
+    """Rasterize shaded STL triangles with a depth buffer to avoid false seams."""
+    scale = 2
+    width, height = size[0] * scale, size[1] * scale
+    all_vertices = np.vstack([mesh.vertices for mesh, _ in mesh_colors])
+    azimuth, elevation = np.radians(view[1]), np.radians(view[0])
+    rotation = np.array([
+        [np.cos(azimuth), np.sin(azimuth), 0],
+        [-np.sin(azimuth) * np.sin(elevation), np.cos(azimuth) * np.sin(elevation), np.cos(elevation)],
+        [np.sin(azimuth) * np.cos(elevation), -np.cos(azimuth) * np.cos(elevation), np.sin(elevation)],
+    ])
+    projected = all_vertices @ rotation.T
+    low, high = projected[:, :2].min(axis=0), projected[:, :2].max(axis=0)
+    span = np.maximum(high - low, 1e-6)
+    pixels_per_unit = min((width - 48 * scale) / span[0], (height - 48 * scale) / span[1])
+    center = (low + high) / 2
+    depth = np.full((height, width), -np.inf, dtype=np.float32)
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+    light = np.array([0.45, 0.65, 0.95], dtype=float)
+    light /= np.linalg.norm(light)
+
+    for mesh, base_color in mesh_colors:
+        transformed = mesh.vertices @ rotation.T
+        screen = np.empty((len(transformed), 2), dtype=float)
+        screen[:, 0] = width / 2 + (transformed[:, 0] - center[0]) * pixels_per_unit
+        screen[:, 1] = height / 2 - (transformed[:, 1] - center[1]) * pixels_per_unit
+        for face, normal in zip(mesh.faces, mesh.face_normals):
+            tri = screen[face]
+            x0 = max(0, int(np.floor(tri[:, 0].min())))
+            x1 = min(width - 1, int(np.ceil(tri[:, 0].max())))
+            y0 = max(0, int(np.floor(tri[:, 1].min())))
+            y1 = min(height - 1, int(np.ceil(tri[:, 1].max())))
+            if x0 > x1 or y0 > y1:
+                continue
+            yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+            px, py = xx + 0.5, yy + 0.5
+            denom = ((tri[1, 1] - tri[2, 1]) * (tri[0, 0] - tri[2, 0]) +
+                     (tri[2, 0] - tri[1, 0]) * (tri[0, 1] - tri[2, 1]))
+            if abs(denom) < 1e-9:
+                continue
+            a = ((tri[1, 1] - tri[2, 1]) * (px - tri[2, 0]) +
+                 (tri[2, 0] - tri[1, 0]) * (py - tri[2, 1])) / denom
+            b = ((tri[2, 1] - tri[0, 1]) * (px - tri[2, 0]) +
+                 (tri[0, 0] - tri[2, 0]) * (py - tri[2, 1])) / denom
+            c = 1 - a - b
+            inside = (a >= -1e-5) & (b >= -1e-5) & (c >= -1e-5)
+            depths = a * transformed[face[0], 2] + b * transformed[face[1], 2] + c * transformed[face[2], 2]
+            zslice = depth[y0:y1 + 1, x0:x1 + 1]
+            visible = inside & (depths >= zslice)
+            if not np.any(visible):
+                continue
+            shade = float(np.clip(np.dot(normal, light), 0.3, 1.0))
+            color = np.clip(np.asarray(base_color) * shade * 255, 0, 255).astype(np.uint8)
+            zslice[visible] = depths[visible]
+            canvas[y0:y1 + 1, x0:x1 + 1][visible] = color
+
+    Image.fromarray(canvas).resize(size, Image.Resampling.LANCZOS).save(out_path)
+
+
 def render_mesh_to_png(mesh, out_path, color_rgb=(0.22, 0.45, 0.75), view=(28, 45), figsize=(6, 5)):
     """Render a trimesh mesh to a shaded isometric PNG image."""
-    fig = plt.figure(figsize=figsize, dpi=140)
-    ax = fig.add_subplot(111, projection='3d')
-    
-    verts = mesh.vertices
-    faces = mesh.faces
-    poly = [[verts[i] for i in face] for face in faces]
-    
-    # Lambertian directional lighting
-    normals = mesh.face_normals
-    light = np.array([0.45, 0.65, 0.95])
-    light /= np.linalg.norm(light)
-    shading = np.clip(np.dot(normals, light), 0.22, 1.0)
-    
-    colors = np.zeros((len(faces), 4))
-    colors[:, 0] = color_rgb[0] * shading
-    colors[:, 1] = color_rgb[1] * shading
-    colors[:, 2] = color_rgb[2] * shading
-    colors[:, 3] = 1.0
-    
-    col = Poly3DCollection(poly, facecolors=colors, edgecolors=(0.08, 0.08, 0.08, 0.25), linewidths=0.35)
-    ax.add_collection3d(col)
-    
-    # Auto-scale
-    min_v = verts.min(axis=0)
-    max_v = verts.max(axis=0)
-    mid = (max_v + min_v) / 2.0
-    radius = max((max_v - min_v).max() / 2.0 * 1.15, 1.0)
-    ax.set_xlim(mid[0] - radius, mid[0] + radius)
-    ax.set_ylim(mid[1] - radius, mid[1] + radius)
-    ax.set_zlim(mid[2] - radius, mid[2] + radius)
-    
-    ax.view_init(elev=view[0], azim=view[1])
-    ax.axis('off')
-    plt.savefig(out_path, bbox_inches='tight', pad_inches=0.04, dpi=140)
-    plt.close(fig)
+    size = (int(figsize[0] * 140), int(figsize[1] * 140))
+    render_meshes_to_png([(mesh, color_rgb)], out_path, size=size, view=view)
 
 
-def render_assembled_view(base_mesh, lid_mesh, out_path, explode_distance=18.0):
-    """Render an exploded isometric view of the assembled base and lid."""
-    fig = plt.figure(figsize=(7, 6), dpi=140)
-    ax = fig.add_subplot(111, projection='3d')
-    
-    # Base: slate blue
-    # Lid: hovered above by explode_distance, colored cyan/light-blue
-    lid_exploded = lid_mesh.copy()
-    lid_exploded.apply_translation((0, 0, explode_distance))
-    
-    pairs = [
-        (base_mesh, (0.20, 0.42, 0.70)),   # Base: Slate blue
-        (lid_exploded, (0.35, 0.68, 0.88)) # Lid: Cyan / Light blue
-    ]
-    
-    for mesh, color_rgb in pairs:
-        verts = mesh.vertices
-        faces = mesh.faces
-        poly = [[verts[i] for i in face] for face in faces]
-        
-        normals = mesh.face_normals
-        light = np.array([0.45, 0.65, 0.95])
-        light /= np.linalg.norm(light)
-        shading = np.clip(np.dot(normals, light), 0.22, 1.0)
-        
-        colors = np.zeros((len(faces), 4))
-        colors[:, 0] = color_rgb[0] * shading
-        colors[:, 1] = color_rgb[1] * shading
-        colors[:, 2] = color_rgb[2] * shading
-        colors[:, 3] = 0.95
-        
-        col = Poly3DCollection(poly, facecolors=colors, edgecolors=(0.08, 0.08, 0.08, 0.2), linewidths=0.35)
-        ax.add_collection3d(col)
-        
-    all_verts = np.vstack([base_mesh.vertices, lid_exploded.vertices])
-    min_v = all_verts.min(axis=0)
-    max_v = all_verts.max(axis=0)
-    mid = (max_v + min_v) / 2.0
-    radius = max((max_v - min_v).max() / 2.0 * 1.15, 1.0)
-    ax.set_xlim(mid[0] - radius, mid[0] + radius)
-    ax.set_ylim(mid[1] - radius, mid[1] + radius)
-    ax.set_zlim(mid[2] - radius, mid[2] + radius)
-    
-    ax.view_init(elev=28, azim=45)
-    ax.axis('off')
-    plt.savefig(out_path, bbox_inches='tight', pad_inches=0.04, dpi=140)
-    plt.close(fig)
+def render_assembled_view(base_mesh, lid_mesh, out_path, base_height):
+    """Render the lid seated on the base at the lip-and-groove joint."""
+    lid_placed = lid_mesh.copy()
+    lid_placed.apply_translation((0, 0, base_height))
+    render_meshes_to_png([(base_mesh, (0.20, 0.42, 0.70)),
+                          (lid_placed, (0.35, 0.68, 0.88))], out_path, size=(980, 840))
 
 
 def generate_enclosure(spec, out_dir):
@@ -297,6 +278,15 @@ def generate_enclosure(spec, out_dir):
         with bd.Locations((0, 0, -0.01)):
             bd.Box(groove_outer_l, groove_outer_w, groove_depth + 0.01, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN), mode=bd.Mode.SUBTRACT)
             # Retain inner boundary if needed (cavity is already subtracted)
+
+        # Clearance holes pass through the lid roof and align with the base's
+        # heat-set insert pilots. The lid is printed upside down and flipped for assembly.
+        for hole in board.get("mounting_holes", []):
+            cx = float(hole["x"]) - board_l / 2.0
+            cy = float(hole["y"]) - board_w / 2.0
+            with bd.Locations((cx, cy, lid_cavity_h - 0.1)):
+                bd.Cylinder(insert_info["screw_clearance"] / 2.0, wall + 0.2,
+                            align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN), mode=bd.Mode.SUBTRACT)
             
     lid_solid = lid_builder.part
     
@@ -338,7 +328,7 @@ def generate_enclosure(spec, out_dir):
     
     render_mesh_to_png(m_base, preview_base, color_rgb=(0.20, 0.42, 0.70))
     render_mesh_to_png(m_lid, preview_lid, color_rgb=(0.35, 0.68, 0.88))
-    render_assembled_view(m_base, m_lid, preview_assembled, explode_distance=max(base_h * 0.8, 16.0))
+    render_assembled_view(m_base, m_lid, preview_assembled, base_height=base_h)
     
     # -------------------------------------------------------------------------
     # 5. GENERATE REPORT.JSON
@@ -398,7 +388,8 @@ def generate_enclosure(spec, out_dir):
                 "rationale": "0.2mm horizontal tolerance gap ensures smooth lid sliding/friction mating without binding; 0.3mm groove depth relief guarantees rims mate flush."
             }
         },
-        "checks_passed": True
+        "checks_passed": False,
+        "checks_status": "not run; run check_enclosure.py"
     }
     
     report_file = os.path.join(out_dir, "report.json")

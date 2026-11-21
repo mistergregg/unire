@@ -5,10 +5,11 @@ check_enclosure.py: Automated design rule and physical fit verification for 3D p
 Runs rigorous geometric and design rule checks:
 1. Watertightness: base.stl and lid.stl must be closed 2-manifold meshes (no open boundary edges).
 2. Cavity Clearance: board + tallest component fits inside with >= stated clearance on all sides (X, Y, Z).
-3. Standoff Alignment: every standoff matches a board mounting hole (x, y) and accommodates heat-set insert.
-4. Port Cutouts: every port cutout aligns with its port and has width/height >= port dimension + 2*clearance.
-5. Lid-Base Mating: tongue and groove dimensions mate with >=0.15mm tolerance gap.
-6. Wall Thickness: all nominal walls >= 1.6 mm (minimum rigid FDM perimeter requirement).
+3. Standoff Alignment: each mounting position has a boss in the actual base mesh.
+4. Lid Screw Holes: each board hole has an open, aligned clearance hole in the lid mesh.
+5. Port Cutouts: sample rays verify the complete clearance envelope passes through the wall.
+6. Lid-Base Mating: tongue/groove parameters and actual part footprints are compatible.
+7. Wall Thickness: nominal walls are >= 1.6 mm (minimum rigid FDM perimeter requirement).
 
 Exits 0 on success; FAILS LOUDLY (exit code 1) on any violation.
 Includes '--test' mode to verify that intentional design defects are caught.
@@ -17,6 +18,8 @@ Includes '--test' mode to verify that intentional design defects are caught.
 import sys
 import os
 import json
+import copy
+import tempfile
 import trimesh
 import numpy as np
 
@@ -24,6 +27,9 @@ import numpy as np
 class VerificationError(Exception):
     """Raised when an enclosure verification check fails."""
     pass
+
+
+INSERT_BOSS_DIAMETERS = {"M2": 5.2, "M2.5": 6.0, "M3": 7.0}
 
 
 def check_mesh_watertightness(stl_path, name="Mesh"):
@@ -39,6 +45,28 @@ def check_mesh_watertightness(stl_path, name="Mesh"):
         raise VerificationError(f"{name} ({stl_path}) has non-positive volume: {mesh.volume:.2f} mm3")
         
     return mesh
+
+
+def ray_hits(mesh, origin, direction, max_distance):
+    """Small, dependency-free Moller-Trumbore ray test against STL triangles."""
+    triangles = mesh.triangles
+    direction = np.asarray(direction, dtype=float)
+    direction /= np.linalg.norm(direction)
+    origin = np.asarray(origin, dtype=float)
+    edge1 = triangles[:, 1] - triangles[:, 0]
+    edge2 = triangles[:, 2] - triangles[:, 0]
+    h = np.cross(np.broadcast_to(direction, edge2.shape), edge2)
+    det = np.einsum("ij,ij->i", edge1, h)
+    valid = np.abs(det) > 1e-9
+    inv = np.zeros_like(det)
+    inv[valid] = 1.0 / det[valid]
+    s = origin - triangles[:, 0]
+    u = inv * np.einsum("ij,ij->i", s, h)
+    q = np.cross(s, edge1)
+    v = inv * np.einsum("ij,j->i", q, direction)
+    t = inv * np.einsum("ij,ij->i", edge2, q)
+    hits = valid & (u >= -1e-7) & (v >= -1e-7) & (u + v <= 1 + 1e-7) & (t >= -1e-7) & (t <= max_distance)
+    return np.sort(t[hits])
 
 
 def check_enclosure(board_json_path, out_dir):
@@ -68,6 +96,10 @@ def check_enclosure(board_json_path, out_dir):
         
     with open(report_path, "r") as f:
         report = json.load(f)
+    report["checks_passed"] = False
+    report["checks_status"] = "checks running"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
         
     base_stl = os.path.join(out_dir, "base.stl")
     lid_stl = os.path.join(out_dir, "lid.stl")
@@ -108,8 +140,8 @@ def check_enclosure(board_json_path, out_dir):
         
     # Vertical clearance check:
     # Standoff must clear bottom components
-    if standoff_h < comp_bot:
-        raise VerificationError(f"Standoff height {standoff_h:.2f} mm does NOT clear bottom components ({comp_bot:.2f} mm)!")
+    if standoff_h < comp_bot + clearance - 1e-3:
+        raise VerificationError(f"Standoff height {standoff_h:.2f} mm does not provide component height plus {clearance:.2f} mm clearance below the board ({comp_bot:.2f} mm component height).")
         
     # Total cavity height must clear standoff + board_t + comp_top + clearance
     required_cav_h = standoff_h + board_t + comp_top + clearance
@@ -121,6 +153,7 @@ def check_enclosure(board_json_path, out_dir):
     # CHECK 4: Standoff Alignment
     # -------------------------------------------------------------------------
     holes = board.get("mounting_holes", [])
+    boss_radius = INSERT_BOSS_DIAMETERS.get(enc.get("screw_size", "M2.5").upper(), 6.0) / 2.0
     for idx, hole in enumerate(holes):
         hx = float(hole["x"])
         hy = float(hole["y"])
@@ -134,12 +167,37 @@ def check_enclosure(board_json_path, out_dir):
         min_edge_dist = min(hx, board_l - hx, hy, board_w - hy)
         if min_edge_dist < hd / 2.0:
             raise VerificationError(f"Mounting hole #{idx+1} at ({hx}, {hy}) breaks through board edge (dist={min_edge_dist:.2f}mm < radius={hd/2.0:.2f}mm)!")
+    for idx, hole in enumerate(holes):
+        hx = float(hole["x"]) - board_l / 2.0
+        hy = float(hole["y"]) - board_w / 2.0
+        dist_x = (board_l + 2*clearance) / 2.0 - abs(hx)
+        dist_y = (board_w + 2*clearance) / 2.0 - abs(hy)
+        radius = boss_radius + (0.5 if dist_x <= boss_radius + 0.6 or dist_y <= boss_radius + 0.6 else 0.0)
+        inward = np.array([-hx, -hy], dtype=float)
+        inward /= np.linalg.norm(inward)
+        z = wall + standoff_h / 2.0
+        hits = ray_hits(m_base, (hx, hy, z), (inward[0], inward[1], 0), radius + 0.5)
+        if not len(hits) or hits[0] < 0.2 or hits[0] > radius + 0.2:
+            raise VerificationError(f"Standoff #{idx+1} is missing or misaligned with mounting hole ({hole['x']}, {hole['y']}) mm.")
     results.append(f"[PASS] Standoffs: {len(holes)} mounting holes validated within board perimeter with heat-set boss support.")
+
+    # Inspect the actual lid mesh: each screw position must be an open hole
+    # through its roof, not just a promise in the board description.
+    lid_top = float(m_lid.bounds[1][2])
+    for idx, hole in enumerate(holes):
+        x = float(hole["x"]) - board_l / 2.0
+        y = float(hole["y"]) - board_w / 2.0
+        hits = ray_hits(m_lid, (x, y, lid_top + 1.0), (0, 0, -1), lid_top + 2.0)
+        if len(hits):
+            raise VerificationError(f"Lid screw clearance hole #{idx+1} is missing or misaligned at ({hole['x']}, {hole['y']}) mm.")
+    results.append(f"[PASS] Lid screw holes: {len(holes)} open through-holes align with the base pilot locations.")
 
     # -------------------------------------------------------------------------
     # CHECK 5: Port Cutout Clearance & Alignment
     # -------------------------------------------------------------------------
     ports = board.get("ports", [])
+    base_bounds = m_base.bounds
+    base_extents = m_base.extents
     for idx, port in enumerate(ports):
         side = port["side"].lower()
         pos = float(port["position"])
@@ -159,7 +217,34 @@ def check_enclosure(board_json_path, out_dir):
         port_bottom = wall + standoff_h + board_t + hab
         if port_bottom < wall:
             raise VerificationError(f"Port '{port['name']}' penetrates into enclosure floor! (bottom={port_bottom:.2f}mm, floor={wall:.2f}mm)")
-    results.append(f"[PASS] Port cutouts: {len(ports)} ports verified with >= {clearance}mm plug clearance and valid wall penetrations.")
+        port_z = wall + standoff_h + board_t + hab + ph / 2.0
+        if side in ["x_min", "left", "west"]:
+            origin, direction, travel = (float(base_bounds[0][0])-1, 0, port_z), (1,0,0), wall+2
+            transverse = (0, 1, -board_w / 2.0)
+        elif side in ["x_max", "right", "east"]:
+            origin, direction, travel = (float(base_bounds[1][0])+1, 0, port_z), (-1,0,0), wall+2
+            transverse = (0, 1, -board_w / 2.0)
+        elif side in ["y_min", "bottom", "south"]:
+            origin, direction, travel = (0, float(base_bounds[0][1])-1, port_z), (0,1,0), wall+2
+            transverse = (1, 0, -board_l / 2.0)
+        else:
+            origin, direction, travel = (0, float(base_bounds[1][1])+1, port_z), (0,-1,0), wall+2
+            transverse = (1, 0, -board_l / 2.0)
+        transverse_center = pos + transverse[2]
+        half_width = pw / 2.0 + clearance - 0.2
+        half_height = ph / 2.0 + clearance - 0.2
+        probes = [(transverse_center, port_z)] + [
+            (transverse_center + dw * half_width, port_z + dz * half_height)
+            for dw in (-1, 1) for dz in (-1, 1)
+        ]
+        for along, height in probes:
+            probe_origin = list(origin)
+            probe_origin[0] += transverse[0] * along
+            probe_origin[1] += transverse[1] * along
+            probe_origin[2] = height
+            if len(ray_hits(m_base, probe_origin, direction, travel)):
+                raise VerificationError(f"Port '{port['name']}' cutout is missing or misaligned with its clearance envelope (position {pos:.2f} mm).")
+    results.append(f"[PASS] Port cutouts: {len(ports)} clearance envelopes pass through their specified walls.")
 
     # -------------------------------------------------------------------------
     # CHECK 6: Lid and Base Tongue-and-Groove Joint Mating
@@ -174,8 +259,15 @@ def check_enclosure(board_json_path, out_dir):
         raise VerificationError(f"Lid tolerance gap {lip_gap:.2f} mm is too tight (<0.15mm); lid will bind during insertion!")
     if groove_relief < 0.2:
         raise VerificationError(f"Groove depth relief {groove_relief:.2f} mm is too shallow (<0.2mm); lid will bottom out before rims contact!")
+    if np.max(np.abs(m_base.bounds[:, :2] - m_lid.bounds[:, :2])) > 0.05:
+        raise VerificationError("Lid outer footprint does not match the base footprint; tongue and groove cannot mate.")
     results.append(f"[PASS] Joint mating: tongue height={lip_h}mm, width={lip_t}mm, gap={lip_gap}mm, relief={groove_relief}mm ensure flush mating.")
 
+    report["checks_passed"] = True
+    report["checks_status"] = "passed"
+    report["checks"] = results
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
     return results
 
 
@@ -233,6 +325,73 @@ def run_tests():
     except VerificationError as ve:
         print(f"  [CAUGHT AS EXPECTED]: {ve}")
 
+    # Generate changed geometry and compare it to the unmodified board spec.
+    # These tests exercise the STL probes, not only arithmetic on the JSON.
+    print("5. Testing defect: Port cutout moved 5 mm away from its port...")
+    good_json = os.path.join(base_dir, "examples/esp32/esp32.json")
+    good_out = os.path.join(base_dir, "examples/esp32")
+    with open(good_json, encoding="utf-8") as f:
+        good_spec = json.load(f)
+    shifted = copy.deepcopy(good_spec)
+    shifted["board"]["ports"][0]["position"] += 5.0
+    shifted_path = os.path.join(tmp_test_dir, "shifted-port.json")
+    with open(shifted_path, "w", encoding="utf-8") as f:
+        json.dump(shifted, f)
+    try:
+        check_enclosure(shifted_path, good_out)
+        raise AssertionError("5 mm port misalignment was NOT caught")
+    except VerificationError as ve:
+        if "clearance envelope" not in str(ve):
+            raise
+        print(f"  [CAUGHT AS EXPECTED]: {ve}")
+
+    print("6. Testing defect: One standoff removed from generated base...")
+    sys.path.insert(0, base_dir)
+    from gen_enclosure import generate_enclosure
+    missing_boss = copy.deepcopy(good_spec)
+    missing_boss["board"]["mounting_holes"].pop(0)
+    with tempfile.TemporaryDirectory(prefix="unire-no-boss-") as bad_out:
+        generate_enclosure(missing_boss, bad_out)
+        try:
+            check_enclosure(good_json, bad_out)
+            raise AssertionError("missing standoff was NOT caught")
+        except VerificationError as ve:
+            if "Standoff #1 is missing" not in str(ve):
+                raise
+            print(f"  [CAUGHT AS EXPECTED]: {ve}")
+
+    print("7. Testing defect: Lid screw holes omitted...")
+    import shutil
+    with tempfile.TemporaryDirectory(prefix="unire-no-lid-holes-") as bad_out:
+        for filename in ("base.stl", "report.json"):
+            shutil.copy(os.path.join(good_out, filename), bad_out)
+        report = json.load(open(os.path.join(good_out, "report.json"), encoding="utf-8"))
+        outer = report["outer_dimensions_mm"]
+        solid_lid = trimesh.creation.box(extents=(outer["length"], outer["width"], outer["lid_height"]))
+        solid_lid.apply_translation((0, 0, outer["lid_height"] / 2.0))
+        solid_lid.export(os.path.join(bad_out, "lid.stl"))
+        try:
+            check_enclosure(good_json, bad_out)
+            raise AssertionError("lid without screw holes was NOT caught")
+        except VerificationError as ve:
+            if "Lid screw clearance hole #1" not in str(ve):
+                raise
+            print(f"  [CAUGHT AS EXPECTED]: {ve}")
+
+    print("8. Testing defect: Wall thickness reduced to 1.2 mm...")
+    thin = copy.deepcopy(good_spec)
+    thin["enclosure"]["wall_thickness"] = 1.2
+    thin_path = os.path.join(tmp_test_dir, "thin-wall.json")
+    with open(thin_path, "w", encoding="utf-8") as f:
+        json.dump(thin, f)
+    try:
+        check_enclosure(thin_path, good_out)
+        raise AssertionError("1.2 mm wall was NOT caught")
+    except VerificationError as ve:
+        if "below the 1.6 mm minimum" not in str(ve):
+            raise
+        print(f"  [CAUGHT AS EXPECTED]: {ve}")
+
     # Negative Test 2: Wall thickness too thin (< 1.6mm)
     print("2. Testing defect: Wall thickness below 1.6mm threshold...")
     bad_spec2 = {
@@ -283,6 +442,11 @@ def run_tests():
         sys.exit(1)
     except VerificationError as ve:
         print(f"  [CAUGHT AS EXPECTED]: {ve}")
+
+    # Negative checks may intentionally point at the committed output folders;
+    # restore their success records only after both original designs pass again.
+    for name, json_path, out_dir in examples:
+        check_enclosure(json_path, out_dir)
 
     print("\n======================================================================")
     print("ALL TESTS PASSED: Valid designs verified; defects caught with loud errors.")

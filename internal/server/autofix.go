@@ -87,6 +87,14 @@ func (s *Server) autoFixConversation(ctx context.Context, rootID string) bool {
 	}
 	for i, v := range views {
 		rec := recs[i]
+		if v.State == "open" {
+			switch s.keepPullCurrent(ctx, last, v) {
+			case keepStarted:
+				return true // one turn per conversation at a time
+			case keepUpdated:
+				continue // its checks run again: look at them next time
+			}
+		}
 		switch {
 		case v.State != "open", v.Summary != "failure", v.Pending, v.HeadSHA == "":
 			continue // not failing, or not finished (the logs would be incomplete)

@@ -441,7 +441,12 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
 }
 .composer-bar { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
 .composer-bar .hint { flex: 1; font-size: 12px; text-align: right; color: var(--muted); }
-@media (max-width: 600px) { .composer-bar .hint { display: none; } .composer-bar { justify-content: space-between; flex-wrap: wrap; row-gap: 8px; } .composer-bar .pill-select { min-width: 0; } }
+@media (max-width: 600px) {
+  .composer-bar .hint { display: none; }
+  .composer-bar { justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
+  .composer-bar .pill-select { min-width: 0; }
+  .composer-bar .icon-btn { width: 34px; height: 34px; }
+}
 #n-model, #reply-model { max-width: 14em; text-overflow: ellipsis; }
 .pill-input { width: 11em; margin: 0; padding: 4px 8px; font-size: 12.5px; border-radius: 6px; border: 1px solid var(--line); background-color: var(--panel-subtle); color: var(--text); }
 .pill-input:invalid { border-color: var(--danger); }
@@ -562,10 +567,10 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
   stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
 }
 @media (max-width: 800px) {
-  .side { position: static; height: auto; max-height: none; overflow: visible; border-right: none; }
-  .side-list-wrap { overflow: visible; min-height: auto; }
-  .side-list { overflow: visible; }
-  .side-nav { margin-top: 12px; }
+  .side { position: static; height: auto; max-height: none; min-height: 100vh; overflow: visible; border-right: none; display: flex; flex-direction: column; }
+  .side-list-wrap { flex: none; height: auto; min-height: auto; overflow: visible; }
+  .side-list { flex: none; height: auto; min-height: auto; overflow: visible; }
+  .side-nav { flex: none; margin-top: auto; padding-top: 16px; padding-bottom: 24px; }
 }
 
 @media (max-width: 1100px) {
@@ -646,6 +651,19 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
 .new-chat.selected { border-color: var(--accent); background: var(--panel-subtle); box-shadow: none; }
 
 /* ---- images attached to a message ---- */
+.file-input-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .row-tight { display: inline-flex; align-items: center; gap: 8px; }
 @media (max-width: 600px) { #new-form .row-tight { flex-wrap: wrap; } #new-form .row-tight .pill-select { min-width: 0; } }
 .attach-previews { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px; }

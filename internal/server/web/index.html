@@ -109,7 +109,7 @@
       <div class="card">
         <textarea id="n-prompt" required rows="5" maxlength="20000" aria-label="What should the agent do?" placeholder="What should the agent do?"></textarea>
         <div id="n-previews" class="attach-previews" hidden></div>
-        <input id="n-files" type="file" multiple hidden>
+        <input id="n-files" type="file" multiple accept="image/*,text/*,application/*,.png,.jpg,.jpeg,.gif,.webp,.txt,.md,.log,.json" class="file-input-hidden">
 
         <div id="n-selected" class="chips"></div>
         <div id="n-suggest" class="suggest" hidden></div>
@@ -125,7 +125,7 @@
             <select id="n-agent" class="pill-select" aria-label="Agent"></select>
             <select id="n-model" class="pill-select" aria-label="Model"></select>
             <input id="n-model-name" class="pill-input" hidden maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9.:\/\-]*" spellcheck="false" autocapitalize="off" placeholder="Model name" aria-label="Model name">
-            <button id="n-attach" type="button" class="icon-btn" title="Attach files (or paste them into the message)" aria-label="Attach files"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
+            <button id="n-attach" type="button" class="icon-btn" title="Attach files or photos (or paste them into the message)" aria-label="Attach files or photos"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
           </span>
           <button class="primary" type="submit" id="n-submit">Start &rarr;</button>
         </div>
@@ -180,13 +180,13 @@
           <div class="usage-strip" aria-label="Usage left per agent" hidden></div>
           <div class="composer-box">
             <div id="reply-previews" class="attach-previews" hidden></div>
-            <input id="reply-files" type="file" multiple hidden>
+            <input id="reply-files" type="file" multiple accept="image/*,text/*,application/*,.png,.jpg,.jpeg,.gif,.webp,.txt,.md,.log,.json" class="file-input-hidden">
             <textarea id="reply-text" rows="1" maxlength="20000" aria-label="Message" placeholder="Reply to the agent"></textarea>
             <div class="composer-bar">
               <select id="reply-agent" class="pill-select" aria-label="Agent for the next message"></select>
               <select id="reply-model" class="pill-select" aria-label="Model for the next message"></select>
               <input id="reply-model-name" class="pill-input" hidden maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9.:\/\-]*" spellcheck="false" autocapitalize="off" placeholder="Model name" aria-label="Model name for the next message">
-              <button id="reply-attach" type="button" class="icon-btn" title="Attach files (or paste them into the message)" aria-label="Attach files"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
+              <button id="reply-attach" type="button" class="icon-btn" title="Attach files or photos (or paste them into the message)" aria-label="Attach files or photos"><svg viewBox="0 0 24 24"><path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7L9.7 17.2a1.7 1.7 0 01-2.4-2.4L15 7"/></svg></button>
               <span class="hint muted" id="composer-hint">Enter to send · Shift+Enter for a new line</span>
               <button id="steer-now" type="button" class="pill-btn" hidden title="Stop what the agent is doing and carry on from this message">Send now</button>
               <button id="s-stop" type="button" class="icon-btn stop" title="Stop the agent" aria-label="Stop" hidden>
@@ -556,6 +556,9 @@
       <div class="image-modal-bar">
         <div id="image-modal-title" class="image-modal-title"></div>
         <div class="image-modal-actions">
+          <button type="button" id="image-modal-share" class="icon-btn" title="Share image" aria-label="Share image" hidden>
+            <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </button>
           <button type="button" id="image-modal-zoom" class="icon-btn" title="Toggle actual size (Z)" aria-label="Toggle actual size">
             <svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
           </button>

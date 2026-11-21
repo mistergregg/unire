@@ -760,13 +760,23 @@ function shareCard(t, e) {
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
       download(name, new Blob([bytes], { type: mime }));
     };
+    const doShare = () => {
+      const bin = atob(content);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      shareImage({ src, name, blob: new Blob([bytes], { type: mime }) });
+    };
     body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
-    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
-    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const save = el("button", { type: "button", class: "tiny" }, "Download");
     save.addEventListener("click", saveImage);
     actions.append(full, save);
+    if (navigator.share) {
+      const share = el("button", { type: "button", class: "tiny", title: "Share this image" }, "Share");
+      share.addEventListener("click", doShare);
+      actions.append(share);
+    }
   } else {
     const isMd = /\.(md|markdown)$/i.test(name);
     body = isMd ? el("div", { class: "md" }, renderMarkdown(content)) : el("pre", { class: "log" }, content);
@@ -1059,13 +1069,23 @@ function viewSideFile(name) {
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
       download(name, new Blob([bytes], { type: file.mime }));
     };
+    const doShare = () => {
+      const bin = atob(file.content);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      shareImage({ src, name, blob: new Blob([bytes], { type: file.mime }) });
+    };
     body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
-    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
-    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage }));
+    full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const save = el("button", { type: "button", class: "tiny" }, "Download");
     save.addEventListener("click", saveImage);
     actions.append(full, save);
+    if (navigator.share) {
+      const share = el("button", { type: "button", class: "tiny", title: "Share this image" }, "Share");
+      share.addEventListener("click", doShare);
+      actions.append(share);
+    }
   } else {
     const isMd = /\.(md|markdown)$/i.test(name);
     body = isMd ? el("div", { class: "md" }, renderMarkdown(file.content)) : el("pre", { class: "log" }, file.content);

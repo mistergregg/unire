@@ -30,12 +30,22 @@ function usageLevel(left) {
 // "5-hour" -> "5h" for the narrow strip
 const shortWindow = (name) => name.replace(/^(\d+)-(hour|day|min)$/, (_, n, u) => n + u[0]);
 
+function shortAgo(unix) {
+  if (!unix) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 129600) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+
 function usageWindowChip(w) {
   const left = Math.round(100 - w.usedPercent);
   const bar = el("span", { class: "usage-bar" }, el("span", {}));
   bar.firstChild.style.width = Math.max(0, Math.min(100, left)) + "%";
-  return el("span", { class: "usage-win " + usageLevel(left) },
-    el("span", { class: "usage-wname" }, el("span", { class: "long" }, w.name), el("span", { class: "short" }, shortWindow(w.name))),
+  const winName = shortWindow(w.name || "");
+  return el("span", { class: "usage-win " + usageLevel(left), title: (w.name || winName) + ": " + left + "% left" },
+    el("span", { class: "usage-wname" }, winName),
     bar,
     el("span", { class: "usage-left" }, left + "%", el("span", { class: "usage-word" }, " left")));
 }
@@ -86,33 +96,8 @@ function usageDetails(u) {
   return rows;
 }
 
-function usageAgent(u, last = true) {
-  const id = u.key || u.agentId;
-  const name = u.label || u.agentId;
-  const body = [el("span", { class: "usage-name" }, el("span", { class: "long" }, name), el("span", { class: "short" }, name.split(" ")[0]))];
-  let cls = "usage-agent";
-  if (!u.reported) {
-    cls += " none";
-    body.push(el("span", { class: "usage-none" }, el("span", { class: "long" }, "usage not reported by the CLI"), el("span", { class: "short" }, "not reported")));
-  } else if (!u.windows || !u.windows.length) {
-    cls += " none";
-    body.push(el("span", { class: "usage-none" }, "no reading yet"));
-  } else {
-    body.push(...u.windows.map(usageWindowChip));
-    if (u.stale) cls += " stale";
-    if (u.stale && last) {
-      body.push(el("span", { class: "usage-age" }, el("span", { class: "long" }, "as of " + ago(u.updatedAt)), el("span", { class: "short" }, "old")));
-    }
-  }
-  const chip = el("button", { type: "button", class: cls, "aria-expanded": String(usageOpen === id) }, ...body);
-  const pop = el("div", { class: "usage-pop", role: "tooltip" }, ...usageDetails(u));
-  chip.addEventListener("click", (e) => {
-    e.stopPropagation();
-    usageOpen = usageOpen === id ? "" : id;
-    renderUsage();
-  });
-  return el("div", { class: "usage-item" + (usageOpen === id ? " open" : "") }, chip, pop);
-}
+let usageHover = "";
+let hoverTimer = null;
 
 function renderUsage() {
   for (const strip of document.querySelectorAll(".usage-strip")) {
@@ -121,10 +106,89 @@ function renderUsage() {
     // Agents that report their usage first; the order among them is the server's.
     const sorted = [...usageData].sort((a, b) => Number(b.reported) - Number(a.reported));
     const items = sorted.flatMap((u) => usageItems(u));
-    // Keep the compact single-agent chips together first; Antigravity's two
-    // group chips then wrap below them on narrow screens.
+    // Keep single-agent chips first; grouped chips follow.
     items.sort((a, b) => Number(!!a.group) - Number(!!b.group));
-    strip.replaceChildren(...items.map((it, i) => usageAgent(it, !it.group || i === items.length - 1)));
+
+    const activeId = usageOpen || usageHover;
+    const activeItem = items.find((it) => (it.key || it.agentId) === activeId);
+
+    const pop = el("div", { class: "usage-pop" + (activeItem ? " open" : ""), role: "tooltip" });
+    if (activeItem) {
+      pop.append(...usageDetails(activeItem));
+    }
+    pop.addEventListener("mouseenter", () => {
+      clearTimeout(hoverTimer);
+    });
+    pop.addEventListener("mouseleave", () => {
+      hoverTimer = setTimeout(() => {
+        usageHover = "";
+        renderUsage();
+      }, 100);
+    });
+    pop.addEventListener("click", (e) => { e.stopPropagation(); });
+
+    const track = el("div", { class: "usage-track" });
+    let activeChip = null;
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const id = it.key || it.agentId;
+      const name = it.label || it.agentId;
+      const body = [el("span", { class: "usage-name" }, el("span", { class: "long" }, name), el("span", { class: "short" }, name.split(" ")[0]))];
+      let cls = "usage-agent" + (id === activeId ? " active" : "");
+      if (!it.reported) {
+        cls += " none";
+        body.push(el("span", { class: "usage-none" }, el("span", { class: "long" }, "usage not reported by the CLI"), el("span", { class: "short" }, "not reported")));
+      } else if (!it.windows || !it.windows.length) {
+        cls += " none";
+        body.push(el("span", { class: "usage-none" }, "no reading yet"));
+      } else {
+        body.push(...it.windows.map(usageWindowChip));
+        if (it.stale) cls += " stale";
+        if (it.stale && (!it.group || i === items.length - 1)) {
+          body.push(el("span", { class: "usage-age" }, el("span", { class: "long" }, shortAgo(it.updatedAt)), el("span", { class: "short" }, "old")));
+        }
+      }
+      const chip = el("button", {
+        type: "button",
+        class: cls,
+        "aria-expanded": String(usageOpen === id),
+        title: name + " usage details"
+      }, ...body);
+
+      if (id === activeId) activeChip = chip;
+
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        clearTimeout(hoverTimer);
+        usageOpen = usageOpen === id ? "" : id;
+        usageHover = "";
+        renderUsage();
+      });
+      chip.addEventListener("mouseenter", () => {
+        clearTimeout(hoverTimer);
+        usageHover = id;
+        renderUsage();
+      });
+      chip.addEventListener("mouseleave", () => {
+        hoverTimer = setTimeout(() => {
+          if (usageHover === id) {
+            usageHover = "";
+            renderUsage();
+          }
+        }, 100);
+      });
+
+      track.append(chip);
+    }
+
+    strip.replaceChildren(track, pop);
+
+    if (activeChip && pop.classList.contains("open")) {
+      const maxLeft = Math.max(0, strip.clientWidth - pop.offsetWidth);
+      const pos = Math.max(0, Math.min(activeChip.offsetLeft - track.scrollLeft, maxLeft));
+      pop.style.left = pos + "px";
+    }
   }
 }
 

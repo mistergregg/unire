@@ -26,6 +26,24 @@ func (s *Server) viewWithPushed(x store.Session) sessionView {
 	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
 		v.Pushed = pushedFrom(events, x.Repos)
 	}
+	if prs, err := s.store.PullRequests(x.ID); err == nil && len(prs) > 0 {
+		for _, pr := range prs {
+			state := pr.State
+			if state == "" {
+				state = "open"
+			}
+			v.Pulls = append(v.Pulls, SessionPR{
+				ServerID: pr.ServerID,
+				Repo:     pr.Repo,
+				Number:   pr.Number,
+				Title:    pr.Title,
+				URL:      pr.URL,
+				State:    state,
+				Branch:   pr.Branch,
+				Base:     pr.Base,
+			})
+		}
+	}
 	return v
 }
 

@@ -36,21 +36,69 @@ const lastTouched = (s) => s.lastActive || s.startedAt || s.createdAt;
 
 
 let sideSignature = "";
+let sideFilter = "all"; // "all" or "prs"
+
+function initSideFilters() {
+  const btnAll = $("side-filter-all");
+  const btnPRs = $("side-filter-prs");
+  if (btnAll) {
+    btnAll.addEventListener("click", () => {
+      if (sideFilter === "all") return;
+      sideFilter = "all";
+      btnAll.classList.add("active");
+      btnAll.setAttribute("aria-selected", "true");
+      if (btnPRs) {
+        btnPRs.classList.remove("active");
+        btnPRs.setAttribute("aria-selected", "false");
+      }
+      sideSignature = "";
+      renderSidebar(sideList);
+    });
+  }
+  if (btnPRs) {
+    btnPRs.addEventListener("click", () => {
+      if (sideFilter === "prs") return;
+      sideFilter = "prs";
+      btnPRs.classList.add("active");
+      btnPRs.setAttribute("aria-selected", "true");
+      if (btnAll) {
+        btnAll.classList.remove("active");
+        btnAll.setAttribute("aria-selected", "false");
+      }
+      sideSignature = "";
+      renderSidebar(sideList);
+    });
+  }
+}
+initSideFilters();
 
 function renderSidebar(list) {
   sideList = list;
   const q = ($("side-search").value || "").trim().toLowerCase();
-  const shown = !q ? list : list.filter((s) =>
+
+  const openPRsTotal = list.reduce((acc, s) => acc + ((s.pulls || []).filter((p) => (p.state || "open") === "open").length), 0);
+  const filterBadge = $("side-filter-prs-count");
+  if (filterBadge) {
+    filterBadge.textContent = openPRsTotal;
+    filterBadge.hidden = openPRsTotal === 0;
+  }
+
+  let filtered = list;
+  if (sideFilter === "prs") {
+    filtered = list.filter((s) => (s.pulls || []).some((p) => (p.state || "open") === "open"));
+  }
+
+  const shown = !q ? filtered : filtered.filter((s) =>
     (s.task + " " + s.agent + " " + s.repos.map((r) => r.fullName).join(" ")).toLowerCase().includes(q));
   const sorted = [...shown].sort((a, b) => lastTouched(b) - lastTouched(a) || b.createdAt - a.createdAt);
   // Draw again only when something changed, so the little lights keep pulsing
   // instead of starting over every few seconds.
-  const sig = q + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
-    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive].join(":")).join(",");
+  const sig = q + "|" + sideFilter + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
+    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive, (s.pulls || []).map((p) => p.number + ":" + p.state).join("-")].join(":")).join(",");
   if (sig === sideSignature) return;
   sideSignature = sig;
   $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
-    : [el("p", { class: "muted" }, q ? "No chats match." : "No chats yet. Add a git server, then press New chat.")]));
+    : [el("p", { class: "muted" }, q ? "No chats match." : (sideFilter === "prs" ? "No chats with open pull requests." : "No chats yet. Add a git server, then press New chat."))]));
 }
 $("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
 
@@ -59,11 +107,44 @@ function sessionRow(s) {
   const status = s.latestStatus || s.status;
   const light = s.waiting ? "needs" : (status === "running" || status === "queued") ? "live"
     : status === "done" ? "done" : (status === "failed" || status === "interrupted") ? "failed" : "";
+
+  const pulls = s.pulls || [];
+  let pullsRow = "";
+  if (pulls.length > 0) {
+    const pills = pulls.map((p) => {
+      const state = p.state || "open";
+      const stateText = state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
+      const tooltipText = p.repo + " #" + p.number + ": " + p.title + " (" + stateText + ")";
+      const pill = el("span", {
+        class: "pr-pill " + state,
+        title: tooltipText,
+        tabindex: "0",
+        role: "button",
+        "aria-label": tooltipText
+      },
+        el("span", { class: "pr-icon", "aria-hidden": "true" }, "⑂"),
+        el("span", { class: "pr-num" }, "#" + p.number),
+        el("span", { class: "pr-state-label" }, stateText)
+      );
+      pill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        guarded(null, async () => {
+          await openSession(s.id);
+          if (typeof setSidePanelOpen === "function") setSidePanelOpen(true);
+          if (typeof selectSideTab === "function") selectSideTab("prs");
+        });
+      });
+      return pill;
+    });
+    pullsRow = el("div", { class: "item-pulls" }, ...pills);
+  }
+
   const row = el("div", { class: "side-item " + light + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
     el("span", { class: "dot" }),
-    el("div", {},
+    el("div", { class: "side-item-content" },
       el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(lastTouched(s)))),
       el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
+      pullsRow,
       s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : ""));
   row.addEventListener("click", open);
   row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });

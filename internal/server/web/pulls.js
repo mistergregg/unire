@@ -30,6 +30,7 @@ function resetPulls() {
   proposalEls.clear();
   updateEls.clear();
   $("pulls").replaceChildren();
+  if (typeof renderSidePRs === "function") renderSidePRs({ proposals: [], pulls: [] });
 }
 
 async function refreshPulls() {
@@ -199,6 +200,7 @@ function renderPulls() {
   }
   if (later.length) cards.push(el("div", { class: "pr-later" }, ...later));
   box.replaceChildren(...cards);
+  if (typeof renderSidePRs === "function") renderSidePRs(pullsData);
 }
 
 function stateButton(p, open, label) {

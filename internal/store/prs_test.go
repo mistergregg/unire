@@ -18,8 +18,12 @@ func TestPullRequestsAreKeptPerConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.PullRequests("a")
-	if err != nil || len(got) != 1 || got[0].Number != 1 || got[0].Title != "T" {
+	if err != nil || len(got) != 1 || got[0].Number != 1 || got[0].Title != "T" || got[0].State != "open" {
 		t.Fatalf("PullRequests(a) = %+v, %v", got, err)
+	}
+	all, err := s.AllPullRequests()
+	if err != nil || len(all) != 2 {
+		t.Fatalf("AllPullRequests() = %+v, %v", all, err)
 	}
 	if got, _ := s.PullRequests("none"); len(got) != 0 {
 		t.Errorf("another conversation has none: %+v", got)

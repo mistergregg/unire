@@ -995,6 +995,22 @@ function initSidePanel() {
     });
   }
 
+  document.addEventListener("pointerdown", (e) => {
+    if (!sidePanelOpen || window.innerWidth > 1100) return;
+    const panel = $("chat-side-panel");
+    const toggleBtn = $("s-toggle-side");
+    if (!panel || panel.contains(e.target)) return;
+    if (toggleBtn && toggleBtn.contains(e.target)) return;
+    if (e.target.closest && e.target.closest(".share-card")) return;
+    setSidePanelOpen(false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sidePanelOpen && window.innerWidth <= 1100) {
+      setSidePanelOpen(false);
+    }
+  });
+
   initRightResizer();
 }
 

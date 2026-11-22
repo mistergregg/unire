@@ -130,11 +130,6 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	type target struct{ serverID, repo, branch, base string }
-	opened := map[target]bool{}
-	for _, p := range have {
-		opened[target{p.ServerID, p.Repo, p.Branch, p.Base}] = true
-	}
 
 	order, last := s.pushes(thread)
 	var out []Proposal
@@ -143,7 +138,7 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 		if base == "" {
 			base = baseOf(thread[0], p)
 		}
-		if opened[target{p.serverID, p.repo, p.branch, base}] {
+		if covered(have, p, base, last[p]) {
 			continue
 		}
 		t := titleOf(s.Store, thread, last[p])
@@ -153,6 +148,22 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 		out = append(out, Proposal{ServerID: p.serverID, Repo: p.repo, Branch: p.branch, Base: base, Title: t, Body: bodyOf(s.Store, thread, last[p], thread[0].Task)})
 	}
 	return out, nil
+}
+
+// covered reports whether a pull request already exists for a pushed branch into
+// base. One that was merged only covers the pushes made before it was opened: a
+// later turn pushes the same branch again, and that new work needs a new pull request.
+func covered(have []store.PullRequest, p pushed, base string, turn store.Session) bool {
+	for _, r := range have {
+		if r.ServerID != p.serverID || r.Repo != p.repo || r.Branch != p.branch || r.Base != base {
+			continue
+		}
+		if r.State == gitprovider.PRMerged && turn.CreatedAt.After(r.CreatedAt) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // baseOf is the branch the conversation started from in a repo: what the owner
@@ -261,10 +272,8 @@ func (s *Service) Open(ctx context.Context, thread []store.Session, want Proposa
 	if err != nil {
 		return View{}, err
 	}
-	for _, p := range have {
-		if p.ServerID == found.serverID && p.Repo == found.repo && p.Branch == found.branch && p.Base == base {
-			return View{}, errors.New("this branch already has a pull request into that branch")
-		}
+	if covered(have, *found, base, last[*found]) {
+		return View{}, errors.New("this branch already has a pull request into that branch")
 	}
 	title, body := strings.TrimSpace(want.Title), want.Body
 	if title == "" {

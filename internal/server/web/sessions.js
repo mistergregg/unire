@@ -85,7 +85,7 @@ function renderSidebar(list) {
 
   let filtered = list;
   if (sideFilter === "prs") {
-    filtered = list.filter((s) => (s.pulls || []).some((p) => (p.state || "open") === "open"));
+    filtered = list.filter((s) => (s.pulls || []).length > 0); // every pull request, merged and closed too
   }
 
   const shown = !q ? filtered : filtered.filter((s) =>
@@ -98,7 +98,7 @@ function renderSidebar(list) {
   if (sig === sideSignature) return;
   sideSignature = sig;
   $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
-    : [el("p", { class: "muted" }, q ? "No chats match." : (sideFilter === "prs" ? "No chats with open pull requests." : "No chats yet. Add a git server, then press New chat."))]));
+    : [el("p", { class: "muted" }, q ? "No chats match." : (sideFilter === "prs" ? "No chats with pull requests." : "No chats yet. Add a git server, then press New chat."))]));
 }
 $("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
 

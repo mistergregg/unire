@@ -48,7 +48,9 @@ async function checkAttention() {
 
   document.title = count ? "(" + count + ") Unire: needs you" : "Unire";
   const tab = document.querySelector('.tab[data-view="sessions"]');
-  if (tab) tab.textContent = count ? "Chats (" + count + ")" : "Chats";
+  // Only the label changes: replacing the tab's text would also remove its icon.
+  const label = tab && (tab.querySelector("span") || tab);
+  if (label) label.textContent = count ? "Chats (" + count + ")" : "Chats";
 
   const now = new Set();
   for (const s of waiting) {

@@ -1076,3 +1076,10 @@ body { font-size: 14px; line-height: 1.5; }
 .composer-box { padding: 8px 12px 6px; }
 .composer textarea { min-height: 36px; font-size: 14px; padding: 2px 0 4px; }
 .composer { padding-bottom: 10px; }
+
+/* Mobile composer: keep the pickers and the send button on one row instead of wrapping the button alone */
+@media (max-width: 800px) {
+  .composer-bar { flex-wrap: nowrap; gap: 6px; }
+  .composer-bar select { flex: 1 1 0; min-width: 0; width: auto; }
+  .composer-bar .icon-btn { flex: none; }
+}

@@ -71,6 +71,7 @@ type Server struct {
 	termBusy      atomic.Bool // one sign-in terminal at a time
 	signins       statusCache
 	transcripts   transcripts
+	previews      *previewService
 
 	mu       sync.Mutex
 	failures map[string]failure
@@ -126,6 +127,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now,
 		usage: usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
+	s.previews = newPreviewService()
 	s.stopCleanup = make(chan struct{})
 	s.probe = dockerProbe{}
 	safe.Go("automatic fix", func() { s.runAutoFix(s.stopCleanup) })
@@ -142,6 +144,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 func (s *Server) Close() error {
 	s.stopOnce.Do(func() { close(s.stopCleanup) })
 	s.sessions.Shutdown()
+	s.previews.shutdown()
 	s.usage.wg.Wait()
 	return s.store.Close()
 }
@@ -209,6 +212,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{file}", s.auth(s.getAttachment))
 	mux.HandleFunc("POST /api/sessions/{id}/steer", s.auth(s.steerSession))
 	mux.HandleFunc("POST /api/sessions/{id}/steer/{msg}/now", s.auth(s.promoteSteer))
+	mux.HandleFunc("GET /api/sessions/{id}/previews", s.auth(s.listPreviews))
+	mux.HandleFunc("POST /api/sessions/{id}/previews/{repo}/{name}/start", s.auth(s.startPreview))
+	mux.HandleFunc("POST /api/sessions/{id}/previews/{repo}/{name}/stop", s.auth(s.stopPreview))
+	mux.HandleFunc("GET /api/sessions/{id}/previews/{repo}/{name}", s.auth(s.getPreview))
+	mux.HandleFunc("GET /api/sessions/{id}/previews/{repo}/{name}/logs", s.auth(s.previewLogs))
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.auth(s.stopSession))
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.auth(s.deleteSession))
 

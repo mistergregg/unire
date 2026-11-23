@@ -21,6 +21,21 @@ type fakeEngine struct {
 	ran       []RunSpec
 	removed   []string
 	pullBlock chan struct{} // if set, Pull waits for it or for ctx
+	addrErr   error
+	execErr   error
+	execs     [][]string
+}
+
+func (f *fakeEngine) Address(_ context.Context, name, network string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return "10.1.2.3", f.addrErr
+}
+func (f *fakeEngine) Exec(_ context.Context, name string, argv []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.execs = append(f.execs, argv)
+	return f.execErr
 }
 
 func (f *fakeEngine) HaveImage(context.Context, string) bool {
@@ -276,5 +291,116 @@ func TestRunArgsKeepTheSandboxRules(t *testing.T) {
 	}
 	if slices.Index(args, "img") < slices.Index(args, "--cpus") {
 		t.Error("the image must come after all docker options")
+	}
+}
+
+func TestGatedPreviewIsRegisteredBeforeTheAppIsLetGo(t *testing.T) {
+	e := &fakeEngine{have: true}
+	m := newMgr(e, 200, nil)
+	var order []string
+	var mu sync.Mutex
+	note := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	o := opts
+	o.Env = map[string]string{"HTTP_PROXY": "http://unire-egress:3128"}
+	o.Register = func(ip string) func() {
+		note("register " + ip)
+		return func() { note("unregister") }
+	}
+	m.Start("s1.app", flutter, o)
+	waitState(t, m, "s1.app", StateReady)
+	spec := e.ran[0]
+	if spec.Command[0] != "sh" || !strings.Contains(spec.Command[2], gateFile) || !slices.Contains(spec.Command, "flutter") {
+		t.Fatalf("command must be wrapped in the start gate and keep the original: %v", spec.Command)
+	}
+	if got := spec.Command[len(spec.Command)-len(flutter.Command):]; !slices.Equal(got, flutter.Command) {
+		t.Fatalf("original command must be passed as arguments, unchanged: %v", got)
+	}
+	if spec.Env["HTTP_PROXY"] == "" || spec.Env["HOME"] != "/tmp" {
+		t.Fatalf("env %v", spec.Env)
+	}
+	if len(e.execs) != 1 || e.execs[0][0] != "touch" || e.execs[0][1] != gateFile {
+		t.Fatalf("execs %v: the gate must be opened after registering", e.execs)
+	}
+	mu.Lock()
+	if len(order) != 1 || order[0] != "register 10.1.2.3" {
+		t.Fatalf("order %v", order)
+	}
+	mu.Unlock()
+	if err := m.Stop(context.Background(), "s1.app"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 || order[1] != "unregister" {
+		t.Fatalf("a stopped preview must be unregistered: %v", order)
+	}
+}
+
+func TestUngatedPreviewKeepsItsCommand(t *testing.T) {
+	e := &fakeEngine{have: true}
+	m := newMgr(e, 200, nil)
+	m.Start("s1.app", flutter, opts)
+	waitState(t, m, "s1.app", StateReady)
+	if e.ran[0].Command[0] != "flutter" || len(e.execs) != 0 {
+		t.Fatalf("command %v execs %v", e.ran[0].Command, e.execs)
+	}
+}
+
+func TestGatedFailureUnregisters(t *testing.T) {
+	e := &fakeEngine{have: true, execErr: errors.New("no such container")}
+	m := newMgr(e, 200, nil)
+	var unregistered bool
+	o := opts
+	o.Register = func(string) func() { return func() { unregistered = true } }
+	m.Start("s1.app", flutter, o)
+	st := waitState(t, m, "s1.app", StateFailed)
+	if !strings.Contains(st.Message, "no such container") {
+		t.Fatalf("status %+v", st)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if !unregistered {
+		t.Fatal("a failed preview must not stay registered with the proxy")
+	}
+}
+
+func TestGatedAddressFailureFails(t *testing.T) {
+	e := &fakeEngine{have: true, addrErr: errors.New("no address")}
+	m := newMgr(e, 200, nil)
+	o := opts
+	o.Register = func(string) func() { t.Fatal("must not register without an address"); return func() {} }
+	m.Start("s1.app", flutter, o)
+	waitState(t, m, "s1.app", StateFailed)
+}
+
+func TestSafeNetworkNames(t *testing.T) {
+	for _, ok := range []string{"unire-sandbox", "net_1", "a.b"} {
+		if !safeName.MatchString(ok) {
+			t.Errorf("%q should be allowed", ok)
+		}
+	}
+	for _, bad := range []string{"", `a"b`, "a b", "-x", `x}}`} {
+		if safeName.MatchString(bad) {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}
+
+func TestStopAllStopsEverything(t *testing.T) {
+	e := &fakeEngine{have: true}
+	m := newMgr(e, 200, nil)
+	m.Start("s1.a", flutter, opts)
+	m.Start("s1.b", flutter, opts)
+	waitState(t, m, "s1.a", StateReady)
+	waitState(t, m, "s1.b", StateReady)
+	if err := m.StopAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"s1.a", "s1.b"} {
+		if st, _ := m.Status(k); st.State != StateStopped {
+			t.Errorf("%s: %+v", k, st)
+		}
+	}
+	if !slices.Contains(e.removed, "unire-preview-s1.a") || !slices.Contains(e.removed, "unire-preview-s1.b") {
+		t.Fatalf("removed %v", e.removed)
 	}
 }

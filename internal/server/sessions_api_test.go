@@ -117,6 +117,9 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 					}
 				}
 			}
+			if slices.Contains(o.Argv, "diff") && slices.Contains(o.Argv, "--quiet") {
+				return errors.New("exit status 1") // there are differences
+			}
 			return nil
 		case "ls":
 			return fmt.Errorf("exit status 2") // nothing was cloned or asked yet

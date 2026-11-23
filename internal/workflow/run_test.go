@@ -30,6 +30,7 @@ type fakeSandbox struct {
 	refs         string               // what `git for-each-ref` prints: local branches and their upstreams
 	branchName   string               // what `git rev-parse --abbrev-ref HEAD` prints
 	noIdentity   bool                 // git has no user.name or user.email configured
+	sameAsBase   bool                 // the branch changes nothing compared with its base (already merged)
 	unpushed     bool                 // the branch holds commits the server does not have
 	pushErr      string               // if set, a push fails with this message
 	rejects      int                  // this many pushes are refused because the branch moved on
@@ -134,6 +135,11 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 		case contains(o.Argv, "--abbrev-ref"):
 			io.WriteString(o.Stdout, f.branchName+"\n")
 			return nil
+		case contains(o.Argv, "diff") && contains(o.Argv, "--quiet"):
+			if f.sameAsBase {
+				return nil
+			}
+			return errors.New("exit status 1") // there are differences
 		case contains(o.Argv, "--verify"):
 			return nil // the server has no copy of the branch
 		case contains(o.Argv, "rev-list") && contains(o.Argv, "HEAD..origin/HEAD"):
@@ -1050,6 +1056,22 @@ func TestARepoRequestWithoutTheToolIsRefused(t *testing.T) {
 // An earlier push can fail (a token that cannot write) and leave commits that exist
 // only in the workspace. A later turn that changes nothing must still push them, or a
 // reply asking to "push it" can never work.
+// A chat that continues on a branch whose work was merged already pushes something,
+// but there is nothing to open a pull request for: no "pushed" line, or one is offered
+// that GitHub refuses with "Validation Failed".
+func TestAMergedBranchWithNoChangesIsNotOfferedAsPushed(t *testing.T) {
+	spec := baseSpec()
+	var buf strings.Builder
+	o := opts(nil)
+	o.Err = &buf
+	if _, err := run(t, &fakeSandbox{branchName: spec.Branch(), sameAsBase: true}, spec, o); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), ": pushed ") {
+		t.Errorf("no pull request can be opened, but a push was announced: %q", buf.String())
+	}
+}
+
 func TestCommitsLeftUnpushedByAnEarlierFailureArePushedByALaterTurn(t *testing.T) {
 	spec := baseSpec()
 	pushes := func(sb *fakeSandbox) (pushed bool, log string) {

@@ -104,6 +104,11 @@ function attachThumbs(list) {
       return a.href ? el("a", { href: a.href, download: a.name, class: "attach-chip-link" }, chip) : chip;
     }
     const img = el("img", { src: a.src, alt: a.name, title: a.name + " · Click to view full screen", loading: "lazy" });
+    img.addEventListener("load", () => {
+      if (typeof nearBottom === "function" && nearBottom() && typeof scrollToBottom === "function") {
+        scrollToBottom();
+      }
+    });
     const link = el("a", {
       href: a.href || a.src,
       class: "attach-thumb-link",

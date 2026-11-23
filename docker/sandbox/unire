@@ -35,6 +35,14 @@ case "$tool" in
     printf '%s\n' "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     wait_for "$id"
     ;;
+  name)
+    [ -n "$*" ] || { echo "usage: unire name \"<title>\"" >&2; exit 2; }
+    mkdir -p "$dir" && printf '%s\n' "$*" | tr '\n' ' ' >> "$dir/name" && printf '\n' >> "$dir/name"
+    id=$(date +%s%N)
+    mkdir -p "$dir/ask" || exit 1
+    printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
+    wait_for "$id"
+    ;;
   pr-status|pr-logs|pr-comments|pr-reply|pr-close|pr-reopen|memory|repo|parent)
     # Unire answers these while the agent runs (see "@call" in internal/workflow/ask.go).
     id=$(date +%s%N)

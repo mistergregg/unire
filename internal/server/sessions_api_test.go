@@ -101,6 +101,9 @@ func (b *fakeBox) Exec(ctx context.Context, o runner.ExecOpts) error {
 	if len(o.Argv) > 0 {
 		switch o.Argv[0] {
 		case "git":
+			if slices.Contains(o.Argv, "diff") && slices.Contains(o.Argv, "--quiet") {
+				return errors.New("exit status 1") // differences exist
+			}
 			for _, a := range o.Argv {
 				if a == "rev-parse" {
 					b.mu.Lock()

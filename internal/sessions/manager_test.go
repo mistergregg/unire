@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -91,8 +92,20 @@ func (f *fakeSandbox) Exec(ctx context.Context, o runner.ExecOpts) error {
 				}
 			}
 			return nil
-		case "ls": // nothing was cloned or asked yet
-			return errors.New("exit status 2")
+		case "ls":
+			found := false
+			f.mu.Lock()
+			for p := range f.outFiles {
+				if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == o.Argv[len(o.Argv)-1] {
+					io.WriteString(o.Stdout, name+"\n")
+					found = true
+				}
+			}
+			f.mu.Unlock()
+			if !found {
+				return errors.New("exit status 2")
+			}
+			return nil
 		case "mkdir", "rm":
 			return nil
 		case "sh":
@@ -622,6 +635,62 @@ func TestTheAgentNamesANewConversationButNotAReply(t *testing.T) {
 	m.Wait()
 	if got, _, _ := st.Session(reply.ID); got.Task != "A better name" {
 		t.Errorf("a reply must keep the conversation's name, got %q", got.Task)
+	}
+}
+
+func TestTheAgentNamesAConversationLive(t *testing.T) {
+	askPath := tools.Dir + "/ask/10"
+	sb := &fakeSandbox{
+		outFiles: map[string]string{
+			askPath + ".q": "@call name\nLive Task Name\n",
+		},
+		block: make(chan struct{}),
+	}
+	m, st := setup(t, sb)
+	r := req("")
+	r.Task = "original task"
+	first, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// While blocked, Unire's serveQuestions should answer the call and rename the session.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got, _, _ := st.Session(first.ID); got.Task == "Live Task Name" {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(sb.block)
+			m.Wait()
+			t.Fatal("session was not renamed live")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	close(sb.block)
+	m.Wait()
+	if got, _, _ := st.Session(first.ID); got.Task != "Live Task Name" {
+		t.Errorf("task = %q, want Live Task Name", got.Task)
+	}
+	if log := logText(st, first.ID); !strings.Contains(log, "the agent named this conversation: Live Task Name") {
+		t.Errorf("log missing rename event:\n%s", log)
+	}
+}
+
+func TestFallbackTitleFromPullRequestWhenAgentDidNotUseNameTool(t *testing.T) {
+	sb := &fakeSandbox{outFiles: map[string]string{tools.Dir + "/pr": "Add preview recipes and detection\n"}}
+	m, st := setup(t, sb)
+
+	r := req("")
+	r.Task = "Im thinking of a new feature..."
+	first, err := m.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	if got, _, _ := st.Session(first.ID); got.Task != "Add preview recipes and detection" {
+		t.Errorf("first message: task = %q, want fallback from PR title", got.Task)
 	}
 }
 

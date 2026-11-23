@@ -26,7 +26,7 @@ type Tool struct {
 // the branch was named when the session started.
 var Name = Tool{
 	Name:  "name",
-	Usage: `unire name "<title>" - give this conversation a short title (under 60 characters) that says what the task is. Run it once, early.`,
+	Usage: `unire name "<title>" - give this conversation a short title (under 60 characters) that says what the task is. Run it once, early, so the chat shows a clean title instead of what was typed.`,
 }
 
 // ForNewConversation is the tool set for the first message of a conversation.
@@ -97,6 +97,84 @@ func CleanName(s string) string {
 	return s
 }
 
+// CleanFallbackTitle derives a short, readable title from the prompt when
+// no tool, PR title or commit message gave one.
+func CleanFallbackTitle(prompt string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+	line = strings.TrimSpace(line)
+	line = strings.Trim(line, "\"`'")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	lower := strings.ToLower(line)
+	prefixes := []string{
+		"i'm thinking of a new feature, i would love it whether it's a ",
+		"i'm thinking of a new feature, i would love it whether its a ",
+		"im thinking of a new feature, i would love it whether it's a ",
+		"im thinking of a new feature, i would love it whether its a ",
+		"another issue, when i opened a 2nd pr and the ",
+		"i had an issue where idk looks like it ",
+		"had an issue where idk looks like it ",
+		"i'm thinking of a new feature, ",
+		"i'm thinking of a new feature ",
+		"im thinking of a new feature, ",
+		"im thinking of a new feature ",
+		"i had an issue where idk ",
+		"had an issue where idk ",
+		"another issue, when i ",
+		"i would like to ",
+		"i had an issue where ",
+		"had an issue where ",
+		"can you please ",
+		"could you please ",
+		"i'm thinking of ",
+		"im thinking of ",
+		"i am thinking of ",
+		"another issue, ",
+		"another issue: ",
+		"i'd like to ",
+		"i want to ",
+		"i need to ",
+		"could you ",
+		"can you ",
+		"help me ",
+		"how do i ",
+		"how to ",
+		"please ",
+	}
+	stripped := false
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, p) {
+			line = strings.TrimSpace(line[len(p):])
+			stripped = true
+			break
+		}
+	}
+	if !stripped || line == "" {
+		return ""
+	}
+	r := []rune(line)
+	r[0] = unicode.ToUpper(r[0])
+	line = string(r)
+	words := strings.Fields(line)
+	name := ""
+	for _, w := range words {
+		next := w
+		if name != "" {
+			next = name + " " + w
+		}
+		if len([]rune(next)) > 60 {
+			if name == "" {
+				name = string([]rune(w)[:57])
+			}
+			return CleanName(name + "…")
+		}
+		name = next
+	}
+	return CleanName(name)
+}
+
 // Ask lets the agent put a question to the owner and wait for the answer.
 var Ask = Tool{
 	Name: "ask",
@@ -157,7 +235,7 @@ var (
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
 func CallTools() []Tool {
-	return []Tool{PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent}
+	return []Tool{Name, PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent}
 }
 
 // PRTools are the call tools for a conversation with an open pull request.

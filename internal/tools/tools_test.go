@@ -20,6 +20,25 @@ func TestCleanName(t *testing.T) {
 	}
 }
 
+func TestCleanFallbackTitle(t *testing.T) {
+	cases := map[string]string{
+		"Please fix the login redirect bug":                                   "Fix the login redirect bug",
+		"Can you please add unit tests for pulls":                             "Add unit tests for pulls",
+		"I want to support dark mode in the sidebar":                          "Support dark mode in the sidebar",
+		"Im thinking of a new feature, I would love it whether its a preview": "Preview",
+		"why is the app slow":                                                 "",
+		"":                                                                    "",
+	}
+	for in, want := range cases {
+		if got := CleanFallbackTitle(in); got != want {
+			t.Errorf("CleanFallbackTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if !IsCall("name") {
+		t.Error("name must be in CallTools so agents can name conversations live")
+	}
+}
+
 func TestPromptListsOnlyTheToolsGiven(t *testing.T) {
 	if Prompt(nil) != "" {
 		t.Error("no tools, no text")

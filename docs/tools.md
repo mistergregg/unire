@@ -24,9 +24,12 @@ Which tools a session gets depends on the situation (`internal/tools`):
 
 ## `name`
 
-Gives the conversation a short title. Only the title changes; the branch was
-named when the session started and keeps its name. The last request wins and is
-cleaned up (one line, at most 80 characters) before it is shown.
+Gives the conversation a short title based on what the task is. It is answered
+live while the agent runs, so the chat's title in the sidebar and header updates
+immediately. If the agent does not use `name`, Unire automatically derives a title
+from the agent's pull request title, commit message, or summary. Only the title
+changes; the branch was named when the session started and keeps its name. The last
+request wins and is cleaned up (one line, at most 80 characters) before it is shown.
 
 ## `share`
 

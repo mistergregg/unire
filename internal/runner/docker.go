@@ -134,7 +134,7 @@ func (b dockerSandbox) Exec(ctx context.Context, o ExecOpts) error {
 // removed. It assumes one Unire per Docker host.
 func CleanupOrphans(ctx context.Context) (int, error) {
 	removed := 0
-	for _, label := range []string{"unire.session", "unire.login"} {
+	for _, label := range []string{"unire.session", "unire.login", "unire.preview"} {
 		out, err := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label="+label).Output()
 		if err != nil {
 			return removed, err

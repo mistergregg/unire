@@ -53,6 +53,21 @@ type Engine interface {
 	Running(ctx context.Context, name string) bool
 	Logs(ctx context.Context, name string, tail int) string
 	Remove(ctx context.Context, name string) error
+	// Address is the container's IP on a network, as the egress proxy sees it.
+	Address(ctx context.Context, name, network string) (string, error)
+	// Exec runs a short command in a running container.
+	Exec(ctx context.Context, name string, argv []string) error
+}
+
+// gateFile is what a gated preview waits for before it starts its app. The
+// container is created first, registered with the egress proxy, and only then
+// let go, so the app's first package download is not refused as coming from an
+// unknown address.
+const gateFile = "/tmp/.unire-go"
+
+// gated wraps a command so it waits for gateFile.
+func gated(cmd []string) []string {
+	return append([]string{"sh", "-c", `while [ ! -e ` + gateFile + ` ]; do sleep 0.1; done; exec "$@"`, "preview"}, cmd...)
 }
 
 // StartOpts is what the manager needs to know about the session.
@@ -65,6 +80,12 @@ type StartOpts struct {
 	// User runs the app as the same user as the agent container, so files it
 	// writes into the shared workspace stay editable by the agent. Default 1000:1000.
 	User string
+	// Env is added to the app's environment (for example the egress proxy settings).
+	Env map[string]string
+	// Register, when set, is called with the container's IP on Network before the
+	// app starts, and its result is called when the preview ends. The app is held
+	// back until Register has returned.
+	Register func(ip string) (unregister func())
 }
 
 // Manager starts, watches and stops previews. It is safe for concurrent use.
@@ -80,11 +101,12 @@ type Manager struct {
 }
 
 type item struct {
-	status  Status
-	name    string
-	cancel  context.CancelFunc
-	done    chan struct{}
-	stopped bool
+	status     Status
+	name       string
+	cancel     context.CancelFunc
+	done       chan struct{}
+	stopped    bool
+	unregister func()
 }
 
 var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
@@ -161,7 +183,49 @@ func (m *Manager) Stop(ctx context.Context, key string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	m.release(it)
 	return m.Engine.Remove(ctx, it.name)
+}
+
+// StopAll stops every preview, for shutdown. It returns the first error.
+func (m *Manager) StopAll(ctx context.Context) error {
+	m.mu.Lock()
+	keys := make([]string, 0, len(m.items))
+	for k := range m.items {
+		keys = append(keys, k)
+	}
+	m.mu.Unlock()
+	var first error
+	for _, k := range keys {
+		if err := m.Stop(ctx, k); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// release undoes Register, once.
+func (m *Manager) release(it *item) {
+	m.mu.Lock()
+	fn := it.unregister
+	it.unregister = nil
+	m.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// setUnregister keeps fn to call when the preview ends. If the preview has
+// already been stopped, it is called at once.
+func (m *Manager) setUnregister(it *item, fn func()) {
+	m.mu.Lock()
+	if it.stopped {
+		m.mu.Unlock()
+		fn()
+		return
+	}
+	it.unregister = fn
+	m.mu.Unlock()
 }
 
 func (m *Manager) set(it *item, st Status) {
@@ -176,6 +240,7 @@ func (m *Manager) set(it *item, st Status) {
 func (m *Manager) fail(it *item, msg string) {
 	logs := m.Engine.Logs(context.Background(), it.name, 40)
 	_ = m.Engine.Remove(context.Background(), it.name)
+	m.release(it)
 	m.set(it, Status{State: StateFailed, Message: msg, Logs: logs})
 }
 
@@ -208,11 +273,33 @@ func (m *Manager) run(ctx context.Context, it *item, p Preview, o StartOpts) {
 		// The app runs as a user with no home folder of its own.
 		Env: map[string]string{"HOME": "/tmp"},
 	}
+	for k, v := range o.Env {
+		spec.Env[k] = v
+	}
+	if o.Register != nil {
+		spec.Command = gated(p.Command)
+	}
 	if err := e.Run(ctx, spec); err != nil {
 		if ctx.Err() == nil {
 			m.fail(it, "Could not start the preview: "+err.Error())
 		}
 		return
+	}
+	if o.Register != nil {
+		ip, err := e.Address(ctx, it.name, o.Network)
+		if err != nil {
+			if ctx.Err() == nil {
+				m.fail(it, "Could not find the preview on the network: "+err.Error())
+			}
+			return
+		}
+		m.setUnregister(it, o.Register(ip))
+		if err := e.Exec(ctx, it.name, []string{"touch", gateFile}); err != nil {
+			if ctx.Err() == nil {
+				m.fail(it, "Could not start the app: "+err.Error())
+			}
+			return
+		}
 	}
 	m.waitReady(ctx, it, p, target)
 }

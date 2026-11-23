@@ -8,10 +8,14 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+      # Live previews (see docs/previews.md): each running preview gets one port
+      # from this range. Uncomment both lines to turn previews on.
+      # - "9100-9199:9100-9199"
     volumes:
       - unire-data:/data # database and master key: back this up
       - /var/run/docker.sock:/var/run/docker.sock # lets Unire start sandboxes
     # environment:
+    #   UNIRE_PREVIEW_PORTS: "9100-9199"          # must match the published range above
     #   UNIRE_MASTER_KEY: "<64 hex characters>"  # optional: keep the key out of /data
     #   UNIRE_SANDBOX_IMAGE: ghcr.io/mistergregg/unire-sandbox:latest
 

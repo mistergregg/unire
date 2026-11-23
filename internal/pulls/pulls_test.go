@@ -451,3 +451,28 @@ func TestALaterReviewTurnWritesThePullRequestText(t *testing.T) {
 		t.Errorf("an earlier turn's text must not describe later work: %+v", props)
 	}
 }
+
+func TestFallbackDescriptionStripsConversationalPreamble(t *testing.T) {
+	svc, thread, _ := setup(t)
+	st := svc.Store
+	push := store.Session{ID: "s2", ParentID: "s1", Task: "Add preview", Agent: "claude", Mode: "hands-off", Prompt: "more", Branch: "agent/x-run", Repos: thread[0].Repos}
+	if err := st.CreateSession(push); err != nil {
+		t.Fatal(err)
+	}
+	chat := "PR 2 is committed on its own branch, `agent/x-run`. I can't open the pull request myself, so Unire will offer it to you when this turn ends. It starts from the PR #45 branch, so it should show up as a PR into that branch with only the new commit. #45 itself is untouched.\n\n" +
+		"What PR 2 adds (still no UI, no proxy, no API):\n\n- A manager that starts a preview container in the background."
+	st.AddEvent("s2", "out", chat)
+	st.AddEvent("s2", "log", "r: also pushed agent/x-run (into agent/x)")
+	thread2, _ := st.Thread("s1")
+	props, err := svc.Proposals(thread2)
+	if err != nil || len(props) != 2 {
+		t.Fatalf("proposals = %+v, %v", props, err)
+	}
+	p := props[1]
+	if strings.Contains(p.Body, "I can't open the pull request myself") || strings.Contains(p.Body, "Unire will offer it to you") {
+		t.Errorf("preamble was not stripped from body: %q", p.Body)
+	}
+	if !strings.Contains(p.Body, "What PR 2 adds") || !strings.Contains(p.Body, "A manager that starts") {
+		t.Errorf("actual content missing from body: %q", p.Body)
+	}
+}

@@ -421,3 +421,17 @@ func drain(c chan *http.Request) <-chan struct{} {
 	}()
 	return done
 }
+
+func TestParsePortRange(t *testing.T) {
+	for in, want := range map[string][2]int{"9100-9199": {9100, 9199}, " 9100 - 9110 ": {9100, 9110}, "9100": {9100, 9100}} {
+		lo, hi, err := ParsePortRange(in)
+		if err != nil || lo != want[0] || hi != want[1] {
+			t.Errorf("%q: %d-%d %v", in, lo, hi, err)
+		}
+	}
+	for _, bad := range []string{"", "abc", "9100-", "-9100", "9200-9100", "80-90", "9100-70000", "9100-9200-9300"} {
+		if _, _, err := ParsePortRange(bad); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}

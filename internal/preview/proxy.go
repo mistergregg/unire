@@ -62,6 +62,24 @@ func (l *listener) stop() {
 	l.ln.Close()
 }
 
+// ParsePortRange reads a range such as "9100-9199" (or a single port "9100").
+func ParsePortRange(s string) (low, high int, err error) {
+	a, b, isRange := strings.Cut(strings.TrimSpace(s), "-")
+	if low, err = strconv.Atoi(strings.TrimSpace(a)); err != nil {
+		return 0, 0, fmt.Errorf("%q is not a port range like 9100-9199", s)
+	}
+	high = low
+	if isRange {
+		if high, err = strconv.Atoi(strings.TrimSpace(b)); err != nil {
+			return 0, 0, fmt.Errorf("%q is not a port range like 9100-9199", s)
+		}
+	}
+	if low < 1024 || high > 65535 || high < low {
+		return 0, 0, fmt.Errorf("%q: ports must be between 1024 and 65535, and the first no higher than the last", s)
+	}
+	return low, high, nil
+}
+
 // Open starts proxying a free port of the range to target ("host:port" on the
 // container network) and returns that port. Calling it again for the same key
 // with the same target returns the same port.

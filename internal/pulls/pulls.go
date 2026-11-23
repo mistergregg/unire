@@ -236,10 +236,42 @@ func bodyOf(st *store.Store, thread []store.Session, t store.Session, task strin
 	if r := []rune(text); len(r) > 3000 {
 		text = strings.TrimSpace(string(r[len(r)-3000:])) // the end of the answer is its summary
 	}
+	text = cleanFallback(text)
 	if text == "" {
 		return strings.TrimSpace(footer[5:])
 	}
 	return text + footer
+}
+
+// cleanFallback removes conversational chat preamble addressed to the owner
+// (such as "I can't open the pull request myself, so Unire will offer it to you...")
+// when using the agent's chat answer as a fallback pull request description.
+func cleanFallback(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	paragraphs := strings.Split(text, "\n\n")
+	for len(paragraphs) > 0 {
+		p := strings.TrimSpace(paragraphs[0])
+		if isChatPreamble(strings.ToLower(p)) {
+			paragraphs = paragraphs[1:]
+			continue
+		}
+		break
+	}
+	return strings.TrimSpace(strings.Join(paragraphs, "\n\n"))
+}
+
+func isChatPreamble(lower string) bool {
+	if strings.Contains(lower, "can't open the pull request") || strings.Contains(lower, "cannot open the pull request") {
+		return true
+	}
+	if strings.Contains(lower, "unire will offer") || strings.Contains(lower, "unire asks") || strings.Contains(lower, "unire pushes") {
+		return true
+	}
+	if (strings.Contains(lower, "committed on its own branch") || strings.Contains(lower, "committed on a separate branch") || strings.Contains(lower, "committed on branch") || strings.Contains(lower, "pushed to branch")) &&
+		(strings.Contains(lower, "pull request") || strings.Contains(lower, "pr")) {
+		return true
+	}
+	return false
 }
 
 // Open opens a pull request for one of the conversation's proposals. The branch

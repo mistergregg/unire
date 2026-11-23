@@ -76,11 +76,12 @@ Unire opens pull requests only when you say so, and follows them afterwards. By 
 pull request with, when it opens them without asking). The agent cannot open the
 pull request itself; the last suggestion wins.
 
-Once a pull request is open, a later turn that changes what it does writes a
-new title and description with `pr` and `pr-body`, and Unire puts them on the
-pull request when the turn ends. A small fix (a failing check, a review nit)
-writes neither, so the pull request keeps its text; the chat still offers to
-update it if you want.
+Once a pull request is open, a later turn writes a title and description with
+`pr` and `pr-body` for any new branch it pushed (such as a stacked pull request),
+or a new title and description for the open pull request if the turn changes
+what it does. A small fix (a failing check, a review nit) writes neither, so
+the open pull request keeps its text; the chat still offers to update it if you
+want.
 
 ### `pr-body`
 

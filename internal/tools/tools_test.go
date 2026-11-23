@@ -73,3 +73,10 @@ func TestShareIsOfferedInEveryConversation(t *testing.T) {
 		t.Error("the prompt does not describe share")
 	}
 }
+
+func TestReplyWithPRAllowsDescribingNewBranch(t *testing.T) {
+	p := Prompt(ForReplyWithPR())
+	if !strings.Contains(p, "new branch or pull request pushed this turn") {
+		t.Errorf("prompt does not mention new branch or pull request: %q", p)
+	}
+}

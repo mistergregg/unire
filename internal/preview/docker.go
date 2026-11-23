@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,28 @@ func (Docker) Remove(ctx context.Context, name string) error {
 	// -f also stops it. A missing container is not an error worth reporting.
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
 	return nil
+}
+
+var safeName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+func (Docker) Address(ctx context.Context, name, network string) (string, error) {
+	if !safeName.MatchString(network) {
+		return "", fmt.Errorf("unsafe network name %q", network)
+	}
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format",
+		`{{(index .NetworkSettings.Networks "`+network+`").IPAddress}}`, name).Output()
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("the preview has no address on network %q", network)
+	}
+	return ip, nil
+}
+
+func (Docker) Exec(ctx context.Context, name string, argv []string) error {
+	return runDocker(ctx, append([]string{"exec", name}, argv...)...)
 }
 
 func runDocker(ctx context.Context, args ...string) error {

@@ -564,6 +564,12 @@ func (w *worker) finish(ctx context.Context, spec session.Spec, startHeads map[s
 		}
 		o.pushed = true
 		outcomes[repo.Name] = o
+		if !w.differsFromBase(ctx, dir, &repo) {
+			// The branch holds nothing the base lacks (its work was merged already), so
+			// there is nothing to open a pull request for: do not offer one.
+			fmt.Fprintf(w.opt.Err, "%s: branch %s has no changes beyond its base\n", repo.Name, spec.Branch())
+			continue
+		}
 		fmt.Fprintf(w.opt.Err, "%s: pushed %s\n", repo.Name, spec.Branch())
 	}
 	return outcomes, nil
@@ -875,6 +881,17 @@ func (w *worker) hasUnpushedWork(ctx context.Context, dir string, repo *session.
 	}
 	ahead, err := strconv.Atoi(strings.TrimSpace(n))
 	return err == nil && ahead > 0
+}
+
+// differsFromBase reports whether HEAD changes any file compared with the branch it
+// is meant for. When that cannot be told, it says yes (the old behaviour).
+func (w *worker) differsFromBase(ctx context.Context, dir string, repo *session.Repo) bool {
+	base := "origin/HEAD"
+	if repo.Base != "" {
+		base = "origin/" + repo.Base
+	}
+	_, err := w.git(ctx, dir, repo, "diff", "--quiet", base+"...HEAD")
+	return err != nil // exit 1 means differences; any other failure means unknown
 }
 
 // maxPushFixes is how many times the agent is asked to repair a branch that cannot

@@ -179,19 +179,23 @@ func ForReplyWithPR() []Tool {
 	return append([]Tool{Ask, PRUpdate, PRBodyUpdate, Share, Branches}, PRTools()...)
 }
 
-// PRUpdate and PRBodyUpdate are pr and pr-body once a pull request is open for the
-// branch: what the agent writes replaces the pull request's text when the turn ends.
-// The agent decides whether it is needed, so a small fix leaves the text alone.
+// PRUpdate and PRBodyUpdate are pr and pr-body once a pull request is open:
+// what the agent writes sets the title and description for a new branch pushed
+// this turn (e.g. a stacked pull request), or replaces the open pull request's
+// text if this turn changes what it does. The agent decides whether it is needed,
+// so a small fix leaves the text alone.
 var (
 	PRUpdate = Tool{
 		Name: "pr",
-		Usage: `unire pr "<title>" - a new title (under 70 characters) for the open pull request, if this turn changes what it does. ` +
-			`Use it together with pr-body; leave both out for a small fix (a failing check, a typo, a review nit) so the pull request keeps its text.`,
+		Usage: `unire pr "<title>" - suggest a title (under 70 characters) for a new branch or pull request pushed this turn, ` +
+			`or a new title for the open pull request if this turn changes what it does. ` +
+			`Use it together with pr-body; leave both out for a small fix (a failing check, a typo, a review nit) so the open pull request keeps its text.`,
 	}
 	PRBodyUpdate = Tool{
 		Name: "pr-body",
-		Usage: "unire pr-body <<'EOF' ... EOF - a new description for the open pull request, if this turn changes what it does: describe the whole change as it now is " +
-			"(what changed and why, and how it was checked), not only this turn. Unire puts it on the pull request when you finish. Do not mention Unire or this conversation.",
+		Usage: "unire pr-body <<'EOF' ... EOF - write the pull request description (markdown, what changed and why, and how it was checked): " +
+			"for a new branch or pull request pushed this turn, or a new description for the open pull request if this turn changes what it does. " +
+			"Unire puts it on the pull request when you finish. Do not mention Unire or this conversation.",
 	}
 )
 

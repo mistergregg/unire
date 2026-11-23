@@ -417,6 +417,7 @@ async function finishTurn(t) {
   refreshPulls(); // the turn may have pushed a branch: offer a pull request
   refreshLinks();
   if (t === thread[thread.length - 1]) usageChanged(); // the turn may have reported usage
+  if (typeof nearBottom === "function" && nearBottom()) scrollToBottom();
 }
 
 // Saving to memory goes on after the turn is done. Show that, then the summary.
@@ -425,9 +426,11 @@ async function showMemory(t, saving) {
   if (saving) { t.memoryNote.textContent = "Saving to memory…"; return; }
   t.memoryShown = true;
   t.memoryNote.textContent = "";
+  const stick = typeof nearBottom === "function" && nearBottom();
   try {
     const m = await api("GET", "/api/memory/summaries/" + encodeURIComponent(t.s.id));
     t.memoryNote.append(el("details", {}, el("summary", {}, "Saved to memory"), el("pre", { class: "log" }, m.summary)));
+    if (stick && typeof scrollToBottom === "function") scrollToBottom();
   } catch (_) { /* memory was off for this turn, or nothing was saved */ }
 }
 
@@ -471,10 +474,22 @@ function autoGrow() {
   const box = $("reply-text");
   box.style.height = "auto";
   box.style.height = Math.min(Math.max(box.scrollHeight, 44), 320) + "px";
+  if (typeof nearBottom === "function" && nearBottom()) scrollToBottom();
 }
 $("reply-text").addEventListener("input", autoGrow);
 
-const nearBottom = () => window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+if ("scrollRestoration" in history) {
+  try { history.scrollRestoration = "manual"; } catch (_) { /* not supported */ }
+}
+
+const getScrollHeight = () => Math.max(
+  document.body ? document.body.scrollHeight : 0,
+  document.documentElement ? document.documentElement.scrollHeight : 0
+);
+const nearBottom = () => window.innerHeight + window.scrollY >= getScrollHeight() - 150;
+function scrollToBottom() {
+  window.scrollTo(0, getScrollHeight());
+}
 
 async function openSession(id) {
   stopPolling();
@@ -502,9 +517,14 @@ async function openSession(id) {
   $("reply-agent").value = tail.s.agent;
   fillReplyModel();
   setComposer();
+  scrollToBottom();
+  requestAnimationFrame(scrollToBottom);
   // Keep reading the log in the background. Waiting for it here would leave the
   // button that opened this chat disabled until the agent has finished.
-  (async () => { for (const t of thread) await watch(t, token); })().catch((e) => banner(e.message, true));
+  (async () => {
+    for (const t of thread) await watch(t, token);
+    if (nearBottom()) scrollToBottom();
+  })().catch((e) => banner(e.message, true));
   watchPulls(token);
   syncThread(token);
 }
@@ -536,7 +556,7 @@ async function syncThread(token) {
       if (changed) {
         setComposer();
         renderPulls();
-        if (stick) window.scrollTo(0, document.body.scrollHeight);
+        if (stick) scrollToBottom();
       }
     } catch (_) { /* the next look will do */ }
   }
@@ -555,17 +575,19 @@ async function watch(t, token) {
       addEvents(t, r.events);
       if (!t.seen) { // the first look at a turn: open a chat at its newest message
         t.seen = true;
-        if (t === thread[thread.length - 1]) window.scrollTo(0, document.body.scrollHeight);
+        if (stick || t === thread[thread.length - 1]) scrollToBottom();
+      } else if (stick && r.events.length) {
+        scrollToBottom();
       }
       if (r.events.length) t.after = r.events[r.events.length - 1].id;
       more = r.events.length === 500;
       t.s.status = r.status; t.s.error = r.error;
       if (t === thread[thread.length - 1]) setComposer();
-      if (stick && r.events.length) window.scrollTo(0, document.body.scrollHeight);
       if (r.finished && !more) {
         await finishTurn(t);
         if (t === thread[thread.length - 1]) setComposer(); // the owner can reply now
         await showMemory(t, r.saving);
+        if (stick) scrollToBottom();
         if (!r.saving) return;
         // else keep reading: the memory step is still writing to the log
       }
@@ -627,7 +649,7 @@ async function sendReply(text) {
   replyAttach.clear();
   autoGrow();
   setComposer();
-  window.scrollTo(0, document.body.scrollHeight);
+  scrollToBottom();
 
   const token = pollToken;
   guarded($("reply-send"), async () => {
@@ -666,7 +688,7 @@ function steer(text, now) {
   $("reply-text").value = "";
   replyAttach.clear();
   autoGrow();
-  window.scrollTo(0, document.body.scrollHeight);
+  scrollToBottom();
 
   const token = pollToken;
   guarded(btn, async () => {
@@ -766,6 +788,7 @@ function shareCard(t, e) {
       shareImage({ src, name, blob: new Blob([bytes], { type: mime }) });
     };
     body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
+    body.addEventListener("load", () => { if (typeof nearBottom === "function" && nearBottom()) scrollToBottom(); });
     body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
     full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
@@ -1250,6 +1273,7 @@ function viewSideFile(name) {
       shareImage({ src, name, blob: new Blob([bytes], { type: file.mime }) });
     };
     body = el("img", { class: "share-img", src, alt: name, title: name + " · Click to view full screen" });
+    body.addEventListener("load", () => { if (typeof nearBottom === "function" && nearBottom()) scrollToBottom(); });
     body.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));
     const full = el("button", { type: "button", class: "tiny", title: "View this image full screen" }, "Full screen");
     full.addEventListener("click", () => openImageModal({ src, name, onDownload: saveImage, onShare: doShare }));

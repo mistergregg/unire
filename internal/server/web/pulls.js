@@ -182,6 +182,7 @@ function laterButton(p) {
 function renderPulls() {
   const box = $("pulls");
   if (!box || pullsFor !== selectedRoot) return;
+  const stick = typeof nearBottom === "function" ? nearBottom() : false;
   const hide = dismissed();
   const tail = thread && thread[thread.length - 1];
   const idle = tail && isFinished(tail.s.status);
@@ -201,6 +202,7 @@ function renderPulls() {
   if (later.length) cards.push(el("div", { class: "pr-later" }, ...later));
   box.replaceChildren(...cards);
   if (typeof renderSidePRs === "function") renderSidePRs(pullsData);
+  if (stick && cards.length && typeof scrollToBottom === "function") scrollToBottom();
 }
 
 function stateButton(p, open, label) {

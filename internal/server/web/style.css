@@ -128,11 +128,14 @@ code { font-family: ui-monospace, "SF Mono", Monaco, Consolas, "Liberation Mono"
 
 /* Unified app layout: full-height sidebar on the left, pane on the right */
 main.wide { max-width: none; }
-.workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 0; min-height: 100vh; align-items: stretch; }
+.workspace { display: flex; min-height: 100vh; align-items: stretch; position: relative; width: 100%; }
 .side {
+  width: var(--side-left-w, 270px); min-width: var(--side-left-w, 270px); max-width: var(--side-left-w, 270px);
+  flex: 0 0 var(--side-left-w, 270px);
   position: sticky; top: 0; height: 100vh; max-height: 100vh; overflow: hidden;
   display: flex; flex-direction: column; gap: 8px; padding: 12px;
   background: var(--panel); border-right: 1px solid var(--line); box-sizing: border-box; z-index: 10;
+  transition: width .18s ease, min-width .18s ease, max-width .18s ease, padding .18s ease;
 }
 .side .primary { width: 100%; }
 .side-list { display: flex; flex-direction: column; gap: 4px; }
@@ -140,17 +143,22 @@ main.wide { max-width: none; }
 .side-item:hover, .side-item:focus-visible { border-color: var(--accent); outline: none; }
 .side-item.selected { border-color: var(--accent); background: var(--panel-subtle); box-shadow: inset 3px 0 0 var(--accent); }
 .small-line { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pane { min-width: 0; min-height: 100vh; padding: 16px 28px 32px; background: var(--bg); box-sizing: border-box; }
+.pane { flex: 1 1 0; min-width: 0; min-height: 100vh; padding: 16px 28px 32px; background: var(--bg); box-sizing: border-box; }
 .pane > section { max-width: 100%; }
 .empty { padding: 24px 0; }
 .back { display: none; }
 @media (max-width: 800px) {
-  .workspace { grid-template-columns: 1fr; }
-  .side { position: static; height: auto; max-height: none; min-height: 100vh; border-right: none; }
+  .workspace { display: block; }
+  .side {
+    position: static; height: auto; max-height: none; min-height: 100vh; border-right: none;
+    width: 100% !important; min-width: 100% !important; max-width: 100% !important; flex: none !important;
+  }
   .pane { padding: 12px 16px 24px; }
   .workspace.chat-open .side { display: none; }
   .workspace:not(.chat-open) .pane { display: none; }
   .back { display: inline-flex; }
+  .panel-resizer { display: none !important; }
+  .side-collapse-btn, .side-expand-btn, .workspace-expand-btn { display: none !important; }
 }
 
 /* files the agent shared: a card you expand to read, copy or download */

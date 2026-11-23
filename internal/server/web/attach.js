@@ -10,7 +10,7 @@
 
 const ATTACH_MAX = 5;
 const ATTACH_SIZE = 5 * 1024 * 1024;
-const ATTACH_IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ATTACH_IMAGES = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"];
 const PASTE_AS_FILE = 4000; // pasted text longer than this (in characters) is attached as a file
 
 const isImageName = (name) => /\.(png|jpe?g|gif|webp)$/i.test(name);
@@ -41,6 +41,7 @@ function attachPicker(input, button, box, previews) {
           src: p.data,
           name: p.name,
           onDownload: () => downloadUrl(p.name, p.data),
+          onShare: () => shareImage({ src: p.data, name: p.name }),
         }));
       }
       return el("span", { class: "attach-preview" + (p.image ? "" : " file"), title: p.name }, look, remove);
@@ -52,7 +53,8 @@ function attachPicker(input, button, box, previews) {
       if (!f.size) { banner((f.name || "That file") + " is empty.", true); continue; }
       if (f.size > ATTACH_SIZE) { banner(f.name + " is too big (5 MB at most).", true); continue; }
       try {
-        picked.push({ name: f.name || "file", data: await readDataURL(f), image: ATTACH_IMAGES.includes(f.type) });
+        const isImg = ATTACH_IMAGES.includes((f.type || "").toLowerCase()) || isImageName(f.name || "");
+        picked.push({ name: f.name || "file", data: await readDataURL(f), image: isImg });
       } catch (e) { banner(e.message, true); }
     }
     render();
@@ -67,6 +69,17 @@ function attachPicker(input, button, box, previews) {
       e.preventDefault();
       add(files);
       return;
+    }
+    if (cd.items) {
+      const imgFiles = [...cd.items]
+        .filter((it) => it.kind === "file" && (it.type.startsWith("image/") || isImageName(it.type)))
+        .map((it) => it.getAsFile())
+        .filter(Boolean);
+      if (imgFiles.length) {
+        e.preventDefault();
+        add(imgFiles);
+        return;
+      }
     }
     const text = cd.getData("text/plain");
     if (text.length > PASTE_AS_FILE) {
@@ -104,6 +117,7 @@ function attachThumbs(list) {
         name: a.name,
         href: a.href,
         onDownload: () => downloadUrl(a.name, a.href || a.src),
+        onShare: () => shareImage({ src: a.src, name: a.name, href: a.href }),
       });
     });
     return link;

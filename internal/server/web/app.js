@@ -34,6 +34,7 @@ const ICONS = {
   zoomIn: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
   zoomOut: '<path d="M4 14h6v6M20 10h-6V4M14 10l-7 7M10 14l-7 7"/>',
   close: '<path d="M18 6L6 18M6 6l12 12"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
 };
 const iconSvg = (name) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
 function iconTile(name, small) {
@@ -123,6 +124,7 @@ function show(name) {
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
   $("workspace").hidden = name === "auth";
   $("workspace").classList.toggle("chat-open", name !== "sessions"); // on a phone: the active view in pane, not the sidebar
+  $("workspace").classList.toggle("in-session", name === "session");
   document.querySelector("main").classList.toggle("wide", true);
   $("new-session").classList.toggle("selected", name === "new"); // lit while the new-chat screen is open
   $("nav").hidden = $("logout").hidden = name === "auth";
@@ -436,10 +438,65 @@ function downloadBlob(name, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+// ---- image share helper (Web Share API) ----
+async function shareImage({ src, name, blob, href, onShare }) {
+  if (typeof onShare === "function") {
+    try {
+      await onShare();
+      return;
+    } catch (_) {}
+  }
+  if (!navigator.share) {
+    banner("Sharing is not supported on this browser.", true);
+    return;
+  }
+  const displayName = name || "image.png";
+  try {
+    let fileBlob = blob;
+    if (!fileBlob && src) {
+      if (src.startsWith("data:")) {
+        const parts = src.split(",");
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : "image/png";
+        const bstr = atob(parts[1]);
+        const n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
+        fileBlob = new Blob([u8arr], { type: mime });
+      } else {
+        const res = await fetch(src);
+        fileBlob = await res.blob();
+      }
+    }
+    const ext = displayName.split(".").pop().toLowerCase();
+    const type = (fileBlob && fileBlob.type) ? fileBlob.type : (ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png");
+    if (fileBlob) {
+      const file = new File([fileBlob], displayName, { type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: displayName,
+          files: [file],
+        });
+        return;
+      }
+    }
+    const shareUrl = href || (src && !src.startsWith("data:") ? src : window.location.href);
+    await navigator.share({
+      title: displayName,
+      url: shareUrl,
+    });
+  } catch (err) {
+    if (err && err.name !== "AbortError") {
+      banner("Could not share image: " + err.message, true);
+    }
+  }
+}
+
 // ---- full-screen image viewer modal ----
 let lastActiveElement = null;
 let imageModalZoomed = false;
 let activeImageDownload = null;
+let activeImageShare = null;
 
 function updateImageModalZoomBtn() {
   const btn = $("image-modal-zoom");
@@ -464,15 +521,21 @@ function handleImageModalKey(e) {
   } else if ((e.key === "z" || e.key === "Z") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     toggleImageModalZoom();
+  } else if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (typeof activeImageShare === "function") {
+      e.preventDefault();
+      activeImageShare();
+    }
   }
 }
 
-function openImageModal({ src, name, onDownload, href }) {
+function openImageModal({ src, name, onDownload, href, onShare }) {
   const modal = $("image-modal");
   if (!modal) return;
   const img = $("image-modal-img");
   const title = $("image-modal-title");
   const dlBtn = $("image-modal-download");
+  const shareBtn = $("image-modal-share");
   const viewport = $("image-modal-viewport");
 
   lastActiveElement = document.activeElement;
@@ -505,6 +568,14 @@ function openImageModal({ src, name, onDownload, href }) {
     };
   }
 
+  activeImageShare = onShare || (() => shareImage({ src, name: displayName, href }));
+  if (shareBtn) {
+    shareBtn.hidden = !navigator.share;
+    shareBtn.onclick = () => {
+      if (typeof activeImageShare === "function") activeImageShare();
+    };
+  }
+
   const closeBtn = $("image-modal-close");
   if (closeBtn) closeBtn.focus();
 
@@ -520,6 +591,9 @@ function closeImageModal() {
   const img = $("image-modal-img");
   if (img) img.src = "";
   activeImageDownload = null;
+  activeImageShare = null;
+  const shareBtn = $("image-modal-share");
+  if (shareBtn) shareBtn.onclick = null;
   document.removeEventListener("keydown", handleImageModalKey);
   if (lastActiveElement && typeof lastActiveElement.focus === "function") {
     try { lastActiveElement.focus(); } catch (_) {}
@@ -558,3 +632,212 @@ function initImageModal() {
 }
 
 initImageModal();
+
+// ---- Resizable and Collapsible Sides ----
+const DEFAULT_LEFT_WIDTH = 270;
+const MIN_LEFT_WIDTH = 180;
+const MAX_LEFT_WIDTH = 550;
+const SNAP_LEFT_ZONE = 16;
+const COLLAPSE_LEFT_THRESHOLD = 110;
+
+let resizeTooltipEl = null;
+function getResizeTooltip() {
+  if (!resizeTooltipEl) {
+    resizeTooltipEl = el("div", { id: "resize-tooltip", class: "resize-tooltip", hidden: "" });
+    document.body.appendChild(resizeTooltipEl);
+  }
+  return resizeTooltipEl;
+}
+
+window.showResizeTooltip = function(width, isLocked, defaultWidth, x, y, customText) {
+  const tip = getResizeTooltip();
+  tip.hidden = false;
+  tip.classList.toggle("snapped-lock", !!isLocked);
+  if (customText) {
+    tip.textContent = customText;
+  } else if (isLocked) {
+    tip.innerHTML = '<svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> <span>Default (' + defaultWidth + 'px)</span>';
+  } else {
+    tip.textContent = width + "px";
+  }
+  tip.style.left = Math.max(10, Math.min(window.innerWidth - 140, x)) + "px";
+  tip.style.top = Math.max(10, y - 36) + "px";
+};
+
+window.hideResizeTooltip = function() {
+  const tip = getResizeTooltip();
+  tip.hidden = true;
+};
+
+window.setLeftSidebarCollapsed = function(collapsed) {
+  const ws = $("workspace");
+  if (!ws) return;
+  ws.classList.toggle("side-collapsed", collapsed);
+  try { localStorage.setItem("unire_side_left_collapsed", String(collapsed)); } catch (_) {}
+  const collapseBtn = $("side-collapse-btn");
+  if (collapseBtn) collapseBtn.setAttribute("aria-expanded", String(!collapsed));
+  const expandBtn = $("s-expand-side");
+  if (expandBtn) expandBtn.setAttribute("aria-expanded", String(!collapsed));
+  const wsExpandBtn = $("workspace-expand-btn");
+  if (wsExpandBtn) wsExpandBtn.setAttribute("aria-expanded", String(!collapsed));
+};
+
+function initLeftSidebar() {
+  const ws = $("workspace");
+  const resizer = $("side-resizer");
+  const collapseBtn = $("side-collapse-btn");
+  const expandBtn = $("s-expand-side");
+  const wsExpandBtn = $("workspace-expand-btn");
+  if (!ws) return;
+
+  // Restore saved width
+  let savedWidth = DEFAULT_LEFT_WIDTH;
+  try {
+    const w = parseInt(localStorage.getItem("unire_side_left_w"), 10);
+    if (!isNaN(w) && w >= MIN_LEFT_WIDTH && w <= MAX_LEFT_WIDTH) {
+      savedWidth = w;
+    }
+  } catch (_) {}
+  ws.style.setProperty("--side-left-w", savedWidth + "px");
+
+  // Restore collapsed state
+  try {
+    if (localStorage.getItem("unire_side_left_collapsed") === "true") {
+      setLeftSidebarCollapsed(true);
+    }
+  } catch (_) {}
+
+  if (collapseBtn) {
+    collapseBtn.addEventListener("click", () => setLeftSidebarCollapsed(true));
+  }
+  if (expandBtn) {
+    expandBtn.addEventListener("click", () => setLeftSidebarCollapsed(false));
+  }
+  if (wsExpandBtn) {
+    wsExpandBtn.addEventListener("click", () => setLeftSidebarCollapsed(false));
+  }
+
+  if (resizer) {
+    let dragging = false;
+
+    resizer.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      if (resizer.setPointerCapture && e.pointerId) {
+        try { resizer.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      ws.classList.add("resizing");
+      resizer.classList.add("dragging");
+
+      const onPointerMove = (ev) => {
+        if (!dragging) return;
+        const rawWidth = ev.clientX;
+
+        if (rawWidth < COLLAPSE_LEFT_THRESHOLD) {
+          showResizeTooltip(0, false, DEFAULT_LEFT_WIDTH, ev.clientX + 14, ev.clientY, "Minimize to side");
+          resizer.classList.remove("snapped-lock");
+          return;
+        }
+
+        let width = rawWidth;
+        let isLocked = false;
+        if (Math.abs(rawWidth - DEFAULT_LEFT_WIDTH) <= SNAP_LEFT_ZONE) {
+          width = DEFAULT_LEFT_WIDTH;
+          isLocked = true;
+        } else {
+          const maxW = Math.min(MAX_LEFT_WIDTH, window.innerWidth * 0.45);
+          width = Math.max(MIN_LEFT_WIDTH, Math.min(maxW, rawWidth));
+        }
+
+        resizer.classList.toggle("snapped-lock", isLocked);
+        showResizeTooltip(Math.round(width), isLocked, DEFAULT_LEFT_WIDTH, ev.clientX + 14, ev.clientY);
+        ws.style.setProperty("--side-left-w", Math.round(width) + "px");
+        if (ws.classList.contains("side-collapsed")) {
+          ws.classList.remove("side-collapsed");
+        }
+      };
+
+      const onPointerUp = (ev) => {
+        if (!dragging) return;
+        dragging = false;
+        if (resizer.releasePointerCapture && ev.pointerId) {
+          try { resizer.releasePointerCapture(ev.pointerId); } catch (_) {}
+        }
+        ws.classList.remove("resizing");
+        resizer.classList.remove("dragging", "snapped-lock");
+        hideResizeTooltip();
+        document.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+
+        const rawWidth = ev.clientX;
+        if (rawWidth < COLLAPSE_LEFT_THRESHOLD) {
+          setLeftSidebarCollapsed(true);
+        } else {
+          let finalWidth = rawWidth;
+          if (Math.abs(rawWidth - DEFAULT_LEFT_WIDTH) <= SNAP_LEFT_ZONE) {
+            finalWidth = DEFAULT_LEFT_WIDTH;
+          } else {
+            const maxW = Math.min(MAX_LEFT_WIDTH, window.innerWidth * 0.45);
+            finalWidth = Math.max(MIN_LEFT_WIDTH, Math.min(maxW, rawWidth));
+          }
+          finalWidth = Math.round(finalWidth);
+          ws.style.setProperty("--side-left-w", finalWidth + "px");
+          setLeftSidebarCollapsed(false);
+          try { localStorage.setItem("unire_side_left_w", String(finalWidth)); } catch (_) {}
+        }
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+
+    resizer.addEventListener("dblclick", () => {
+      ws.style.setProperty("--side-left-w", DEFAULT_LEFT_WIDTH + "px");
+      setLeftSidebarCollapsed(false);
+      try { localStorage.setItem("unire_side_left_w", String(DEFAULT_LEFT_WIDTH)); } catch (_) {}
+      resizer.classList.add("snapped-lock");
+      setTimeout(() => resizer.classList.remove("snapped-lock"), 450);
+    });
+
+    resizer.addEventListener("keydown", (e) => {
+      let currentW = DEFAULT_LEFT_WIDTH;
+      try {
+        const val = parseInt(ws.style.getPropertyValue("--side-left-w"), 10);
+        if (!isNaN(val)) currentW = val;
+      } catch (_) {}
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        const next = currentW - 15;
+        if (next < COLLAPSE_LEFT_THRESHOLD) {
+          setLeftSidebarCollapsed(true);
+        } else {
+          const w = Math.max(MIN_LEFT_WIDTH, next);
+          ws.style.setProperty("--side-left-w", w + "px");
+          try { localStorage.setItem("unire_side_left_w", String(w)); } catch (_) {}
+        }
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setLeftSidebarCollapsed(false);
+        const maxW = Math.min(MAX_LEFT_WIDTH, window.innerWidth * 0.45);
+        const next = Math.min(maxW, currentW + 15);
+        ws.style.setProperty("--side-left-w", next + "px");
+        try { localStorage.setItem("unire_side_left_w", String(next)); } catch (_) {}
+      } else if (e.key === "Home" || e.key === "Enter") {
+        e.preventDefault();
+        ws.style.setProperty("--side-left-w", DEFAULT_LEFT_WIDTH + "px");
+        setLeftSidebarCollapsed(false);
+        try { localStorage.setItem("unire_side_left_w", String(DEFAULT_LEFT_WIDTH)); } catch (_) {}
+        resizer.classList.add("snapped-lock");
+        setTimeout(() => resizer.classList.remove("snapped-lock"), 450);
+      }
+    });
+  }
+}
+
+initLeftSidebar();

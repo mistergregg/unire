@@ -615,6 +615,58 @@ func TestAgentCanNameTheConversationOnlyWhenGivenTheTool(t *testing.T) {
 	}
 }
 
+func TestLiveNameToolCall(t *testing.T) {
+	askPath := tools.Dir + "/ask/99"
+	sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "@call name\nReal-time Chat Title\n"}}
+	sb.agentHook = func(ctx context.Context) {
+		for i := 0; i < 500; i++ {
+			sb.mu.Lock()
+			ans, done := sb.files[askPath+".a"]
+			sb.mu.Unlock()
+			if done {
+				if !strings.Contains(string(ans), "Real-time Chat Title") {
+					t.Errorf("unexpected answer: %s", string(ans))
+				}
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatal("tool call was not answered in time")
+	}
+	var calledTool, calledArgs string
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	o.AskPoll = 2 * time.Millisecond
+	o.Call = func(ctx context.Context, tool, args string) string {
+		calledTool, calledArgs = tool, args
+		return "ok: conversation named " + args
+	}
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calledTool != "name" || calledArgs != "Real-time Chat Title" {
+		t.Errorf("live Call got tool=%q args=%q, want name/Real-time Chat Title", calledTool, calledArgs)
+	}
+	if res.Name != "Real-time Chat Title" {
+		t.Errorf("res.Name = %q, want Real-time Chat Title", res.Name)
+	}
+}
+
+func TestFallbackTitleFromPR(t *testing.T) {
+	prFile := tools.Dir + "/" + tools.PR.Name
+	sb := &fakeSandbox{outFiles: map[string]string{prFile: "Add preview recipes and detection\n"}}
+	o := opts(nil)
+	o.Tools = tools.ForNewConversation()
+	res, err := run(t, sb, baseSpec(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Name != "Add preview recipes and detection" {
+		t.Errorf("res.Name = %q, want fallback from PR title", res.Name)
+	}
+}
+
 // An agent that asks the owner a question while it runs, and goes on once the
 // answer file appears (as the sandbox's `unire ask` does).
 func TestAgentQuestionsReachTheOwnerAndTheAnswerComesBack(t *testing.T) {

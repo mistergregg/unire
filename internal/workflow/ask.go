@@ -99,6 +99,21 @@ func (w *worker) serveQuestions(ctx context.Context) {
 					tool = strings.TrimSpace(tool)
 					if tool == tools.Repo.Name && w.opt.AddRepo != nil && w.hasTool(tool) {
 						answer, ok = w.addRepo(ctx, strings.TrimSpace(args)), true
+					} else if tool == tools.Name.Name && w.hasTool(tool) {
+						clean := tools.CleanName(args)
+						if clean != "" {
+							w.mu.Lock()
+							w.liveName = clean
+							w.mu.Unlock()
+							if w.opt.Call != nil {
+								answer = w.opt.Call(ctx, tool, clean)
+							} else {
+								answer = "ok: conversation named " + clean
+							}
+							ok = true
+						} else {
+							answer, ok = "unire: title cannot be empty", true
+						}
 					} else if w.opt.Call != nil && w.hasTool(tool) {
 						answer, ok = w.opt.Call(ctx, tool, strings.TrimSpace(args)), true
 					} else {

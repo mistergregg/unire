@@ -1,6 +1,6 @@
 # Live previews
 
-Unire can run the app an agent is building and let you open it in your browser while the agent works. This page covers what the server does and how to turn it on. The Preview tab in the chat is not built yet: for now previews are reached through the API below.
+Unire can run the app an agent is building and let you open it in your browser while the agent works. Start and view previews from the **Preview** tab in the chat side panel, or through the API below.
 
 ## What it does
 

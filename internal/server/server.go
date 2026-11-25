@@ -231,13 +231,36 @@ func (s *Server) Handler() http.Handler {
 
 	sub, _ := fs.Sub(webFS, "web")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
-	return securityHeaders(s.csrf(mux))
+	return s.securityHeaders(s.csrf(mux))
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func previewFrameSource(r *http.Request) string {
+	host := requestHost(r)
+	if host == "" {
+		return ""
+	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':') {
+			return ""
+		}
+	}
+	if strings.Contains(host, ":") {
+		return "http://[" + host + "]:*"
+	}
+	return "http://" + host + ":*"
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+		csp := "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+		if s.previews != nil && s.previews.hub != nil {
+			if src := previewFrameSource(r); src != "" {
+				csp += "; frame-src 'self' " + src
+			}
+		}
+		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")

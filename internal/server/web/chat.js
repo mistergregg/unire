@@ -552,7 +552,11 @@ async function syncThread(token) {
         watch(t, token);
         changed = true;
       }
-      if (turns[0].task !== thread[0].s.task) { thread[0].s.task = turns[0].task; changed = true; } // the agent named the chat
+      if (turns[0].task !== thread[0].s.task) {
+        thread[0].s.task = turns[0].task;
+        $("s-title").textContent = turns[0].task;
+        changed = true;
+      } // the agent named the chat
       if (changed) {
         setComposer();
         renderPulls();

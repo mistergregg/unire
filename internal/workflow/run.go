@@ -357,6 +357,11 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	stopAsks()
 	<-asksDone
 	requestedName := tools.CleanName(w.requestedTool(ctx, tools.Name.Name))
+	if requestedName == "" {
+		w.mu.Lock()
+		requestedName = w.liveName
+		w.mu.Unlock()
+	}
 	prTitle := tools.CleanName(w.requestedTool(ctx, tools.PR.Name))
 	prBody := w.requestedBody(ctx)
 	shared := w.requestedShares(ctx, capture.String())
@@ -380,6 +385,16 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		fmt.Fprintln(opt.Err, "no changes to push")
 	}
 
+	if requestedName == "" && w.hasTool(tools.Name.Name) {
+		if prTitle != "" {
+			requestedName = prTitle
+		} else if ct := w.lastCommitTitle(ctx, spec, startHeads); ct != "" {
+			requestedName = ct
+		} else if fb := tools.CleanFallbackTitle(spec.Prompt); fb != "" && fb != spec.Task {
+			requestedName = fb
+		}
+	}
+
 	if agentErr != nil && ctx.Err() == nil {
 		fmt.Fprintf(opt.Err, "hint: if this looks like a sign-in problem, open the Agents page and sign %s in again\n", adapter.Info().Label)
 	}
@@ -395,6 +410,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if opt.Mem != nil && ctx.Err() == nil {
 		res = w.rememberSession(ctx, adapter, spec, ref, startHeads, outcomes, agentErr, out.buf)
 	}
+	if requestedName == "" && res.Name != "" {
+		requestedName = res.Name
+	}
 	res.Name = requestedName
 	res.PRTitle = prTitle
 	res.PRBody = prBody
@@ -407,6 +425,7 @@ type worker struct {
 	spec        session.Spec
 	conv        string            // the agent's conversation this run worked in (to carry it on next time)
 	mu          sync.Mutex        // guards what the repo tool adds while the agent runs
+	liveName    string            // title requested live via unire name
 	added       []session.Repo    // repos brought in while the agent ran
 	addedTokens map[string]string // their tokens, by directory
 	addedHeads  map[string]string // where each started
@@ -614,6 +633,11 @@ func (w *worker) rememberSession(ctx context.Context, ad agent.Adapter, spec ses
 			if hid {
 				fmt.Fprintln(w.opt.Err, "memory: removed something that looked like a secret from the summary")
 			}
+			if w.hasTool(tools.Name.Name) {
+				if asked := askedFromSummary(res.Summary); asked != "" {
+					res.Name = asked
+				}
+			}
 		}
 		for dir, b := range briefs {
 			b = memory.Clean(b)
@@ -726,6 +750,54 @@ func (w *worker) requestedBody(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(content)
+}
+
+// lastCommitTitle finds the newest commit message subject written by the agent
+// during this turn, if any.
+func (w *worker) lastCommitTitle(ctx context.Context, spec session.Spec, startHeads map[string]string) string {
+	for _, repo := range spec.Repos {
+		dir := workspace + "/" + repo.Name
+		startHead := startHeads[repo.Name]
+		if startHead == "" {
+			continue
+		}
+		repo := repo
+		subj, err := w.git(ctx, dir, &repo, "log", "-1", "--format=%s", startHead+"..HEAD")
+		if err == nil {
+			subj = strings.TrimSpace(subj)
+			if subj != "" && !strings.HasPrefix(subj, "unire: ") {
+				if clean := tools.CleanName(subj); clean != "" {
+					return clean
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// askedFromSummary extracts the task description under ## Asked in summary.md.
+func askedFromSummary(summary string) string {
+	lines := strings.Split(summary, "\n")
+	inAsked := false
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "## ") {
+			if strings.EqualFold(trimmed, "## Asked") {
+				inAsked = true
+				continue
+			} else if inAsked {
+				break
+			}
+		}
+		if inAsked && trimmed != "" && !strings.EqualFold(trimmed, "none") {
+			trimmed = strings.TrimPrefix(trimmed, "- ")
+			trimmed = strings.TrimPrefix(trimmed, "* ")
+			if clean := tools.CleanFallbackTitle(trimmed); clean != "" {
+				return clean
+			}
+		}
+	}
+	return ""
 }
 
 // withDocs says, for each repo, which of its own documentation files exist, so the

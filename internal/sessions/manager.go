@@ -377,19 +377,25 @@ func (m *Manager) run(ctx context.Context, j job) {
 			wo.Tools = append(wo.Tools, tools.Parent)
 		}
 	}
-	if pulls != nil || j.memory || following {
-		wo.Call = func(ctx context.Context, tool, args string) string {
-			if tool == tools.Memory.Name {
-				return m.lookUpMemory(j, args)
+	wo.Call = func(ctx context.Context, tool, args string) string {
+		if tool == tools.Name.Name {
+			clean := tools.CleanName(args)
+			if clean != "" {
+				m.applyName(j, clean)
+				return "ok: conversation named " + clean
 			}
-			if tool == tools.Parent.Name && following {
-				return cfg.Upstream.Latest(ctx, j.root)
-			}
-			if pulls != nil {
-				return pulls.Call(ctx, j.root, tool, args)
-			}
-			return "This tool is not available in this conversation."
+			return "unire: title cannot be empty"
 		}
+		if tool == tools.Memory.Name && j.memory {
+			return m.lookUpMemory(j, args)
+		}
+		if tool == tools.Parent.Name && following {
+			return cfg.Upstream.Latest(ctx, j.root)
+		}
+		if pulls != nil {
+			return pulls.Call(ctx, j.root, tool, args)
+		}
+		return "This tool is not available in this conversation."
 	}
 	// The turn is finished as soon as the work is pushed. Saving to memory goes
 	// on in the background, so the owner can read the answer and reply at once.
@@ -482,7 +488,11 @@ func (m *Manager) run(ctx context.Context, j job) {
 
 // applyName gives the first message of a conversation the title its agent asked for.
 func (m *Manager) applyName(j job, name string) {
-	if name == "" || j.parent != "" || name == j.spec.Task {
+	if name == "" || j.parent != "" {
+		return
+	}
+	rec, ok, err := m.st.Session(j.spec.ID)
+	if err != nil || !ok || rec.Task == name {
 		return
 	}
 	if m.st.SetTask(j.spec.ID, name) == nil {
@@ -572,6 +582,13 @@ func (m *Manager) saveMemory(j job, res workflow.Result, runErr error) {
 	if res.Summary == "" {
 		return
 	}
+	if res.Name != "" {
+		m.applyName(j, res.Name)
+	}
+	task := j.spec.Task
+	if rec, ok, _ := m.st.Session(j.spec.ID); ok && rec.Task != "" {
+		task = rec.Task
+	}
 	status := store.StatusDone
 	if runErr != nil {
 		status = store.StatusFailed
@@ -581,7 +598,7 @@ func (m *Manager) saveMemory(j job, res workflow.Result, runErr error) {
 		keys = append(keys, store.RepoKey(ref))
 	}
 	err := m.st.SaveSummary(store.Summary{
-		SessionID: j.spec.ID, Task: j.spec.Task, Agent: j.spec.Agent, Branch: j.spec.Branch(),
+		SessionID: j.spec.ID, Task: task, Agent: j.spec.Agent, Branch: j.spec.Branch(),
 		Status: status, Summary: res.Summary, Source: res.SummarySource, Repos: keys,
 	})
 	if err != nil {

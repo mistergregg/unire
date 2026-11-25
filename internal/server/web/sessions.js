@@ -16,6 +16,13 @@ const isFinished = (status) => status !== "queued" && status !== "running";
 let sideList = [];       // the last list from the server
 let selectedRoot = null; // the conversation open on the right
 
+function clearSelectedSession() {
+  if (selectedRoot === null) return;
+  selectedRoot = null;
+  setHash("");
+  if (sideList.length) renderSidebar(sideList);
+}
+
 async function openSessions() {
   stopPolling();
   selectedRoot = null;
@@ -115,6 +122,8 @@ function sessionRow(s) {
       const state = p.state || "open";
       const stateText = state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
       const tooltipText = p.repo + " #" + p.number + ": " + p.title + " (" + stateText + ")";
+      const prIcon = el("span", { class: "pr-icon", "aria-hidden": "true" });
+      prIcon.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="6" r="1.5"/><path d="M4.5 5v6M11.5 7.5c0 2.5-3.5 2-7 3.5"/></svg>';
       const pill = el("span", {
         class: "pr-pill " + state,
         title: tooltipText,
@@ -122,7 +131,7 @@ function sessionRow(s) {
         role: "button",
         "aria-label": tooltipText
       },
-        el("span", { class: "pr-icon", "aria-hidden": "true" }, "⑂"),
+        prIcon,
         el("span", { class: "pr-num" }, "#" + p.number),
         el("span", { class: "pr-state-label" }, stateText)
       );

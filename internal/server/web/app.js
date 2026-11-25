@@ -35,6 +35,7 @@ const ICONS = {
   zoomOut: '<path d="M4 14h6v6M20 10h-6V4M14 10l-7 7M10 14l-7 7"/>',
   close: '<path d="M18 6L6 18M6 6l12 12"/>',
   share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+  external: '<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
 };
 const iconSvg = (name) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
 function iconTile(name, small) {
@@ -121,6 +122,7 @@ let currentView = "";
 function show(name) {
   currentView = name;
   if (name !== "auth" && typeof startAttention === "function") startAttention();
+  if (TAB_OF[name] !== "sessions" && typeof clearSelectedSession === "function") clearSelectedSession();
   for (const v of VIEWS) $("view-" + v).hidden = v !== name;
   $("workspace").hidden = name === "auth";
   $("workspace").classList.toggle("chat-open", name !== "sessions"); // on a phone: the active view in pane, not the sidebar

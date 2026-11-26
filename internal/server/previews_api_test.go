@@ -242,3 +242,33 @@ func TestRequestHost(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewFrameCSP(t *testing.T) {
+	e, _, _ := previewEnv(t)
+	req, _ := http.NewRequest("GET", e.ts.URL+"/api/status", nil)
+	req.Host = "nas.local:8080"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-src 'self' http://nas.local:*") {
+		t.Fatalf("CSP = %q, want frame-src for preview host", got)
+	}
+
+	e.srv.previews.hub = nil
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if got := resp2.Header.Get("Content-Security-Policy"); strings.Contains(got, "frame-src") {
+		t.Fatalf("CSP without preview hub = %q, should not include frame-src", got)
+	}
+
+	bad, _ := http.NewRequest("GET", "http://x/", nil)
+	bad.Host = "evil.com; script-src 'unsafe-inline'"
+	if got := previewFrameSource(bad); got != "" {
+		t.Fatalf("invalid host must be rejected, got %q", got)
+	}
+}

@@ -103,6 +103,8 @@ RUN python3 -m venv /opt/hardware && \
 # Copy hardware CLI commands
 COPY experiments/hardware-pipeline/gen_enclosure.py /opt/unire-hardware/gen_enclosure.py
 COPY experiments/hardware-pipeline/render_mesh.py /opt/unire-hardware/render_mesh.py
+COPY experiments/hardware-pipeline/mesh_tools.py /opt/unire-hardware/mesh_tools.py
+COPY experiments/hardware-pipeline/bin/unire-3d /usr/local/bin/unire-3d
 COPY experiments/hardware-pipeline/bin/unire-enclosure /usr/local/bin/unire-enclosure
 COPY experiments/hardware-pipeline/bin/unire-stl-shot /usr/local/bin/unire-stl-shot
 COPY experiments/hardware-pipeline/bin/unire-mesh-check /usr/local/bin/unire-mesh-check

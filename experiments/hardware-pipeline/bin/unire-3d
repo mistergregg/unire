@@ -1,0 +1,10 @@
+#!/bin/sh
+# unire-3d: general 3D print helpers (info, views, fix, scale, relief, convert).
+#   unire-3d info model.stl | views model.stl out.png | fix in.stl out.stl
+#   unire-3d scale in.stl out.stl --max-dim 80 | relief photo.png out.stl --mode lithophane
+set -eu
+if [ -x "/tmp/hw/bin/python3" ]; then PYTHON="/tmp/hw/bin/python3"
+elif [ -x "/opt/hardware/bin/python3" ]; then PYTHON="/opt/hardware/bin/python3"
+else PYTHON="python3"; fi
+SCRIPT_DIR="${UNIRE_HARDWARE_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+exec "$PYTHON" "$SCRIPT_DIR/mesh_tools.py" "$@"

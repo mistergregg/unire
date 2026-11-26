@@ -62,6 +62,11 @@ jobs:
             test -s /tmp/test_shot.png
             unire-slice /tmp/esp32/base.stl /tmp/esp32.gcode
             test -s /tmp/esp32.gcode
+            unire-3d info /tmp/esp32/base.stl
+            unire-3d views /tmp/esp32/base.stl /tmp/views.png && test -s /tmp/views.png
+            python3 -c "from PIL import Image; Image.radial_gradient('L').save('/tmp/pic.png')"
+            unire-3d relief /tmp/pic.png /tmp/lith.stl --mode lithophane --res 60
+            unire-3d info /tmp/lith.stl
           '
 
       # ------------------------------------------------------------------------

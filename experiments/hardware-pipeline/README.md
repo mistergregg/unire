@@ -21,6 +21,10 @@ unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gco
 
 The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`profiles/NOTICE.md`](profiles/NOTICE.md). The PETG profile is project-authored.
 
+## Other 3D scenarios
+
+`unire-3d` (`mesh_tools.py`) adds `info`, `views`, `fix`, `scale`, `convert` and image-to-relief/lithophane for any model. [`SCENARIOS.md`](SCENARIOS.md) says which route fits each kind of request and what is not supported.
+
 ## What works
 
 - `gen_enclosure.py` reads board and enclosure JSON and writes base/lid STL and STEP files, three headless PNG previews using a Pillow z-buffer renderer, and `report.json`.

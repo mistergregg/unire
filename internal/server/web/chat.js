@@ -416,6 +416,7 @@ async function finishTurn(t) {
   t.foot.append(t.memoryNote);
   refreshPulls(); // the turn may have pushed a branch: offer a pull request
   refreshLinks();
+  if (typeof refreshPreviews === "function") refreshPreviews();
   if (t === thread[thread.length - 1]) usageChanged(); // the turn may have reported usage
   if (typeof nearBottom === "function" && nearBottom()) scrollToBottom();
 }
@@ -526,6 +527,7 @@ async function openSession(id) {
     if (nearBottom()) scrollToBottom();
   })().catch((e) => banner(e.message, true));
   watchPulls(token);
+  if (typeof watchPreviews === "function") watchPreviews(token);
   syncThread(token);
 }
 
@@ -1020,8 +1022,10 @@ function initSidePanel() {
     if (!sidePanelOpen || window.innerWidth > 1100) return;
     const panel = $("chat-side-panel");
     const toggleBtn = $("s-toggle-side");
+    const previewBtn = $("s-open-preview");
     if (!panel || panel.contains(e.target)) return;
     if (toggleBtn && toggleBtn.contains(e.target)) return;
+    if (previewBtn && previewBtn.contains(e.target)) return;
     if (e.target.closest && e.target.closest(".share-card")) return;
     setSidePanelOpen(false);
   });
@@ -1053,12 +1057,15 @@ function selectSideTab(tab) {
   sideActiveTab = tab;
   const isFiles = tab === "files";
   const isPrs = tab === "prs";
+  const isPreview = tab === "preview";
   const isInfo = tab === "info";
   const tabF = $("side-tab-files");
   const tabP = $("side-tab-prs");
+  const tabPrev = $("side-tab-preview");
   const tabI = $("side-tab-info");
   const paneF = $("side-pane-files");
   const paneP = $("side-pane-prs");
+  const panePrev = $("side-pane-preview");
   const paneI = $("side-pane-info");
   if (tabF) {
     tabF.classList.toggle("active", isFiles);
@@ -1068,13 +1075,19 @@ function selectSideTab(tab) {
     tabP.classList.toggle("active", isPrs);
     tabP.setAttribute("aria-selected", String(isPrs));
   }
+  if (tabPrev) {
+    tabPrev.classList.toggle("active", isPreview);
+    tabPrev.setAttribute("aria-selected", String(isPreview));
+  }
   if (tabI) {
     tabI.classList.toggle("active", isInfo);
     tabI.setAttribute("aria-selected", String(isInfo));
   }
   if (paneF) paneF.hidden = !isFiles;
   if (paneP) paneP.hidden = !isPrs;
+  if (panePrev) panePrev.hidden = !isPreview;
   if (paneI) paneI.hidden = !isInfo;
+  if (isPreview && typeof onPreviewTabOpen === "function") onPreviewTabOpen();
 }
 
 function updateSideBadge() {
@@ -1113,6 +1126,7 @@ function resetSidePanel() {
     prsList.hidden = true;
     prsList.replaceChildren();
   }
+  if (typeof resetPreviews === "function") resetPreviews();
   selectSideTab("files");
   let shouldOpen = window.innerWidth >= 1100;
   try {

@@ -1150,7 +1150,8 @@ function renderSidePRs(data) {
   list.hidden = false;
 
   const items = [];
-  for (const p of prs) {
+  const ordered = [...prs].sort((a, b) => Number((b.state || "open") === "open") - Number((a.state || "open") === "open"));
+  for (const p of ordered) {
     const state = p.state || "open";
     const failedChecks = (p.checks || []).filter((c) => c.state === "failure").length;
     let checksLabel = p.summary === "success" ? "checks passed" :

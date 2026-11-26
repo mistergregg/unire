@@ -79,11 +79,14 @@ function initSideFilters() {
 }
 initSideFilters();
 
+const isOpenPR = (p) => (p.state || "open") === "open";
+const hasOpenPR = (s) => (s.pulls || []).some(isOpenPR);
+
 function renderSidebar(list) {
   sideList = list;
   const q = ($("side-search").value || "").trim().toLowerCase();
 
-  const openPRsTotal = list.reduce((acc, s) => acc + ((s.pulls || []).filter((p) => (p.state || "open") === "open").length), 0);
+  const openPRsTotal = list.reduce((acc, s) => acc + (s.pulls || []).filter(isOpenPR).length, 0);
   const filterBadge = $("side-filter-prs-count");
   if (filterBadge) {
     filterBadge.textContent = openPRsTotal;
@@ -97,7 +100,9 @@ function renderSidebar(list) {
 
   const shown = !q ? filtered : filtered.filter((s) =>
     (s.task + " " + s.agent + " " + s.repos.map((r) => r.fullName).join(" ")).toLowerCase().includes(q));
-  const sorted = [...shown].sort((a, b) => lastTouched(b) - lastTouched(a) || b.createdAt - a.createdAt);
+  const sorted = [...shown].sort((a, b) =>
+    (sideFilter === "prs" ? Number(hasOpenPR(b)) - Number(hasOpenPR(a)) : 0) ||
+    lastTouched(b) - lastTouched(a) || b.createdAt - a.createdAt);
   // Draw again only when something changed, so the little lights keep pulsing
   // instead of starting over every few seconds.
   const sig = q + "|" + sideFilter + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
@@ -115,7 +120,10 @@ function sessionRow(s) {
   const light = s.waiting ? "needs" : (status === "running" || status === "queued") ? "live"
     : status === "done" ? "done" : (status === "failed" || status === "interrupted") ? "failed" : "";
 
-  const pulls = s.pulls || [];
+  const rawPulls = s.pulls || [];
+  const pulls = sideFilter === "prs"
+    ? [...rawPulls].sort((a, b) => Number(isOpenPR(b)) - Number(isOpenPR(a)))
+    : rawPulls;
   let pullsRow = "";
   if (pulls.length > 0) {
     const pills = pulls.map((p) => {

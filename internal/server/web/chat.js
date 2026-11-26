@@ -412,7 +412,7 @@ async function finishTurn(t) {
     bits.push(el("span", { class: "actions" }, copy));
   }
   t.foot.replaceChildren(...bits);
-  t.memoryNote = el("span", {});
+  t.memoryNote = el("span", { class: "memory-note" });
   t.foot.append(t.memoryNote);
   refreshPulls(); // the turn may have pushed a branch: offer a pull request
   refreshLinks();
@@ -982,7 +982,6 @@ function initRightResizer() {
 
 function initSidePanel() {
   const toggleBtn = $("s-toggle-side");
-  const minBtn = $("side-panel-minimize");
   const closeBtn = $("side-panel-close");
   const tabFiles = $("side-tab-files");
   const tabPrs = $("side-tab-prs");
@@ -992,11 +991,6 @@ function initSidePanel() {
   if (toggleBtn) {
     toggleBtn.addEventListener("click", () => {
       setSidePanelOpen(!sidePanelOpen);
-    });
-  }
-  if (minBtn) {
-    minBtn.addEventListener("click", () => {
-      setSidePanelOpen(false);
     });
   }
   if (closeBtn) {
@@ -1167,6 +1161,8 @@ function renderSidePRs(data) {
     const commentsLabel = commentsCount ? (commentsCount + (commentsCount === 1 ? " comment" : " comments")) : "";
     const metaLine = [p.repo, "#" + p.number, p.branch + (p.base ? " → " + p.base : "")].join(" · ");
 
+    const extIcon = el("span", { class: "btn-icon", "aria-hidden": "true" });
+    extIcon.innerHTML = iconSvg("external");
     const card = el("div", { class: "side-pr-card " + state },
       el("div", { class: "side-pr-head" },
         el("span", { class: "pr-state " + state }, state),
@@ -1179,7 +1175,7 @@ function renderSidePRs(data) {
         commentsLabel ? el("span", { class: "muted" }, " · " + commentsLabel) : ""
       ),
       el("div", { class: "side-pr-actions" },
-        el("a", { class: "button ghost tiny", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "Open on git server ↗")
+        el("a", { class: "button ghost tiny", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "Open on git server", extIcon)
       )
     );
     items.push(card);

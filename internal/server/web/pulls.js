@@ -87,7 +87,7 @@ function pullCard(p) {
   const details = el("details", { class: "pr-details" });
   details.open = openPulls.has(key);
   details.addEventListener("toggle", () => { if (details.open) openPulls.add(key); else openPulls.delete(key); });
-  details.append(el("summary", {}, el("span", { class: "muted" }, p.repo + " · " + p.branch + (p.base ? " → " + p.base : "") + " · "), checks));
+  details.append(el("summary", {}, el("span", { class: "muted" }, p.repo + " · " + p.branch + (p.base ? " → " + p.base : "")), checks));
   if (p.error) details.append(el("p", { class: "err" }, "Could not read it from the server: " + p.error));
   if (p.checks.length) {
     details.append(el("ul", { class: "pr-list" }, ...p.checks.map((c) =>
@@ -324,8 +324,9 @@ function autoFixRow() {
     pullsData.autoFix = r.autoFix;
   }));
   return el("label", { class: "pr-auto" }, box,
-    el("span", {}, " Fix failing checks and keep the branch up to date"),
-    el("span", { class: "muted" }, " · Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request."));
+    el("span", { class: "pr-auto-text" },
+      el("span", { class: "pr-auto-title" }, "Fix failing checks and keep the branch up to date"),
+      el("span", { class: "muted pr-auto-sub" }, "Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request.")));
 }
 
 // A later turn pushed to this pull request's branch, so the pull request already has the

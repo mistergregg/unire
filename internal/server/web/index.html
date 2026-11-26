@@ -238,9 +238,6 @@
             </button>
           </div>
           <div class="side-panel-header-actions">
-            <button type="button" id="side-panel-minimize" class="icon-btn tiny" title="Minimize side panel" aria-label="Minimize side panel">
-              <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
             <button type="button" id="side-panel-close" class="icon-btn tiny" title="Close side panel" aria-label="Close side panel">
               <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
@@ -454,7 +451,7 @@
                 <input id="sb-volume" required>
               </label>
               <label>Memory limit per chat
-                <input id="sb-memory" placeholder="default 4g, e.g. 8g, or 0 for no limit">
+                <input id="sb-memory" placeholder="default 4g (e.g. 8g, 0 = none)">
               </label>
               <label>CPU limit per chat
                 <input id="sb-cpus" placeholder="no limit, or e.g. 2">
@@ -471,14 +468,14 @@
             <div class="grow"><h2>Limits</h2><p class="muted">Stop runaway runs and keep the database and disk from growing for ever.</p></div>
           </div>
           <form id="lim-form" autocomplete="off">
-            <div class="grid">
+            <div class="grid limits-grid">
               <label>Longest a run may take (minutes)
                 <input id="lim-run" type="number" min="0" max="10080" placeholder="0 = no limit">
               </label>
               <label>Keep activity lines (days)
                 <input id="lim-logs" type="number" min="0" max="3650" placeholder="0 = keep for ever">
               </label>
-              <label class="lim-ws-label">Remove idle workspaces after (days)
+              <label>Remove idle workspaces after (days)
                 <input id="lim-ws" type="number" min="0" max="3650" placeholder="0 = keep for ever">
               </label>
             </div>

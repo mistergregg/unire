@@ -61,6 +61,7 @@ func (s *Server) invalidateStatus() {
 	s.signins.mu.Lock()
 	s.signins.m = map[string]statusEntry{}
 	s.signins.mu.Unlock()
+	s.models.invalidate()
 }
 
 // agentStatus asks an agent whether it is signed in, using a short-lived
@@ -124,6 +125,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 			defer safe.Recover("agent status", nil)
 			ad, _ := agent.Get(in.ID)
 			st := s.agentStatus(r.Context(), ad)
+			in.Models = s.modelsFor(in)
 			u := s.usageFor(in.ID)
 			v := agentView{Info: in, StatusNote: st.note, Usage: &u}
 			if st.known {

@@ -73,10 +73,13 @@ func (antigravity) Info() Info {
 		ResetArgv:   []string{"sh", "-c", antigravityResetScript},
 		ResetHelp:   "Deletes Antigravity's saved sign-in and settings.",
 		// `agy --print=/usage` is answered by the CLI itself: no model call, no tokens.
-		UsageArgv:  antigravityUsageArgv,
-		ParseUsage: ParseAntigravityUsageOutput,
-		Models:     []string{"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"},
-		Verified:   Verified{Unattended: true}, // signed-in unattended runs seen working (internet mode)
+		UsageArgv:          antigravityUsageArgv,
+		ParseUsage:         ParseAntigravityUsageOutput,
+		Models:             []string{"gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-low", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"},
+		ModelsArgv:         antigravityModelsArgv,
+		ParseModels:        ParseAntigravityModelsOutput,
+		ModelsRequireLogin: true,
+		Verified:           Verified{Unattended: true}, // signed-in unattended runs seen working (internet mode)
 	}
 }
 

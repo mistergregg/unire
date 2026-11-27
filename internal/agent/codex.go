@@ -39,9 +39,11 @@ func (codex) Info() Info {
 		ResetHelp:   "Signs Codex out of the saved login.",
 		// app-server's account/rateLimits/read asks the account, not a model:
 		// it uses none of the limits it reports.
-		UsageArgv:  []string{"sh", "-c", codexUsageScript},
-		ParseUsage: ParseCodexUsageOutput,
-		Models:     []string{"gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"},
+		UsageArgv:   []string{"sh", "-c", codexUsageScript},
+		ParseUsage:  ParseCodexUsageOutput,
+		Models:      []string{"gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra", "gpt-5.6-terra", "gpt-5.6-luna"},
+		ModelsArgv:  []string{"sh", "-c", codexModelsScript},
+		ParseModels: ParseCodexModelsOutput,
 		// The status text was seen when signed out; the signed-in text and a
 		// real unattended run need an account to check.
 		Verified: Verified{},

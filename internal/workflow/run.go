@@ -1235,7 +1235,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	cut := s[:n]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	// The byte cut can split a multi-byte rune. Step back over at most one rune
+	// so the result stays printable; invalid bytes further back are left alone
+	// (git can emit them, and dropping the rest of the message would hide the
+	// reason a push failed).
+	for i := 0; i < utf8.UTFMax && len(cut) > 0; i++ {
+		if r, size := utf8.DecodeLastRuneInString(cut); r != utf8.RuneError || size > 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	return cut + "…"

@@ -19,7 +19,7 @@ esac
 # Agents stop a command that runs for too long, so wait in short rounds.
 wait_for() {
   n=0
-  while [ "$n" -lt 90 ]; do
+  while [ "$n" -lt 180 ]; do
     if [ -f "$dir/ask/$1.a" ]; then cat "$dir/ask/$1.a"; return 0; fi
     sleep 1
     n=$((n + 1))

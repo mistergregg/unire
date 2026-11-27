@@ -58,6 +58,14 @@ func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
 // SteerWith is Steer with images attached: they are copied into the sandbox before
 // the agent reads the message, and the message tells it where they are.
 func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool) (string, error) {
+	// Whether the agent can take a message at all is answered first, so that is
+	// what the owner hears about rather than anything to do with attachments.
+	m.mu.Lock()
+	_, live := m.live[sessionID]
+	m.mu.Unlock()
+	if !live {
+		return "", m.cannotSteer(sessionID)
+	}
 	id := newID()
 	mode := "next"
 	if now {
@@ -69,20 +77,14 @@ func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool
 	}
 	steer := agent.Steer{ID: id, Text: text + attachNote(saved), Now: now, Files: attachFiles(saved)}
 
+	// The send holds m.mu so the channel cannot be dropped and drained by
+	// finishLive in between, which would lose the message without a word.
 	m.mu.Lock()
 	ch, ok := m.live[sessionID]
 	if !ok {
 		m.mu.Unlock()
 		removeSaved(saved)
-		x, found, _ := m.st.Session(sessionID)
-		switch {
-		case !found:
-			return "", errors.New("no such session")
-		case store.Finished(x.Status):
-			return "", errors.New("the agent has finished: send this as a reply")
-		default:
-			return "", errors.New("this agent cannot take messages while it works: it will read your reply when it finishes")
-		}
+		return "", m.cannotSteer(sessionID)
 	}
 	select {
 	case ch <- steer:
@@ -98,6 +100,19 @@ func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool
 	_ = m.st.AddEvent(sessionID, "steer", id+"\n"+mode+"\n"+text)
 	_ = m.st.AddEvent(sessionID, "steerstate", id+"\n"+agent.MsgQueued)
 	return id, nil
+}
+
+// cannotSteer says why a session is not taking messages right now.
+func (m *Manager) cannotSteer(sessionID string) error {
+	x, found, _ := m.st.Session(sessionID)
+	switch {
+	case !found:
+		return errors.New("no such session")
+	case store.Finished(x.Status):
+		return errors.New("the agent has finished: send this as a reply")
+	default:
+		return errors.New("this agent cannot take messages while it works: it will read your reply when it finishes")
+	}
 }
 
 // Promote makes the agent take a message that is still waiting, right away: it

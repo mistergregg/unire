@@ -64,7 +64,7 @@ const codexModelsScript = `d=$(mktemp -d) || exit 1
   printf '%s\n' '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"unire","title":"Unire","version":"1"}}}' '{"method":"initialized"}' '{"method":"model/list","id":2,"params":{}}'
   i=0; while [ ! -e "$d/done" ] && [ $i -lt 100 ]; do sleep 0.2; i=$((i+1)); done
 } | timeout 25 codex app-server 2>/dev/null | while IFS= read -r l; do
-  case "$l" in '{"id":2,'*|*',"id":2,'*|*',"id":2}'*|*'{"id": 2,'*|*'"id": 2,'*|*'"id": 2}'*) printf '%s\n' "$l"; touch "$d/done";; esac
+  case "$l" in '{"id":2,'*|'{"id": 2,'*|*',"id":2}'*|*',"id": 2}'*) printf '%s\n' "$l"; touch "$d/done";; esac
 done
 rm -rf "$d"`
 

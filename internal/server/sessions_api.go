@@ -418,13 +418,18 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 	}
 	byID := make(map[string]store.Session, len(recent))
 	childOf := make(map[string]store.Session, len(recent))
+	ids := make([]string, 0, len(recent))
 	for _, x := range recent {
 		byID[x.ID] = x
+		ids = append(ids, x.ID)
 		if x.ParentID != "" {
+			// Sessions come back newest first and a reply is newer than its
+			// parent, so the last write wins and holds the oldest child: the
+			// same turn store.ChildOf would pick.
 			childOf[x.ParentID] = x
 		}
 	}
-	lastOwners, err := s.store.LastOwnerEvents()
+	lastOwners, err := s.store.LastOwnerEvents(ids)
 	if err != nil {
 		lastOwners = nil
 	}
@@ -494,7 +499,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Task     string          `json:"task"`
 		Agent    string          `json:"agent"`
-		Model    *string         `json:"model"`
+		Model    *string         `json:"model"` // omitted or empty: the agent's saved default, else the CLI's own
 		Prompt   string          `json:"prompt"`
 		Network  string          `json:"network"` // empty means the saved default
 		Memory   *bool           `json:"memory"`  // omitted means on
@@ -538,8 +543,10 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Model == nil {
-		chosenModel = s.agentDefaultModel(req.Agent)
+	// No model named for this session: use the one saved for the agent, which is
+	// empty until the Agents page sets one, leaving the CLI's own default.
+	if chosenModel == "" {
+		chosenModel = s.agentDefaultModel(ad.Info().ID)
 	}
 	// Fail fast, with a way forward, when the agent is known not to be signed in.
 	// Only for agents whose sign-in check has been verified: a guess must never

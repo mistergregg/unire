@@ -88,7 +88,8 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
 // A nil model means none was given: the same agent keeps the model of the turn before,
-// and another agent starts from its own default. An empty one asks for the default.
+// and another agent starts from the model saved for it on the Agents page. An empty
+// one asks for that saved model, or the CLI's own default when none is saved.
 func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, model *string, images []sessions.Attachment) (store.Session, error) {
 	prompt = strings.TrimSpace(prompt)
 	var chosen string
@@ -114,12 +115,11 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	if agentID == "" {
 		agentID = x.Agent
 	}
-	if model == nil {
-		if agentID == x.Agent {
-			chosen = x.Model
-		} else {
-			chosen = s.agentDefaultModel(agentID)
-		}
+	if model == nil && agentID == x.Agent {
+		chosen = x.Model // the same agent carries on with the model it used
+	}
+	if chosen == "" {
+		chosen = s.agentDefaultModel(agentID)
 	}
 	ad, err := agent.Get(agentID)
 	if err != nil {
@@ -204,7 +204,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string    `json:"prompt"`
 		Agent  string    `json:"agent"`  // empty: the same agent
-		Model  *string   `json:"model"`  // omitted: the same agent keeps its last model; empty: the agent's default
+		Model  *string   `json:"model"`  // omitted: the same agent keeps its last model; empty: the agent's saved default
 		Images []imageIn `json:"images"` // attached to the message
 	}
 	if !readMessage(w, r, &req) {
@@ -237,6 +237,11 @@ const (
 	olderRequest     = 800
 	olderAnswer      = 1200
 	olderBudget      = 16000
+	// Mid-turn guidance and clarifications go after the answer, so they are
+	// kept short: enough to carry what was asked for, not enough to crowd out
+	// the answer itself.
+	digestGuidanceChars = 400
+	digestGuidanceLines = 6
 )
 
 func clip(s string, n int) string {
@@ -342,29 +347,40 @@ func (s *Server) turnDigestText(id string) string {
 			outLines = append(outLines, e.Text)
 		case "steer":
 			if t := strings.TrimSpace(e.Text); t != "" {
-				steerLines = append(steerLines, clip(t, 400))
+				steerLines = append(steerLines, clip(t, digestGuidanceChars))
 			}
 		case "ask":
 			if t := strings.TrimSpace(e.Text); t != "" {
-				qaLines = append(qaLines, "Asked: "+clip(t, 400))
+				qaLines = append(qaLines, "Asked: "+clip(t, digestGuidanceChars))
 			}
 		case "answer":
 			if t := strings.TrimSpace(e.Text); t != "" {
-				qaLines = append(qaLines, "Answered: "+clip(t, 400))
+				qaLines = append(qaLines, "Answered: "+clip(t, digestGuidanceChars))
 			}
 		}
 	}
+	// The answer comes first: callers clip this text to a budget that keeps the
+	// start, so a turn with many steers must not push the answer out of it.
 	var parts []string
-	if len(steerLines) > 0 {
-		parts = append(parts, "Mid-turn owner guidance:\n- "+strings.Join(steerLines, "\n- "))
-	}
-	if len(qaLines) > 0 {
-		parts = append(parts, "Clarifications:\n"+strings.Join(qaLines, "\n"))
-	}
 	if len(outLines) > 0 {
 		parts = append(parts, strings.Join(outLines, "\n"))
 	}
+	if lines := lastFew(steerLines, digestGuidanceLines); len(lines) > 0 {
+		parts = append(parts, "Mid-turn owner guidance:\n- "+strings.Join(lines, "\n- "))
+	}
+	if lines := lastFew(qaLines, digestGuidanceLines); len(lines) > 0 {
+		parts = append(parts, "Clarifications:\n"+strings.Join(lines, "\n"))
+	}
 	return strings.Join(parts, "\n\n")
+}
+
+// lastFew keeps the most recent n entries, saying how many were left out.
+func lastFew(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	kept := append([]string{fmt.Sprintf("(%d earlier ones are left out.)", len(lines)-n)}, lines[len(lines)-n:]...)
+	return kept
 }
 
 // answerQuestion gives the owner's answer to a question the agent is waiting on.

@@ -1509,3 +1509,21 @@ func TestRefreshBriefsAndLiveFollowUp(t *testing.T) {
 		t.Errorf("expected follow-up prompt written to live driver stdin, got %q", stdinSeen)
 	}
 }
+
+func TestTruncateKeepsTextAroundInvalidBytes(t *testing.T) {
+	// git can put raw bytes in its error output; the reason a push failed must
+	// survive truncation either way.
+	raw := "remote: rejected \xff\xfe because the branch moved on; fetch and merge first"
+	got := truncate(raw, 40)
+	if want := raw[:40] + "…"; got != want {
+		t.Errorf("truncate(invalid bytes) = %q; want %q", got, want)
+	}
+	// A cut in the middle of a multi-byte rune steps back to its start.
+	s := strings.Repeat("a", 39) + "é" + "tail"
+	if got := truncate(s, 40); got != strings.Repeat("a", 39)+"…" {
+		t.Errorf("truncate(split rune) = %q; want the split rune dropped", got)
+	}
+	if got := truncate("short", 40); got != "short" {
+		t.Errorf("truncate(short) = %q; want it unchanged", got)
+	}
+}

@@ -280,9 +280,41 @@ func TestModelsRefreshEndpointErrorNoteDefaultModelAndCrossSiteCheck(t *testing.
 		t.Errorf("agent switch reply model = %v; want gpt-6-luna", s2["model"])
 	}
 
-	// Explicit empty model overrides the saved default on start.
+	// An empty model means the saved default too: that is what the picker's
+	// "Default model" option sends, and it is the only way the UI asks for it.
 	_, s3 := e.launch(base, map[string]any{"agent": "claude", "model": ""})
-	if got, _ := s3["model"].(string); got != "" {
-		t.Errorf("explicit empty model = %q; want empty", got)
+	if got, _ := s3["model"].(string); got != "opus" {
+		t.Errorf("empty model with a saved default = %q; want opus", got)
+	}
+	// A model named for the session still wins over the saved default.
+	_, s4 := e.launch(base, map[string]any{"agent": "claude", "model": "sonnet"})
+	if got, _ := s4["model"].(string); got != "sonnet" {
+		t.Errorf("named model = %q; want sonnet", got)
+	}
+	// With no default saved for the agent, nothing is forced on the CLI.
+	if code, _ := e.do("PUT", "/api/agents/claude/model", map[string]any{"model": ""}); code != http.StatusOK {
+		t.Fatalf("clearing claude model = %d", code)
+	}
+	_, s5 := e.launch(base, map[string]any{"agent": "claude", "model": ""})
+	if got, _ := s5["model"].(string); got != "" {
+		t.Errorf("empty model with no saved default = %q; want empty", got)
+	}
+	// GET /api/agents reports the saved default so the pickers can show it.
+	code, aBody := e.do("GET", "/api/agents", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/agents = %d", code)
+	}
+	var agents []struct {
+		ID           string `json:"id"`
+		DefaultModel string `json:"defaultModel"`
+	}
+	_ = json.Unmarshal([]byte(aBody), &agents)
+	for _, a := range agents {
+		if a.ID == "codex" && a.DefaultModel != "gpt-6-luna" {
+			t.Errorf("codex defaultModel = %q; want gpt-6-luna", a.DefaultModel)
+		}
+		if a.ID == "claude" && a.DefaultModel != "" {
+			t.Errorf("claude defaultModel = %q; want empty after clearing", a.DefaultModel)
+		}
 	}
 }

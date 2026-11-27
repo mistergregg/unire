@@ -482,23 +482,44 @@ func (s *Store) LastOwnerEvent(id string) (time.Time, error) {
 	return time.Unix(ts, 0), nil
 }
 
-// LastOwnerEvents returns the latest steer/answer timestamp per session in one query.
-func (s *Store) LastOwnerEvents() (map[string]time.Time, error) {
-	rows, err := s.db.Query(`SELECT session_id, MAX(ts) FROM session_events WHERE kind IN ('steer', 'answer') GROUP BY session_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// LastOwnerEvents returns the latest steer/answer timestamp for each of ids,
+// in as few queries as possible. Sessions without one are left out of the map.
+// ids keeps the scan on the (session_id, id) index instead of the whole table.
+func (s *Store) LastOwnerEvents(ids []string) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
-	for rows.Next() {
-		var id string
-		var ts int64
-		if err := rows.Scan(&id, &ts); err != nil {
+	const chunk = 400 // well under SQLite's bound-parameter limit
+	for len(ids) > 0 {
+		n := min(chunk, len(ids))
+		batch, rest := ids[:n], ids[n:]
+		ids = rest
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i], args[i] = "?", id
+		}
+		q := `SELECT session_id, MAX(ts) FROM session_events
+			WHERE session_id IN (` + strings.Join(placeholders, ",") + `) AND kind IN ('steer', 'answer')
+			GROUP BY session_id`
+		if err := func() error {
+			rows, err := s.db.Query(q, args...)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				var ts int64
+				if err := rows.Scan(&id, &ts); err != nil {
+					return err
+				}
+				if ts > 0 {
+					out[id] = time.Unix(ts, 0)
+				}
+			}
+			return rows.Err()
+		}(); err != nil {
 			return nil, err
 		}
-		if ts > 0 {
-			out[id] = time.Unix(ts, 0)
-		}
 	}
-	return out, rows.Err()
+	return out, nil
 }

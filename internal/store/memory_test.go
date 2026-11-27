@@ -144,7 +144,7 @@ func TestEventsByKindPushEventsAndLastOwnerEventsAfterHeavyLogging(t *testing.T)
 	if len(pushes) != 1 || !strings.Contains(pushes[0].Text, ": pushed ") {
 		t.Errorf("PushEvents = %+v", pushes)
 	}
-	owners, err := s.LastOwnerEvents()
+	owners, err := s.LastOwnerEvents([]string{"s1", "s2"})
 	if err != nil {
 		t.Fatal(err)
 	}

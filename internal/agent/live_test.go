@@ -597,16 +597,45 @@ func TestCodexLiveFatalErrorFailsPendingSteersAndMarksDone(t *testing.T) {
 	}
 }
 
+// The shapes here are what `claude -p --output-format stream-json` really
+// prints: the session id appears first on the system/init event, and a failed
+// turn sets is_error while subtype stays "success" and the message stays in
+// result, so the answer must be kept and the failure noted beside it.
 func TestClaudeParseEventCapturesConversationAndError(t *testing.T) {
 	a, err := Get("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev := a.(Streamer).ParseEvent(`{"type":"result","session_id":"c-99","is_error":true,"errors":["quota exceeded"]}`)
+	st := a.(Streamer)
+
+	if ev := st.ParseEvent(`{"type":"system","subtype":"init","session_id":"c-99"}`); ev.Conversation != "c-99" {
+		t.Errorf("init Conversation = %q; want c-99", ev.Conversation)
+	}
+
+	ev := st.ParseEvent(`{"type":"result","subtype":"success","is_error":true,"session_id":"c-99",` +
+		`"result":"There's an issue with the selected model (nope).","terminal_reason":"api_error","api_error_type":"unrecognized_model"}`)
 	if ev.Conversation != "c-99" {
 		t.Errorf("Conversation = %q; want c-99", ev.Conversation)
 	}
-	if !strings.Contains(ev.Progress, "quota exceeded") {
-		t.Errorf("Progress = %q; want quota exceeded", ev.Progress)
+	if ev.Answer != "There's an issue with the selected model (nope)." {
+		t.Errorf("Answer = %q; want the result text kept", ev.Answer)
+	}
+	if !strings.Contains(ev.Progress, "unrecognized_model") {
+		t.Errorf("Progress = %q; want the error type", ev.Progress)
+	}
+
+	// A plain failure with nothing but is_error still says something went wrong.
+	ev = st.ParseEvent(`{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"c-1"}`)
+	if !strings.Contains(ev.Progress, "agent error") {
+		t.Errorf("Progress = %q; want an agent error note", ev.Progress)
+	}
+
+	// A good turn is not marked as an error.
+	ev = st.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"session_id":"c-2","result":"ok","terminal_reason":"completed"}`)
+	if ev.Progress != "" {
+		t.Errorf("Progress on success = %q; want empty", ev.Progress)
+	}
+	if ev.Answer != "ok" {
+		t.Errorf("Answer = %q; want ok", ev.Answer)
 	}
 }

@@ -71,8 +71,10 @@ func (s *Server) modelsMetaFor(info agent.Info) ([]string, int64, string) {
 	return models, updatedAt, note
 }
 
-// refreshModelsEndpoint invalidates cached probe throttling and triggers a
-// fresh model discovery pass before returning the updated agent list.
+// refreshModelsEndpoint drops the probe throttling and starts a fresh model
+// discovery pass. Probing an agent takes up to modelsProbeTimeout, so the agent
+// list in the response is still the cached one: the caller sees the new models,
+// and any probe error in modelsNote, on a later GET /api/agents.
 func (s *Server) refreshModelsEndpoint(w http.ResponseWriter, r *http.Request) {
 	s.models.invalidate()
 	s.refreshAllModels(true)

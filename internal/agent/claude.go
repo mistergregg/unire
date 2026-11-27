@@ -120,18 +120,22 @@ func (claude) ParseEvent(line string) Event {
 	case "result":
 		ans, _ := m["result"].(string)
 		ev := Event{Known: true, Answer: ans, Conversation: sessID}
-		if isErr, _ := m["is_error"].(bool); isErr && ans == "" {
-			if msg := firstString(m, "error"); msg != "" {
-				ev.Progress = "agent error: " + clip(msg, 300)
-			} else if errs, _ := m["errors"].([]any); len(errs) > 0 {
-				if first, ok := errs[0].(string); ok && strings.TrimSpace(first) != "" {
-					ev.Progress = "agent error: " + clip(first, 300)
+		// A failed turn is reported with is_error, while subtype stays "success"
+		// and the message is in result. The answer is kept (it is what the agent
+		// has to say) and the failure is noted in the log.
+		if isErr, _ := m["is_error"].(bool); isErr {
+			detail := firstString(m, "error", "api_error_type", "api_error_status")
+			if detail == "" {
+				if reason := firstString(m, "terminal_reason"); reason != "" && reason != "completed" {
+					detail = reason
 				}
 			}
-			if ev.Progress == "" {
-				if sub, _ := m["subtype"].(string); sub != "" {
-					ev.Progress = "agent error: " + sub
-				}
+			if detail == "" {
+				detail = firstString(m, "result", "subtype")
+			}
+			ev.Progress = "agent error"
+			if detail != "" {
+				ev.Progress += ": " + clip(detail, 300)
 			}
 		}
 		return ev
@@ -165,7 +169,10 @@ func (claude) ParseEvent(line string) Event {
 		}
 		return ev
 	case "system", "user":
-		return Event{Known: true} // setup and tool results: nothing to show
+		// Setup and tool results: nothing to show, but the init event is the
+		// first place the session id appears, so a resume works even if the
+		// turn never reaches its result event.
+		return Event{Known: true, Conversation: sessID}
 	case "rate_limit_event":
 		ev := Event{Known: true, Progress: claudeUsage(m)}
 		if u := ParseClaudeUsage(m); u != nil {

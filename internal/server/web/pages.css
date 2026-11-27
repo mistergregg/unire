@@ -40,6 +40,14 @@ h2 { letter-spacing: -.01em; font-weight: 650; }
 .tile.click:hover { transform: none; border-color: var(--muted); }
 .tile .item-actions input { flex: 1; min-width: 120px; width: auto; }
 
+/* the model an agent falls back to, and how its model list is doing */
+.model-row { display: flex; align-items: center; gap: 8px; }
+.model-row > .label { flex: none; font-size: 12px; color: var(--muted); }
+.model-row select, .model-row input { flex: 1; min-width: 0; width: auto; margin: 0; }
+.model-row button { flex: none; }
+.models-note { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.models-note .badge { white-space: normal; text-align: left; }
+
 /* an agent's avatar, with a light for its sign-in state */
 .avatar.lg { width: 36px; height: 36px; border-radius: 6px; font-size: 15px; }
 .avatar-wrap { position: relative; flex: none; }

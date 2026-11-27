@@ -42,6 +42,8 @@ type fakeBox struct {
 	claudeAsked    int
 	agyUsageOut    string // what `agy --print=/usage` prints (RunOnline)
 	agyAsked       int
+	modelsOut      map[string]string // answers to model discovery commands (RunOnline)
+	modelsAsked    map[string]int
 }
 
 type fakeRunner struct{ box *fakeBox }

@@ -64,6 +64,28 @@ func (s *Server) usageFor(agentID string) agent.AgentUsage {
 	return u
 }
 
+// canProbeOnline reports whether Unire can run a short online probe for agentID
+// right now (the runner supports RunOnline, no chat is using the agent, and if
+// requireLogin is true the agent is not known to be signed out).
+func (s *Server) canProbeOnline(agentID string, requireLogin bool) (runner.OnlineShot, bool) {
+	shot, ok := s.runnerFactory(s.sandbox()).(runner.OnlineShot)
+	if !ok {
+		return nil, false
+	}
+	if s.sessions != nil && s.sessions.AgentBusy(agentID) {
+		return nil, false
+	}
+	if requireLogin {
+		s.signins.mu.Lock()
+		st, seen := s.signins.m[agentID]
+		s.signins.mu.Unlock()
+		if seen && st.known && !st.loggedIn {
+			return nil, false
+		}
+	}
+	return shot, true
+}
+
 // refreshUsage starts a background try to read the agent's usage, unless the
 // agent cannot be asked outside a chat, it is signed out, a chat with it is
 // queued or running (they share the login and could both refresh it at once),
@@ -72,17 +94,8 @@ func (s *Server) refreshUsage(info agent.Info, now time.Time) {
 	if len(info.UsageArgv) == 0 || info.ParseUsage == nil {
 		return
 	}
-	shot, ok := s.runnerFactory(s.sandbox()).(runner.OnlineShot)
+	shot, ok := s.canProbeOnline(info.ID, true)
 	if !ok {
-		return
-	}
-	if s.sessions != nil && s.sessions.AgentBusy(info.ID) {
-		return
-	}
-	s.signins.mu.Lock()
-	st, seen := s.signins.m[info.ID]
-	s.signins.mu.Unlock()
-	if seen && st.known && !st.loggedIn {
 		return
 	}
 

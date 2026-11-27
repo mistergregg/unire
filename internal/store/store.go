@@ -150,6 +150,12 @@ var migrations = []string{
 		windows    TEXT NOT NULL DEFAULT '[]',
 		updated_at INTEGER NOT NULL
 	);`,
+	// 15: latest model lists discovered from each agent CLI
+	`CREATE TABLE agent_models (
+		agent_id   TEXT PRIMARY KEY,
+		models     TEXT NOT NULL DEFAULT '[]',
+		updated_at INTEGER NOT NULL
+	);`,
 }
 
 // DBFileName is the database file inside the data directory.

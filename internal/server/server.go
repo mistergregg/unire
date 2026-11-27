@@ -77,6 +77,7 @@ type Server struct {
 	failures map[string]failure
 	now      func() time.Time
 	usage    usageProbes
+	models   modelsProbes
 }
 
 type failure struct {
@@ -100,8 +101,17 @@ func New(dataDir string) (*Server, error) {
 	s, err := NewWithEgress(dataDir, dockerRunner, proxy, egress.Setup(context.Background(), proxy))
 	if err == nil {
 		// Fetch a newer sandbox image now, so the first session or sign-in after
-		// an update does not wait for the download.
-		go runner.Refresh(context.Background(), s.sandbox().Image) // its own goroutine, so it may wait for the download
+		// an update does not wait for the download, then refresh model lists
+		// from the current CLIs.
+		safe.Go("image and models refresh", func() {
+			runner.Refresh(context.Background(), s.sandbox().Image)
+			select {
+			case <-s.stopCleanup:
+				return
+			default:
+			}
+			s.refreshAllModels(true)
+		})
 	}
 	return s, err
 }
@@ -125,7 +135,8 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 	}
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now,
-		usage: usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}}}
+		usage:  usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}},
+		models: modelsProbes{last: map[string]time.Time{}, busy: map[string]bool{}, dirty: map[string]bool{}}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.previews = newPreviewService()
 	s.stopCleanup = make(chan struct{})
@@ -146,6 +157,7 @@ func (s *Server) Close() error {
 	s.sessions.Shutdown()
 	s.previews.shutdown()
 	s.usage.wg.Wait()
+	s.models.wg.Wait()
 	return s.store.Close()
 }
 

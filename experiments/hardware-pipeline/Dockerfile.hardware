@@ -6,7 +6,7 @@
 #
 #   Target 'variant-b' (Setup B: Small additions):
 #     - Base unire-sandbox
-#     - Python hardware CAD/mesh environment (build123d, trimesh, numpy, matplotlib)
+#     - Python hardware CAD/mesh environment (build123d, trimesh, numpy, pillow)
 #     - OpenSCAD (parametric CSG CAD)
 #     - CuraEngine (headless CLI 3D printing slicer & G-code generator)
 #     - ADMesh (CLI STL mesh validation and manifold repair)
@@ -45,7 +45,7 @@
 #   Total ADMesh:     ~58 KB download / ~152 KB installed
 #
 # Python pip packages (/opt/hardware venv):
-#   build123d (0.13.0), cadquery-ocp-novtk (8.0.1), trimesh (5.2.1), numpy (2.4.6), matplotlib (3.11.2):
+#   build123d (0.13.0), cadquery-ocp-novtk (8.0.1), trimesh (5.2.1), numpy (2.4.6), pillow:
 #   Download-Size:    ~148 MB wheels
 #   Installed-Size:   1,045,432,233 B (~997 MiB), measured in /tmp/hw on Debian 12
 #
@@ -98,10 +98,11 @@ RUN python3 -m venv /opt/hardware && \
       build123d==0.13.0 \
       trimesh==5.2.1 \
       numpy==2.4.6 \
-      matplotlib==3.11.2
+      pillow
 
 # Copy hardware CLI commands
 COPY experiments/hardware-pipeline/gen_enclosure.py /opt/unire-hardware/gen_enclosure.py
+COPY experiments/hardware-pipeline/gen_drone.py /opt/unire-hardware/gen_drone.py
 COPY experiments/hardware-pipeline/render_mesh.py /opt/unire-hardware/render_mesh.py
 COPY experiments/hardware-pipeline/mesh_tools.py /opt/unire-hardware/mesh_tools.py
 COPY experiments/hardware-pipeline/bin/unire-3d /usr/local/bin/unire-3d

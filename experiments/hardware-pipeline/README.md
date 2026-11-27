@@ -21,9 +21,11 @@ unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gco
 
 The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`profiles/NOTICE.md`](profiles/NOTICE.md). The PETG profile is project-authored.
 
-## Other 3D scenarios
+## Other 3D & hardware scenarios (drones, gadgets, CNC plates)
 
-`unire-3d` (`mesh_tools.py`) adds `info`, `views`, `fix`, `scale`, `convert` and image-to-relief/lithophane for any model. [`SCENARIOS.md`](SCENARIOS.md) says which route fits each kind of request and what is not supported.
+- `unire-3d` (`mesh_tools.py`) adds `info`, `views`, `fix`, `scale`, `convert`, `dxf` (2D profile extraction for CNC/laser plates), `assemble` (multi-part interference/collision check + color-coded 4-view render), and `relief` (image-to-relief/lithophane). [`SCENARIOS.md`](SCENARIOS.md) maps each kind of request to the right tool and states its limits.
+- `gen_drone.py` demonstrates a multi-part 2.5-inch micro-quadcopter (`examples/micro-quad/`): unibody X-frame plate exported to STL, STEP, and CNC-ready DXF, 20×20mm FC stack mockup, TPU canopy, prop-clearance math, and zero-collision assembly check.
+- `unire-slice --material pla|petg|tpu` selects bundled generic PLA, PETG, or flexible 95A TPU profiles (`profiles/`).
 
 ## What works
 

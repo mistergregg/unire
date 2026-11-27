@@ -62,11 +62,18 @@ jobs:
             test -s /tmp/test_shot.png
             unire-slice /tmp/esp32/base.stl /tmp/esp32.gcode
             test -s /tmp/esp32.gcode
-            unire-3d info /tmp/esp32/base.stl
+            unire-slice --material pla /tmp/esp32/base.stl /tmp/esp32_pla.gcode
+            test -s /tmp/esp32_pla.gcode
+            unire-slice --material tpu /tmp/esp32/lid.stl /tmp/esp32_tpu.gcode
+            test -s /tmp/esp32_tpu.gcode
+            unire-3d info --material petg /tmp/esp32/base.stl
             unire-3d views /tmp/esp32/base.stl /tmp/views.png && test -s /tmp/views.png
-            python3 -c "from PIL import Image; Image.radial_gradient('L').save('/tmp/pic.png')"
+            python3 -c "import sys; from PIL import Image; Image.radial_gradient(sys.argv[1]).save(sys.argv[2])" L /tmp/pic.png
             unire-3d relief /tmp/pic.png /tmp/lith.stl --mode lithophane --res 60
             unire-3d info /tmp/lith.stl
+            python3 /opt/unire-hardware/gen_drone.py experiments/hardware-pipeline/examples/micro-quad/drone.json /tmp/quad
+            unire-3d assemble /tmp/quad/assembly.json /tmp/quad_assembly.png && test -s /tmp/quad_assembly.png
+            unire-3d dxf /tmp/quad/frame_plate.step /tmp/quad_frame.dxf && test -s /tmp/quad_frame.dxf
           '
 
       # ------------------------------------------------------------------------
@@ -100,8 +107,16 @@ jobs:
               exit 1
             fi
 
-            echo "=== Running PCB Design Rule Check ==="
+            echo "=== Running PCB Design Rule Check & Exports ==="
             unire-kicad-check experiments/hardware-pipeline/examples/sample.kicad_pcb
+            mkdir -p /tmp/kicad_out
+            kicad-cli pcb export gerbers -o /tmp/kicad_out/gerbers experiments/hardware-pipeline/examples/sample.kicad_pcb
+            ls -la /tmp/kicad_out/gerbers
+            kicad-cli pcb export step -o /tmp/kicad_out/sample.step experiments/hardware-pipeline/examples/sample.kicad_pcb
+            test -s /tmp/kicad_out/sample.step
+
+            echo "=== Testing Headless FreeCAD STEP & Path CAM ==="
+            freecadcmd -c "import FreeCAD, Part, Path; s = Part.read('/tmp/kicad_out/sample.step'); print('FreeCAD STEP solids:', len(s.Solids), 'Path module:', hasattr(Path, 'Command'))"
           '
 
       - name: Publish Build & Size Summary

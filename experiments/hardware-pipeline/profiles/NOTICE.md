@@ -22,4 +22,4 @@ The JSON files themselves have no separate license or copyright header. The LGPL
 
 Retrieved from the Cura `4.13.0` tag on 2026-11-21. Each file was downloaded again from its source URL and compared byte-for-byte with the repository copy (`cmp`); the SHA-256 values above match both downloaded and committed files. The files are unmodified.
 
-`petg_0.2mm.json` is an original profile written for this prototype; it is not copied from Cura.
+`petg_0.2mm.json`, `pla_0.2mm.json`, and `tpu_0.2mm.json` are original profiles written for this prototype; they are not copied from Cura.

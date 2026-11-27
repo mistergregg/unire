@@ -6,10 +6,11 @@ The goal is to decide what can be added to Unire's Debian sandbox for agent-driv
 
 | Capability | Python-only stack | Add CuraEngine / OpenSCAD / ADMesh | Add KiCad / FreeCAD |
 | --- | --- | --- | --- |
-| Parametric enclosure STL and STEP | Demonstrated with build123d | Same | Same |
-| Headless PNG previews | Demonstrated with trimesh and a Pillow z-buffer software rasterizer | Same | Not separately tested |
+| Parametric enclosure & drone CAD (STL, STEP, DXF) | Demonstrated with `build123d` (`gen_enclosure.py`, `gen_drone.py`, `unire-3d dxf`) | Same | Same |
+| Multi-part assembly collision check & 4-view sheet | Demonstrated with `unire-3d assemble` (pure-numpy ray-parity check) | Same | Same |
+| Headless PNG previews | Demonstrated with `trimesh` and a Pillow z-buffer software rasterizer | Same | Not separately tested |
 | Watertightness and design checks | Demonstrated by prototype checker | Same | Same |
-| Slicer G-code, layer count, time and material volume | No slicer | CuraEngine 4.13.0 run on ESP32 base; output: 66 layers, 3,255 s, 7,724 mm³ filament | Not separately tested |
+| Slicer G-code, layer count, time and material volume | No slicer | CuraEngine 4.13.0 run on ESP32 base (`petg`/`pla`/`tpu` profiles); output: 66 layers, 3,255 s, 7,724 mm³ filament | Not separately tested |
 | OpenSCAD CSG and STL export | No | Extracted AppImage previously exported STL; offscreen PNG failed without X | Not separately tested |
 | PCB DRC / Gerber / PCB STEP | No | No | **Not demonstrated in this sandbox** |
 | FreeCAD CAM | No | No | **Not demonstrated in this sandbox** |
@@ -43,4 +44,6 @@ The extracted CuraEngine executable and four Debian runtime libraries ran withou
 
 ## Recommendation
 
-Add CuraEngine and the tested `unire-slice` wrapper/profile to a small hardware tool image; its extracted runtime is about 8.3 MB installed by package metadata and it completed a real slice. OpenSCAD can add command-line CSG/STL export, while preview PNGs should use the tested Pillow z-buffer renderer. Keep the roughly 997 MiB Python environment in a persistent `/home/node` cache for general sessions, with an opt-in baked image for workflows that require immediate offline availability. Do not advertise KiCad or FreeCAD as verified until they have been run in the target image and their commands have passed real fixture checks.
+Add CuraEngine and the tested `unire-slice` wrapper/profiles (`petg`, `pla`, `tpu`) to a small hardware tool image (Variant B, measured **6.13 GB** total image in CI); its extracted runtime is about 8.3 MB installed by package metadata and it completed a real slice. OpenSCAD can add command-line CSG/STL export, while preview PNGs should use the tested Pillow z-buffer renderer. Keep the roughly 997 MiB Python environment in a persistent `/home/node` cache for general sessions, with an opt-in baked image for workflows that require immediate offline availability.
+
+To **"do it all"** (custom flight-controller/gadget PCBs via `kicad-cli` DRC/Gerber/STEP + CNC milling CAM toolpaths via `FreeCAD` alongside 3D printing and multi-part assemblies), use **Variant C** as a dedicated hardware image once its CI build and tool checks pass. Do not advertise KiCad or FreeCAD as verified until they have been run in the target image and their commands have passed real fixture checks.

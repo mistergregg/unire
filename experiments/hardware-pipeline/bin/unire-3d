@@ -1,7 +1,8 @@
 #!/bin/sh
-# unire-3d: general 3D print helpers (info, views, fix, scale, relief, convert).
+# unire-3d: general 3D print & multi-part hardware helpers.
 #   unire-3d info model.stl | views model.stl out.png | fix in.stl out.stl
 #   unire-3d scale in.stl out.stl --max-dim 80 | relief photo.png out.stl --mode lithophane
+#   unire-3d convert in.step out.stl | dxf plate.step out.dxf | assemble assembly.json out.png
 set -eu
 if [ -x "/tmp/hw/bin/python3" ]; then PYTHON="/tmp/hw/bin/python3"
 elif [ -x "/opt/hardware/bin/python3" ]; then PYTHON="/opt/hardware/bin/python3"

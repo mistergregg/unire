@@ -43,34 +43,19 @@ const lastTouched = (s) => s.lastActive || s.startedAt || s.createdAt;
 
 
 let sideSignature = "";
-let sideFilter = "all"; // "all" or "prs"
+let sideFilter = "all"; // "all", "active", or "prs"
 
 function initSideFilters() {
-  const btnAll = $("side-filter-all");
-  const btnPRs = $("side-filter-prs");
-  if (btnAll) {
-    btnAll.addEventListener("click", () => {
-      if (sideFilter === "all") return;
-      sideFilter = "all";
-      btnAll.classList.add("active");
-      btnAll.setAttribute("aria-selected", "true");
-      if (btnPRs) {
-        btnPRs.classList.remove("active");
-        btnPRs.setAttribute("aria-selected", "false");
-      }
-      sideSignature = "";
-      renderSidebar(sideList);
-    });
-  }
-  if (btnPRs) {
-    btnPRs.addEventListener("click", () => {
-      if (sideFilter === "prs") return;
-      sideFilter = "prs";
-      btnPRs.classList.add("active");
-      btnPRs.setAttribute("aria-selected", "true");
-      if (btnAll) {
-        btnAll.classList.remove("active");
-        btnAll.setAttribute("aria-selected", "false");
+  const btns = { all: $("side-filter-all"), active: $("side-filter-active"), prs: $("side-filter-prs") };
+  for (const [mode, btn] of Object.entries(btns)) {
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      if (sideFilter === mode) return;
+      sideFilter = mode;
+      for (const [m, b] of Object.entries(btns)) {
+        if (!b) continue;
+        b.classList.toggle("active", m === mode);
+        b.setAttribute("aria-selected", String(m === mode));
       }
       sideSignature = "";
       renderSidebar(sideList);
@@ -81,6 +66,10 @@ initSideFilters();
 
 const isOpenPR = (p) => (p.state || "open") === "open";
 const hasOpenPR = (s) => (s.pulls || []).some(isOpenPR);
+const isActiveSession = (s) => {
+  const st = s.latestStatus || s.status;
+  return Boolean(s.waiting || st === "running" || st === "queued");
+};
 
 function renderSidebar(list) {
   sideList = list;
@@ -92,10 +81,24 @@ function renderSidebar(list) {
     filterBadge.textContent = openPRsTotal;
     filterBadge.hidden = openPRsTotal === 0;
   }
+  const navPrsBadge = $("nav-prs-count");
+  if (navPrsBadge) {
+    navPrsBadge.textContent = openPRsTotal;
+    navPrsBadge.hidden = openPRsTotal === 0;
+  }
+
+  const activeTotal = list.filter(isActiveSession).length;
+  const activeBadge = $("side-filter-active-count");
+  if (activeBadge) {
+    activeBadge.textContent = activeTotal;
+    activeBadge.hidden = activeTotal === 0;
+  }
 
   let filtered = list;
   if (sideFilter === "prs") {
     filtered = list.filter((s) => (s.pulls || []).length > 0); // every pull request, merged and closed too
+  } else if (sideFilter === "active") {
+    filtered = list.filter(isActiveSession);
   }
 
   const shown = !q ? filtered : filtered.filter((s) =>
@@ -109,8 +112,12 @@ function renderSidebar(list) {
     sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive, (s.pulls || []).map((p) => p.number + ":" + p.state).join("-")].join(":")).join(",");
   if (sig === sideSignature) return;
   sideSignature = sig;
+  const emptyText = q ? "No chats match."
+    : sideFilter === "prs" ? "No chats with pull requests."
+    : sideFilter === "active" ? "No active or waiting chats."
+    : "No chats yet. Add a git server, then press New chat.";
   $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
-    : [el("p", { class: "muted" }, q ? "No chats match." : (sideFilter === "prs" ? "No chats with pull requests." : "No chats yet. Add a git server, then press New chat."))]));
+    : [el("p", { class: "muted" }, emptyText)]));
 }
 $("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
 
@@ -222,7 +229,14 @@ async function openNew(prefill) {
     $("n-task").value = prefill.task;
     selected = prefill.repos;
     if (prefill.note) { $("n-note").textContent = prefill.note; $("n-note").hidden = false; }
+  } else {
+    try {
+      const draft = localStorage.getItem("unire_draft_new");
+      if (draft) $("n-prompt").value = draft;
+    } catch (_) {}
   }
+  autoGrowPrompt();
+  updateNewPromptCount();
   renderSelected();
   $("n-suggest").hidden = true;
 }
@@ -338,8 +352,29 @@ $("new-form").addEventListener("submit", (e) => {
       forkFrom, parent: $("n-parent").value, images: newAttach.list(),
     });
     newAttach.clear();
+    try { localStorage.removeItem("unire_draft_new"); } catch (_) {}
     await openSession(s.id);
   });
+});
+
+const NEW_PROMPT_MAX = 20000;
+function updateNewPromptCount() {
+  const elCount = $("n-prompt-count");
+  if (!elCount) return;
+  const len = $("n-prompt").value.length;
+  elCount.hidden = len < 15000;
+  if (!elCount.hidden) {
+    elCount.textContent = len.toLocaleString() + " / " + NEW_PROMPT_MAX.toLocaleString() + " characters";
+    elCount.className = "char-count small " + (len >= NEW_PROMPT_MAX ? "limit" : "warn");
+  }
+}
+$("n-prompt").addEventListener("input", () => {
+  updateNewPromptCount();
+  try {
+    const v = $("n-prompt").value;
+    if (v) localStorage.setItem("unire_draft_new", v);
+    else localStorage.removeItem("unire_draft_new");
+  } catch (_) {}
 });
 
 // ---- repo suggestions for what you are writing ----

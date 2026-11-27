@@ -352,3 +352,78 @@ function updateForm(p, up) {
   updateEls.set(key, box);
   return box;
 }
+
+// ---- cross-repo pull requests overview ----
+let prOverviewState = "all"; // "all", "open", "merged", "closed"
+
+function initPullsOverview() {
+  const toolbar = document.querySelector("#view-prs .prs-toolbar");
+  if (!toolbar) return;
+  toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-pr-state]");
+    if (!btn) return;
+    prOverviewState = btn.dataset.prState;
+    toolbar.querySelectorAll("[data-pr-state]").forEach((b) => {
+      const active = b === btn;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", String(active));
+    });
+    renderPullsOverview();
+  });
+  const search = $("prs-search");
+  if (search) search.addEventListener("input", renderPullsOverview);
+  const refresh = $("prs-refresh");
+  if (refresh) refresh.addEventListener("click", () => guarded(refresh, openPullsOverview));
+}
+initPullsOverview();
+
+async function openPullsOverview() {
+  stopPolling();
+  show("prs");
+  await refreshSidebar();
+  renderPullsOverview();
+}
+
+function renderPullsOverview() {
+  const listEl = $("prs-list");
+  if (!listEl) return;
+  const q = ($("prs-search") ? $("prs-search").value : "").trim().toLowerCase();
+  const rows = [];
+  for (const s of sideList || []) {
+    for (const p of s.pulls || []) {
+      const state = p.state || "open";
+      if (prOverviewState !== "all" && state !== prOverviewState) continue;
+      if (q && !(p.repo + " " + p.title + " " + p.branch + " " + (p.base || "") + " " + s.task + " #" + p.number).toLowerCase().includes(q)) continue;
+      rows.push({ s, p, state });
+    }
+  }
+  const rank = { open: 0, merged: 1, closed: 2 };
+  rows.sort((a, b) => (rank[a.state] ?? 3) - (rank[b.state] ?? 3) || lastTouched(b.s) - lastTouched(a.s));
+
+  if (!rows.length) {
+    listEl.replaceChildren(el("p", { class: "muted" },
+      q || prOverviewState !== "all" ? "No pull requests match this filter." : "No pull requests opened from your chats yet."));
+    return;
+  }
+
+  listEl.replaceChildren(...rows.map(({ s, p, state }) => {
+    const chatBtn = el("button", { type: "button", class: "ghost compact" }, "Open chat →");
+    chatBtn.addEventListener("click", () => guarded(chatBtn, async () => {
+      await openSession(s.id);
+      if (typeof setSidePanelOpen === "function") setSidePanelOpen(true);
+      if (typeof selectSideTab === "function") selectSideTab("prs");
+    }));
+    const extIcon = el("span", { class: "btn-icon", "aria-hidden": "true" });
+    extIcon.innerHTML = iconSvg("external");
+    const extLink = el("a", { class: "button ghost compact", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "Git server", extIcon);
+
+    return el("div", { class: "pr-overview-card " + state },
+      el("div", { class: "pr-head" },
+        el("a", { class: "pr-title", href: p.url, target: "_blank", rel: "noopener noreferrer" }, "#" + p.number + " " + p.title),
+        el("span", { class: "pr-state " + state }, state)),
+      el("div", { class: "pr-overview-meta" },
+        el("span", {}, p.repo + " · ", el("code", {}, p.branch), p.base ? " → " + p.base : ""),
+        el("span", {}, s.task + " · " + ago(lastTouched(s)))),
+      el("div", { class: "pr-actions" }, chatBtn, extLink));
+  }));
+}

@@ -48,7 +48,18 @@ h2 { letter-spacing: -.01em; font-weight: 650; }
 .avatar-wrap .state.bad { background: var(--danger); }
 
 /* sections of a settings page */
-#view-health, #view-agents, #view-memory, #view-repomem, #view-servers { max-width: 1100px; }
+#view-health, #view-agents, #view-memory, #view-repomem, #view-servers, #view-prs { max-width: 1100px; }
+.prs-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.prs-search { flex: 1; min-width: 200px; margin: 0 !important; }
+.pr-overview-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 16px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); box-shadow: var(--shadow);
+}
+.pr-overview-card.open { border-left: 3px solid var(--ok); }
+.pr-overview-card.merged { border-left: 3px solid var(--pr-merged); }
+.pr-overview-card.closed { border-left: 3px solid var(--muted); }
+.pr-overview-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
 .settings-wrap { max-width: 1100px; display: flex; flex-direction: column; gap: 4px; }
 .settings-wrap .section-title { margin: 16px 2px 6px; }
 .settings-wrap .section-title:first-of-type { margin-top: 2px; }
@@ -210,6 +221,7 @@ a.button.primary:hover { background: var(--accent-hover); border-color: var(--ac
 .pr-state.open { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: color-mix(in srgb, var(--ok) 8%, transparent); }
 .pr-state.merged { color: var(--pr-merged); border-color: color-mix(in srgb, var(--pr-merged) 35%, transparent); background: color-mix(in srgb, var(--pr-merged) 8%, transparent); }
 .pr-state.closed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.pr-state.proposal { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .pr-details { margin-top: 6px; }
 .pr-details > summary { cursor: pointer; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .pr-checks { white-space: nowrap; }

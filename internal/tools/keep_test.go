@@ -19,3 +19,17 @@ func TestEveryAgentIsToldToKeepWhatWorks(t *testing.T) {
 		t.Error("no tools, no prompt")
 	}
 }
+
+func TestPromptHasTalkingWithOwner(t *testing.T) {
+	for _, set := range [][]Tool{ForNewConversation(), ForReply(), ForReplyWithPR()} {
+		p := Prompt(set)
+		for _, want := range []string{"# Talking with the owner", "not a ticket", "A question gets an answer", "say which reading you went with", "Do what they asked, not more"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("prompt is missing %q", want)
+			}
+		}
+		if strings.Index(p, "# Talking with the owner") > strings.Index(p, "# Unire tools") {
+			t.Error("talking guidance should come before the tools")
+		}
+	}
+}

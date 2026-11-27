@@ -1182,3 +1182,72 @@ func TestTurnDigestCapsGuidanceAndKeepsTheAnswerFirst(t *testing.T) {
 		t.Errorf("digest should keep the most recent steer:\n%s", digest)
 	}
 }
+
+// An older conversation (such as an open PR started days ago) must stay in the
+// chat list even after more than 100 newer turns have been created in other
+// conversations, and even when its root turn is older than recent replies.
+func TestListSessionsKeepsOlderConversationAfterManyTurns(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	st := e.srv.store
+	mk := func(id, parent string) {
+		if err := st.CreateSession(store.Session{
+			ID: id, ParentID: parent, Task: "chat " + id,
+			Agent: "claude", Mode: "hands-off", Prompt: "p",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.MarkFinished(id, store.StatusDone, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("old-pr", "")
+	if err := st.AddPullRequest(store.PullRequest{
+		RootID:   "old-pr",
+		ServerID: "srv",
+		Repo:     "greg/unire",
+		Number:   34,
+		Branch:   "agent/claude/old-pr",
+		Title:    "PR 34",
+		URL:      "http://pr/34",
+		State:    "open",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 120; i++ {
+		mk(fmt.Sprintf("other-%03d", i), "")
+	}
+	mk("old-pr-reply", "old-pr")
+
+	code, body := e.do("GET", "/api/sessions", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/sessions = %d %s", code, body)
+	}
+	var list []struct {
+		ID     string      `json:"id"`
+		Latest string      `json:"latest"`
+		Pulls  []SessionPR `json:"pulls"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 121 {
+		t.Fatalf("expected 121 conversations, got %d", len(list))
+	}
+	var found bool
+	for _, s := range list {
+		if s.ID == "old-pr" {
+			found = true
+			if s.Latest != "old-pr-reply" {
+				t.Errorf("old-pr latest = %q, want old-pr-reply", s.Latest)
+			}
+			if len(s.Pulls) != 1 || s.Pulls[0].Number != 34 {
+				t.Errorf("old-pr pulls = %+v, want PR #34", s.Pulls)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("old-pr disappeared from /api/sessions")
+	}
+}

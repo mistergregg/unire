@@ -21,6 +21,10 @@ unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gco
 
 The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`profiles/NOTICE.md`](profiles/NOTICE.md). The PETG profile is project-authored.
 
+## Using it in Unire
+
+Turn on the 3D modelling or Electronics and CAD/CAM add-on in Settings (see [`docs/addons.md`](../../docs/addons.md)). Chats then run in the published image built from `Dockerfile.hardware`, and the agent is told about these commands.
+
 ## Other 3D & hardware scenarios (drones, gadgets, CNC plates)
 
 - `unire-3d` (`mesh_tools.py`) adds `info`, `views`, `fix`, `scale`, `convert`, `dxf` (2D profile extraction for CNC/laser plates), `assemble` (multi-part interference/collision check + color-coded 4-view render), and `relief` (image-to-relief/lithophane). [`SCENARIOS.md`](SCENARIOS.md) maps each kind of request to the right tool and states its limits.

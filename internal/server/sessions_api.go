@@ -79,9 +79,15 @@ func (s *Server) sandbox() Sandbox {
 
 func (s *Server) sessionConfig() sessions.Config {
 	sb := s.sandbox()
+	// An add-on that is turned on runs its own image (built on the sandbox
+	// image) and tells the agent about its tools.
+	image, guide := s.sessionImage(sb)
+	run := sb
+	run.Image = image
 	allow := allowedEntries(s.allowList())
 	return sessions.Config{
-		Runner: s.runnerFactory(sb), Memory: sb.EffectiveMemory(), CPUs: sb.CPUs,
+		Runner: s.runnerFactory(run), Memory: sb.EffectiveMemory(), CPUs: sb.CPUs,
+		Guide:       guide,
 		Egress:      sessions.Egress{Proxy: s.egressProxy, Info: s.egressInfo, Allow: allow},
 		Pulls:       s.pulls,
 		Upstream:    s,

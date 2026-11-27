@@ -437,6 +437,7 @@ async function openSettings(tab) {
   syncThemePicker();
   await Promise.all([
     api("GET", "/api/sandbox").then(fillSandbox),
+    api("GET", "/api/addons").then(fillAddons),
     api("GET", "/api/limits").then(fillLimits),
     api("GET", "/api/pulls/settings").then((r) => { $("pr-auto").checked = r.autoOpen; }),
     api("GET", "/api/network").then(fillNetwork),
@@ -453,6 +454,36 @@ $("sb-form").addEventListener("submit", (e) => {
       memory: $("sb-memory").value, cpus: $("sb-cpus").value,
     }));
     banner("Sandbox settings saved. They apply to new sessions.");
+  });
+});
+
+// Add-ons: optional tool sets (see internal/addons). Each row is a switch, what
+// it brings, its download size and an optional image of the owner's own build.
+function fillAddons(r) {
+  $("addon-list").replaceChildren(...r.addons.map((a) => {
+    const box = el("input", { type: "checkbox", id: "addon-on-" + a.id, "data-addon": a.id, "aria-label": a.name });
+    box.checked = a.enabled;
+    const img = el("input", { id: "addon-img-" + a.id, "data-addon-image": a.id, placeholder: a.image, "aria-label": a.name + " image" });
+    img.value = a.customImage || "";
+    return el("div", { class: "setting-row setting-row-inline addon-row" },
+      el("div", { class: "setting-row-info" },
+        el("div", { class: "grow" },
+          el("label", { class: "setting-row-title setting-row-label", for: "addon-on-" + a.id }, a.name),
+          el("p", { class: "setting-row-desc muted" }, a.summary + " (" + a.size + ")"),
+          el("label", { class: "addon-image small muted" }, "Image (empty: the published one)", img))),
+      el("div", { class: "setting-row-control" }, box));
+  }));
+  $("addon-image").textContent = "New chats run in " + r.image + ". The first chat with a new add-on waits while the image downloads. Applies to new sessions and replies.";
+}
+
+$("addon-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("addon-submit"), async () => {
+    const enabled = [...document.querySelectorAll("[data-addon]")].filter((b) => b.checked).map((b) => b.dataset.addon);
+    const images = {};
+    for (const i of document.querySelectorAll("[data-addon-image]")) images[i.dataset.addonImage] = i.value.trim();
+    fillAddons(await api("PUT", "/api/addons", { enabled, images }));
+    banner("Add-ons saved. They apply to the next run.");
   });
 });
 

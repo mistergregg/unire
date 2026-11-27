@@ -1,0 +1,60 @@
+name: Publish add-on images
+
+# The Settings add-ons (internal/addons) run chats in these images. Each is built
+# FROM the published sandbox image, so it is rebuilt after that image is
+# published, and can be started by hand.
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unire-sandbox-3d
+            target: variant-b
+            check: unire-3d --help && CuraEngine help | head -n 1 && python3 -c "import build123d, trimesh"
+          - name: unire-sandbox-hardware
+            target: variant-c
+            check: unire-3d --help && kicad-cli --version && freecadcmd --version
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and load locally first so a broken image is never published.
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: experiments/hardware-pipeline/Dockerfile.hardware
+          target: ${{ matrix.target }}
+          build-args: BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/unire-sandbox:latest
+          load: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:latest
+
+      - name: Check the tools run
+        run: docker run --rm ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:latest sh -c '${{ matrix.check }}'
+
+      - name: Push
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:latest

@@ -206,7 +206,7 @@ In a chat that follows a parent chat, `unire parent` shows where the parent stan
 
 ## Checking tools in the sandbox
 
-Separate from the `unire` tools above, the sandbox image carries programs an agent can run to check its work. The agent is told about them in its prompt (`checkingTools` in `internal/tools`).
+Separate from the `unire` tools above, the sandbox image carries programs an agent can run to check its work. The agent is told about them in its prompt (`checkingTools` in `internal/tools`). Add-ons turned on in Settings bring more tools and add their own guide to the prompt: see [addons.md](addons.md).
 
 | Command | What it does |
 |---|---|

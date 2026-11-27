@@ -47,6 +47,9 @@ type Options struct {
 	MemoryTimeout time.Duration
 	// Tools are what the agent may ask Unire to do (see package tools). Empty means none.
 	Tools []tools.Tool
+	// Guide describes extra tools in the sandbox image (add-ons). It is added
+	// after the tool list; empty adds nothing.
+	Guide string
 	// Ask shows the agent's questions to the owner (the ask tool). AskPoll is how
 	// often the sandbox is checked for new ones; zero means two seconds.
 	Ask     AskFunc
@@ -286,6 +289,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 	if tp := tools.Prompt(opt.Tools); tp != "" && prompt != "" {
 		prompt += "\n\n---\n\n" + tp + "\n" + workspaceNote(spec)
 	}
+	if opt.Guide != "" && prompt != "" {
+		prompt += "\n\n---\n\n" + opt.Guide
+	}
 	// The prompt for a fresh conversation, if the saved one cannot be carried on, gets the
 	// same memory, tools and note on where the code is.
 	if fb := opt.Fallback; fb != "" {
@@ -294,6 +300,9 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		}
 		if tp := tools.Prompt(opt.Tools); tp != "" {
 			fb += "\n\n---\n\n" + tp + "\n" + workspaceNote(spec)
+		}
+		if opt.Guide != "" {
+			fb += "\n\n---\n\n" + opt.Guide
 		}
 		w.opt.Fallback = fb
 	}

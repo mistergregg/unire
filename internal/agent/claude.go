@@ -37,7 +37,9 @@ func (claude) Info() Info {
 		ResetHelp:   "Signs Claude Code out of the saved login.",
 		UsageArgv:   claudeUsageArgv,
 		ParseUsage:  ParseClaudeUsageOutput,
-		Models:      []string{"sonnet", "opus", "fable"},
+		Models:      []string{"opus", "sonnet", "fable", "haiku"},
+		ModelsArgv:  []string{"sh", "-c", claudeModelsScript},
+		ParseModels: ParseClaudeModelsOutput,
 		Verified:    Verified{Unattended: true, Status: true, Hosts: true},
 	}
 }

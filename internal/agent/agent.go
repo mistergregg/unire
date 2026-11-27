@@ -57,6 +57,12 @@ type Info struct {
 	ResetHelp string `json:"resetHelp"`
 	// Models lists known model names to offer in the UI.
 	Models []string `json:"models"`
+	// ModelsArgv, when set, prints the models the CLI currently offers (without
+	// running a turn or spending tokens); ParseModels reads its output. The
+	// server refreshes this list in the background and falls back to Models.
+	ModelsArgv         []string                              `json:"-"`
+	ParseModels        func(output string) ([]string, error) `json:"-"`
+	ModelsRequireLogin bool                                  `json:"-"`
 	// Verified says what has been checked against the real agent.
 	Verified Verified `json:"verified"`
 }

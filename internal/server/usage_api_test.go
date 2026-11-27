@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,10 +12,17 @@ import (
 	"github.com/mistergregg/unire/internal/runner"
 )
 
-// RunOnline makes the fake runner answer the usage question with box.usageOut.
+// RunOnline makes the fake runner answer usage and model discovery probes.
 func (r fakeRunner) RunOnline(_ context.Context, argv []string) (string, bool, error) {
 	r.box.mu.Lock()
 	defer r.box.mu.Unlock()
+	if agentID, isModels := modelsProbeAgent(argv); isModels {
+		if r.box.modelsAsked == nil {
+			r.box.modelsAsked = map[string]int{}
+		}
+		r.box.modelsAsked[agentID]++
+		return r.box.modelsOut[agentID], true, nil
+	}
 	if len(argv) > 0 && argv[0] == "agy" {
 		r.box.agyAsked++
 		return r.box.agyUsageOut, true, nil
@@ -25,6 +33,21 @@ func (r fakeRunner) RunOnline(_ context.Context, argv []string) (string, bool, e
 	}
 	r.box.usageAsked++
 	return r.box.usageOut, true, nil
+}
+
+func modelsProbeAgent(argv []string) (string, bool) {
+	if len(argv) >= 2 && argv[0] == "agy" && argv[1] == "models" {
+		return "antigravity", true
+	}
+	if len(argv) >= 3 && argv[0] == "sh" && argv[1] == "-c" {
+		if strings.Contains(argv[2], "model/list") {
+			return "codex", true
+		}
+		if strings.Contains(argv[2], `"subtype":"initialize"`) {
+			return "claude", true
+		}
+	}
+	return "", false
 }
 
 var _ runner.OnlineShot = fakeRunner{}

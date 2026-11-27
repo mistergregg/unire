@@ -348,7 +348,10 @@ def run_tests():
         print(f"  [CAUGHT AS EXPECTED]: {ve}")
 
     print("6. Testing defect: One standoff removed from generated base...")
-    sys.path.insert(0, base_dir)
+    # The generator ships with the 3D add-on (addons/3d-print in the repo,
+    # UNIRE_HARDWARE_HOME in an image that has the add-on).
+    tools_dir = os.environ.get("UNIRE_HARDWARE_HOME") or os.path.join(base_dir, "..", "..", "addons", "3d-print")
+    sys.path.insert(0, tools_dir)
     from gen_enclosure import generate_enclosure
     missing_boss = copy.deepcopy(good_spec)
     missing_boss["board"]["mounting_holes"].pop(0)

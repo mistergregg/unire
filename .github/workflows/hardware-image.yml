@@ -1,140 +1,63 @@
-name: Hardware Sandbox Images
+name: Add-on images
 
+# Builds the sandbox image with each add-on, alone and together, the same way
+# Unire builds it on the owner's server (package addons), and runs each add-on's
+# checks in it.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
+      - 'addons/**'
       - 'experiments/hardware-pipeline/**'
+      - 'docker/sandbox/**'
       - '.github/workflows/hardware-image.yml'
   pull_request:
     paths:
+      - 'addons/**'
       - 'experiments/hardware-pipeline/**'
+      - 'docker/sandbox/**'
       - '.github/workflows/hardware-image.yml'
 
 permissions:
   contents: read
 
 jobs:
-  build-and-verify:
+  addon:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        addons: ["3d-print", "cad", "3d-print cad"]
+    name: build-and-verify (${{ matrix.addons }})
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
       - name: Build base sandbox image
+        run: docker build -t unire-sandbox:latest docker/sandbox
+
+      - name: Build the image with the add-ons
         run: |
-          docker build -t unire-sandbox:latest docker/sandbox
+          start=$(date +%s)
+          go run ./addons/cmd/addon-context ${{ matrix.addons }} | docker build --build-arg BASE=unire-sandbox:latest -t unire-addons:test -
+          echo "BUILD_TIME=$(( $(date +%s) - start ))s" >> "$GITHUB_ENV"
+          echo "SIZE=$(docker images unire-addons:test --format '{{.Size}}')" >> "$GITHUB_ENV"
+          echo "BASE_SIZE=$(docker images unire-sandbox:latest --format '{{.Size}}')" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------------------
-      # VARIANT B: Small additions (OpenSCAD, CuraEngine, ADMesh, Python CAD)
-      # ------------------------------------------------------------------------
-      - name: Build Variant B image
-        id: build_b
+      - name: Check each add-on's tools
         run: |
-          START_TIME=$(date +%s)
-          docker build --target variant-b -t unire-hardware:variant-b -f experiments/hardware-pipeline/Dockerfile.hardware .
-          END_TIME=$(date +%s)
-          BUILD_DURATION=$((END_TIME - START_TIME))
-          SIZE=$(docker images unire-hardware:variant-b --format "{{.Size}}")
-          echo "B_BUILD_TIME=${BUILD_DURATION}s" >> $GITHUB_ENV
-          echo "B_SIZE=${SIZE}" >> $GITHUB_ENV
+          for a in ${{ matrix.addons }}; do
+            docker run --rm -v "$PWD":/workspace -w /workspace unire-addons:test sh "experiments/hardware-pipeline/ci/test-$a.sh"
+          done
 
-      - name: Test Variant B tools and pipeline
-        id: verify_b
-        run: |
-          docker run --rm -v "$PWD":/workspace -w /workspace unire-hardware:variant-b sh -c '
-            set -e
-            echo "=== Tool Versions in Variant B ==="
-            openscad --version
-            CuraEngine help | head -n 3
-            admesh --version
-            python3 -c "import build123d, trimesh, numpy, PIL; print(\"build123d:\", build123d.__version__, \"trimesh:\", trimesh.__version__)"
-
-            echo "=== Generating & Checking Enclosures in Variant B ==="
-            unire-enclosure experiments/hardware-pipeline/examples/esp32/esp32.json /tmp/esp32
-            unire-enclosure experiments/hardware-pipeline/examples/pizero/pizero.json /tmp/pizero
-            python3 experiments/hardware-pipeline/check_enclosure.py --test
-
-            echo "=== Testing CLI Commands ==="
-            unire-mesh-check /tmp/esp32/base.stl
-            unire-stl-shot /tmp/esp32/base.stl /tmp/test_shot.png 600x500
-            test -s /tmp/test_shot.png
-            unire-slice /tmp/esp32/base.stl /tmp/esp32.gcode
-            test -s /tmp/esp32.gcode
-            unire-slice --material pla /tmp/esp32/base.stl /tmp/esp32_pla.gcode
-            test -s /tmp/esp32_pla.gcode
-            unire-slice --material tpu /tmp/esp32/lid.stl /tmp/esp32_tpu.gcode
-            test -s /tmp/esp32_tpu.gcode
-            unire-3d info --material petg /tmp/esp32/base.stl
-            unire-3d views /tmp/esp32/base.stl /tmp/views.png && test -s /tmp/views.png
-            python3 -c "import sys; from PIL import Image; Image.radial_gradient(sys.argv[1]).save(sys.argv[2])" L /tmp/pic.png
-            unire-3d relief /tmp/pic.png /tmp/lith.stl --mode lithophane --res 60
-            unire-3d info /tmp/lith.stl
-            python3 /opt/unire-hardware/gen_drone.py experiments/hardware-pipeline/examples/micro-quad/drone.json /tmp/quad
-            unire-3d assemble /tmp/quad/assembly.json /tmp/quad_assembly.png && test -s /tmp/quad_assembly.png
-            unire-3d dxf /tmp/quad/frame_plate.step /tmp/quad_frame.dxf && test -s /tmp/quad_frame.dxf
-          '
-
-      # ------------------------------------------------------------------------
-      # VARIANT C: Heavy additions (KiCad, FreeCAD)
-      # ------------------------------------------------------------------------
-      - name: Build Variant C image
-        id: build_c
-        run: |
-          START_TIME=$(date +%s)
-          docker build --target variant-c -t unire-hardware:variant-c -f experiments/hardware-pipeline/Dockerfile.hardware .
-          END_TIME=$(date +%s)
-          BUILD_DURATION=$((END_TIME - START_TIME))
-          SIZE=$(docker images unire-hardware:variant-c --format "{{.Size}}")
-          echo "C_BUILD_TIME=${BUILD_DURATION}s" >> $GITHUB_ENV
-          echo "C_SIZE=${SIZE}" >> $GITHUB_ENV
-
-      - name: Test Variant C tools and KiCad DRC
-        id: verify_c
-        run: |
-          docker run --rm -v "$PWD":/workspace -w /workspace unire-hardware:variant-c sh -c '
-            set -e
-            echo "=== Tool Versions in Variant C ==="
-            command -v kicad-cli >/dev/null
-            kicad-cli --version
-            if command -v freecad >/dev/null 2>&1; then
-              freecad --version
-            elif command -v freecadcmd >/dev/null 2>&1; then
-              freecadcmd --version
-            else
-              echo "FreeCAD CLI executable is missing" >&2
-              exit 1
-            fi
-
-            echo "=== Running PCB Design Rule Check & Exports ==="
-            unire-kicad-check experiments/hardware-pipeline/examples/sample.kicad_pcb
-            mkdir -p /tmp/kicad_out
-            kicad-cli pcb export gerbers -o /tmp/kicad_out/gerbers experiments/hardware-pipeline/examples/sample.kicad_pcb
-            ls -la /tmp/kicad_out/gerbers
-            kicad-cli pcb export step -o /tmp/kicad_out/sample.step experiments/hardware-pipeline/examples/sample.kicad_pcb
-            test -s /tmp/kicad_out/sample.step
-
-            echo "=== Testing Headless FreeCAD STEP & Path CAM ==="
-            freecadcmd -c "import FreeCAD, Part, Path; s = Part.read('/tmp/kicad_out/sample.step'); print('FreeCAD STEP solids:', len(s.Solids), 'Path module:', hasattr(Path, 'Command'))"
-          '
-
-      - name: Publish Build & Size Summary
+      - name: Summary
         if: always()
         run: |
-          cat <<EOF >> $GITHUB_STEP_SUMMARY
-          # Hardware Sandbox Image Build & Verification Summary
-
-          | Variant | Tools Added | Build Time | Measured Image Size | Verification Status |
-          | :--- | :--- | :--- | :--- | :--- |
-          | **Variant B (Setup B)** | OpenSCAD, CuraEngine, ADMesh, build123d, trimesh | ${{ env.B_BUILD_TIME }} | ${{ env.B_SIZE }} | build: ${{ steps.build_b.outcome }}; verification: ${{ steps.verify_b.outcome }} |
-          | **Variant C (Setup C)** | B + KiCad (kicad-cli), FreeCAD | ${{ env.C_BUILD_TIME }} | ${{ env.C_SIZE }} | build: ${{ steps.build_c.outcome }}; verification: ${{ steps.verify_c.outcome }} |
-
-          ### Verification Results:
-          EOF
-          if [ '${{ steps.verify_b.outcome }}' = success ]; then
-            echo '- Variant B verification ran: both example generators, enclosure checks and defect tests, mesh checks, preview rendering, and the ESP32 CuraEngine slice.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ '${{ steps.verify_c.outcome }}' = success ]; then
-            echo '- Variant C verification ran: KiCad version check, FreeCAD version probe, and PCB DRC command.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "| Add-ons | Build time | Image size | Base size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ${{ matrix.addons }} | ${BUILD_TIME:-n/a} | ${SIZE:-n/a} | ${BASE_SIZE:-n/a} |" >> "$GITHUB_STEP_SUMMARY"

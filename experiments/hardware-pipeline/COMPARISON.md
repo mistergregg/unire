@@ -1,6 +1,6 @@
 # CLI hardware tools: measured prototype comparison
 
-The goal is to decide what can be added to Unire's Debian sandbox for agent-driven enclosure work. These configurations are proposals backed by the runs described below; a proposed Docker target is not itself proof that its tools work.
+The goal is to decide what can be added to Unire's Debian sandbox for agent-driven enclosure work. Outcome: Setup B became the `3d-print` add-on and Setup C's extra tools the `cad` add-on (`addons/`, `docs/addons.md`); they can be turned on alone or together. The Variant B/C Docker targets described below were replaced by that build. These configurations are proposals backed by the runs described below; a proposed Docker target is not itself proof that its tools work.
 
 ## Capabilities observed
 

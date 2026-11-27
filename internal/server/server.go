@@ -81,6 +81,8 @@ type Server struct {
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bgWG     sync.WaitGroup
+
+	addonBuilds addonBuilder // add-on images built on this host (addons_build.go)
 }
 
 type failure struct {

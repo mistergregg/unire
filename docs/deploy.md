@@ -17,7 +17,7 @@ The GitHub Action in `.github/workflows/docker.yml` publishes two images when `m
 - `ghcr.io/mistergregg/unire` is the controller (the dashboard).
 - `ghcr.io/mistergregg/unire-sandbox` is the sandbox each session runs in (git, the Claude Code, Codex and Antigravity CLIs, and developer tools: Go, linters, language servers and a headless Chromium). It is large, roughly 4 GB on disk, because of the agents and tools; Unire pulls it on start-up and keeps it current (it checks at most every 30 minutes, before a session or a sign-in starts), so you only update the `unire` container.
 
-Optional add-on images (3D modelling, electronics and CAD/CAM) are published by `.github/workflows/hardware-publish.yml` and only downloaded when you turn an add-on on in Settings. See [addons.md](addons.md).
+Optional add-ons (3D modelling, electronics and CAD/CAM) are not published images: when you turn them on in Settings, Unire builds one image with them on top of the sandbox image, on your server. See [addons.md](addons.md).
 
 If pulling fails with "unauthorized", open the package on GitHub (Packages, then Package settings) and set its visibility to public.
 

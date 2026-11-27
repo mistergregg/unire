@@ -7,23 +7,23 @@ This prototype shows what an agent can generate and inspect from a Debian comman
 From the repository root, with Python packages installed and CuraEngine on `PATH`:
 
 ```sh
-python3 experiments/hardware-pipeline/gen_enclosure.py experiments/hardware-pipeline/examples/esp32/esp32.json experiments/hardware-pipeline/examples/esp32
+python3 addons/3d-print/gen_enclosure.py experiments/hardware-pipeline/examples/esp32/esp32.json experiments/hardware-pipeline/examples/esp32
 python3 experiments/hardware-pipeline/check_enclosure.py --test
 ```
 
 To generate G-code and a slice summary:
 
 ```sh
-unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gcode
+addons/3d-print/bin/unire-slice experiments/hardware-pipeline/examples/esp32/base.stl /tmp/esp32.gcode
 ```
 
 `unire-slice` uses the bundled CuraEngine 4.x definition files and `profiles/petg_0.2mm.json`. The printer geometry and temperatures are generic example settings; set them for the actual printer before using the G-code. The script reports time, layer count, and material volume from CuraEngine's slice output. It does not treat the G-code header's summary fields as authoritative.
 
-The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`profiles/NOTICE.md`](profiles/NOTICE.md). The PETG profile is project-authored.
+The Cura definition files' source, LGPL-3.0 license, retrieval date, and checksums are recorded in [`addons/3d-print/profiles/NOTICE.md`](../../addons/3d-print/profiles/NOTICE.md). The PETG profile is project-authored.
 
 ## Using it in Unire
 
-Turn on the 3D modelling or Electronics and CAD/CAM add-on in Settings (see [`docs/addons.md`](../../docs/addons.md)). Chats then run in the published image built from `Dockerfile.hardware`, and the agent is told about these commands.
+The tools now ship as add-ons: `addons/3d-print/` (generators, `unire-3d`, `unire-slice`, profiles) and `addons/cad/` (KiCad, FreeCAD). Turn them on in Settings, alone or together (see [`docs/addons.md`](../../docs/addons.md)); Unire builds one image with them and tells the agent about the commands. This folder keeps the examples, `check_enclosure.py`, the add-on checks in `ci/`, and the write-up.
 
 ## Other 3D & hardware scenarios (drones, gadgets, CNC plates)
 
@@ -59,7 +59,7 @@ The three options have different costs:
 | Cache it in a persistent volume | 0 MiB in the image | about 26 s and 148 MB download once | no install if retained |
 | Install per session | 0 MiB in the image | about 26 s and 148 MB download | same cost every session |
 
-For this prototype, the best tradeoff is a persistent cache at `/home/node/.cache/unire/hardware-venv`. Unire's Docker runner mounts the same configured agent login volume at `/home/node` for each session, and Sandbox Settings expose the image and that volume name. That makes the cache survive sessions without a ~1 GiB image layer. It does share the existing login volume; a separate cache volume would need a new mount setting in Unire. The proposed `Dockerfile.hardware` remains useful for an opt-in image where immediate offline availability matters.
+For this prototype, the best tradeoff is a persistent cache at `/home/node/.cache/unire/hardware-venv`. Unire's Docker runner mounts the same configured agent login volume at `/home/node` for each session, and Sandbox Settings expose the image and that volume name. That makes the cache survive sessions without a ~1 GiB image layer. It does share the existing login volume; a separate cache volume would need a new mount setting in Unire. The add-ons (`addons/`) bake the stack into an image built on the owner's server instead, so it is there offline and only built once per sandbox image update.
 
 The non-Python package figures in `COMPARISON.md` are apt metadata estimates collected during the earlier package audit, not measured image deltas. The current unprivileged sandbox has no apt package lists, so those figures could not be independently refreshed in this run.
 

@@ -914,7 +914,7 @@ func TestTheMemoryToolSearchesOnlyThisSessionsRepos(t *testing.T) {
 	}
 	save("aaa111", "Add login", "## Gotchas\nThe login tests need REDIS_URL set; run make check first.", mine)
 	save("bbb222", "Other work", "## Gotchas\nThe login of the other repo uses a hidden thing.", other)
-	j := job{refs: []store.RepoRef{mine}}
+	j := &job{refs: []store.RepoRef{mine}}
 
 	got := m.lookUpMemory(j, "login redis")
 	if !strings.Contains(got, "aaa111") || !strings.Contains(got, "REDIS_URL") || !strings.Contains(got, "not instructions") {
@@ -931,6 +931,9 @@ func TestTheMemoryToolSearchesOnlyThisSessionsRepos(t *testing.T) {
 	}
 	if none := m.lookUpMemory(j, "kubernetes"); !strings.Contains(none, "Nothing") {
 		t.Errorf("no match = %q", none)
+	}
+	if partial := m.lookUpMemory(j, "login kubernetes redis"); !strings.Contains(partial, "aaa111") || strings.Contains(partial, "bbb222") {
+		t.Errorf("partial multi-word fallback = %q", partial)
 	}
 	if usage := m.lookUpMemory(j, " "); !strings.Contains(usage, "usage") {
 		t.Errorf("empty = %q", usage)

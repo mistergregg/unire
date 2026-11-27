@@ -19,10 +19,10 @@ esac
 # Agents stop a command that runs for too long, so wait in short rounds.
 wait_for() {
   n=0
-  while [ "$n" -lt 90 ]; do
+  while [ "$n" -lt 180 ]; do
     if [ -f "$dir/ask/$1.a" ]; then cat "$dir/ask/$1.a"; return 0; fi
-    sleep 2
-    n=$((n + 2))
+    sleep 1
+    n=$((n + 1))
   done
   echo "The owner has not answered yet (question $1). Run: unire wait $1   to keep waiting, or go on with your best judgment and say what you assumed."
 }
@@ -30,7 +30,7 @@ wait_for() {
 case "$tool" in
   ask)
     [ -n "$*" ] || { echo "usage: unire ask \"<question>\"" >&2; exit 2; }
-    id=$(date +%s%N)
+    id="$(date +%s%N)$$"
     mkdir -p "$dir/ask" || exit 1
     printf '%s\n' "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     wait_for "$id"
@@ -38,14 +38,14 @@ case "$tool" in
   name)
     [ -n "$*" ] || { echo "usage: unire name \"<title>\"" >&2; exit 2; }
     mkdir -p "$dir" && printf '%s\n' "$*" | tr '\n' ' ' >> "$dir/name" && printf '\n' >> "$dir/name"
-    id=$(date +%s%N)
+    id="$(date +%s%N)$$"
     mkdir -p "$dir/ask" || exit 1
     printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     echo "ok: Unire has your 'name' request and will update the title."
     ;;
   pr-status|pr-logs|pr-comments|pr-reply|pr-close|pr-reopen|memory|repo|parent)
     # Unire answers these while the agent runs (see "@call" in internal/workflow/ask.go).
-    id=$(date +%s%N)
+    id="$(date +%s%N)$$"
     mkdir -p "$dir/ask" || exit 1
     printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     wait_for "$id"

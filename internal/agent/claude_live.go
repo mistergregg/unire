@@ -96,6 +96,13 @@ func (d *claudeLive) Line(line string) Event {
 	if !ok {
 		return d.c.ParseEvent(line)
 	}
+	if sid, _ := m["session_id"].(string); sid != "" {
+		d.mu.Lock()
+		if d.conv == "" {
+			d.conv = sid
+		}
+		d.mu.Unlock()
+	}
 	switch m["type"] {
 	case "command_lifecycle":
 		id, _ := m["command_uuid"].(string)
@@ -144,7 +151,11 @@ func (d *claudeLive) Done() bool {
 	return true
 }
 
-func (d *claudeLive) Resume() string   { return d.conv }
+func (d *claudeLive) Resume() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.conv
+}
 func (d *claudeLive) Pending() []Steer { return nil }
 
 // Promote interrupts the turn that is running. Claude keeps the messages that

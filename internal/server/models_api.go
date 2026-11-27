@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -25,23 +26,34 @@ type modelsProbes struct {
 	last  map[string]time.Time
 	busy  map[string]bool
 	dirty map[string]bool
+	gen   map[string]uint64
+	note  map[string]string
 	wg    sync.WaitGroup
 }
 
 func (p *modelsProbes) invalidate() {
 	p.mu.Lock()
+	if p.dirty == nil {
+		p.dirty = map[string]bool{}
+	}
+	if p.gen == nil {
+		p.gen = map[string]uint64{}
+	}
 	for _, info := range agent.Infos() {
 		p.dirty[info.ID] = true
+		p.gen[info.ID]++
+		delete(p.note, info.ID)
 	}
 	p.last = map[string]time.Time{}
 	p.mu.Unlock()
 }
 
-// modelsFor returns the latest known models for info, falling back to
-// info.Models until a live list has been discovered. It never waits for an
-// agent: when the list is missing, dirty (after a sign-in change), or old, a
-// background try is started and its result shows up on a later request.
-func (s *Server) modelsFor(info agent.Info) []string {
+// modelsMetaFor returns the latest known models for info, cache update timestamp,
+// and any recent probe note, falling back to info.Models until a live list has
+// been discovered. It never waits for an agent: when the list is missing, dirty
+// (after a sign-in change), or old, a background try is started and its result
+// shows up on a later request.
+func (s *Server) modelsMetaFor(info agent.Info) ([]string, int64, string) {
 	models := info.Models
 	var updatedAt int64
 	var hasSaved bool
@@ -51,11 +63,22 @@ func (s *Server) modelsFor(info agent.Info) []string {
 	now := s.timeNow()
 	s.models.mu.Lock()
 	dirty := s.models.dirty[info.ID]
+	note := s.models.note[info.ID]
 	s.models.mu.Unlock()
 	if !hasSaved || dirty || now.Sub(time.Unix(updatedAt, 0)) > modelsRefreshAfter {
 		s.refreshModels(info, now, false)
 	}
-	return models
+	return models, updatedAt, note
+}
+
+// refreshModelsEndpoint drops the probe throttling and starts a fresh model
+// discovery pass. Probing an agent takes up to modelsProbeTimeout, so the agent
+// list in the response is still the cached one: the caller sees the new models,
+// and any probe error in modelsNote, on a later GET /api/agents.
+func (s *Server) refreshModelsEndpoint(w http.ResponseWriter, r *http.Request) {
+	s.models.invalidate()
+	s.refreshAllModels(true)
+	s.listAgents(w, r)
 }
 
 func (s *Server) refreshAllModels(force bool) {
@@ -80,6 +103,13 @@ func (s *Server) refreshModels(info agent.Info, now time.Time, force bool) {
 		p.mu.Unlock()
 		return
 	}
+	if p.gen == nil {
+		p.gen = map[string]uint64{}
+	}
+	if p.note == nil {
+		p.note = map[string]string{}
+	}
+	startGen := p.gen[info.ID]
 	p.busy[info.ID], p.last[info.ID] = true, now
 	p.wg.Add(1)
 	p.mu.Unlock()
@@ -87,27 +117,54 @@ func (s *Server) refreshModels(info agent.Info, now time.Time, force bool) {
 	go func() {
 		defer p.wg.Done()
 		succeeded := false
+		var probeNote string
 		defer func() {
 			p.mu.Lock()
 			p.busy[info.ID] = false
-			if succeeded {
-				delete(p.dirty, info.ID)
+			if p.gen[info.ID] == startGen {
+				if succeeded {
+					delete(p.dirty, info.ID)
+					delete(p.note, info.ID)
+				} else if probeNote != "" {
+					p.note[info.ID] = probeNote
+				}
 			}
 			p.mu.Unlock()
 		}()
 		defer safe.Recover("models of "+info.ID, nil)
-		ctx, cancel := context.WithTimeout(context.Background(), modelsProbeTimeout)
+		base := s.bgCtx
+		if base == nil {
+			base = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(base, modelsProbeTimeout)
 		defer cancel()
 		out, _, err := shot.RunOnline(ctx, info.ModelsArgv)
+		if base.Err() != nil {
+			return
+		}
 		if err != nil {
+			probeNote = shorten(err.Error(), 120)
 			return
 		}
 		models, err := info.ParseModels(out)
-		if err != nil || len(models) == 0 {
+		if err != nil {
+			probeNote = shorten(err.Error(), 120)
+			return
+		}
+		if len(models) == 0 {
+			probeNote = "no models returned"
+			return
+		}
+		p.mu.Lock()
+		sameGen := p.gen[info.ID] == startGen
+		p.mu.Unlock()
+		if !sameGen {
 			return
 		}
 		if err := s.store.SaveModels(info.ID, models, s.timeNow().Unix()); err == nil {
 			succeeded = true
+		} else {
+			probeNote = "could not save models"
 		}
 	}()
 }

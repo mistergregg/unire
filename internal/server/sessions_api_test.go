@@ -1076,3 +1076,109 @@ func TestListSessionsIncludesPulls(t *testing.T) {
 		t.Errorf("pull mismatch: %v", p)
 	}
 }
+
+func TestTurnDigestPreservesSteerAndQABeyond5000EventsAndForkIncludesModel(t *testing.T) {
+	e := newEnv(t)
+	_ = withServer(t, e, "tok")
+	err := e.srv.store.CreateSession(store.Session{
+		ID:     "heavy1",
+		Task:   "heavy task",
+		Agent:  "claude",
+		Model:  "opus",
+		Mode:   "hands-off",
+		Prompt: "implement widget",
+		Branch: "agent/claude/heavy-task",
+		Status: "done",
+		Repos:  []store.RepoRef{{ServerID: "s", FullName: "greg/api"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := e.srv.store.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO session_events (session_id, ts, kind, text) VALUES ('heavy1', 1, 'log', 'verbose build output line')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5100; i++ {
+		if _, err := stmt.Exec(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range []struct{ kind, text string }{
+		{"steer", "also handle empty input"},
+		{"ask", "Which HTTP status on empty input?"},
+		{"answer", "Return 400 Bad Request"},
+		{"out", "Implemented widget with validation."},
+		{"log", "api: pushed agent/claude/heavy-task"},
+	} {
+		if err := e.srv.store.AddEvent("heavy1", ev.kind, ev.text); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	digest := e.srv.turnDigestText("heavy1")
+	for _, want := range []string{"also handle empty input", "Return 400 Bad Request", "Implemented widget with validation."} {
+		if !strings.Contains(digest, want) {
+			t.Errorf("turnDigestText missing %q:\n%s", want, digest)
+		}
+	}
+	// Callers clip the digest keeping its start, so the answer must come first.
+	if !strings.HasPrefix(digest, "Implemented widget with validation.") {
+		t.Errorf("turnDigestText must start with the answer:\n%s", digest)
+	}
+
+	code, body := e.do("GET", "/api/sessions/heavy1/fork", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/sessions/heavy1/fork = %d %s", code, body)
+	}
+	var fork map[string]any
+	_ = json.Unmarshal([]byte(body), &fork)
+	if fork["model"] != "opus" {
+		t.Errorf("fork model = %v; want opus", fork["model"])
+	}
+}
+
+// Many steers must not crowd the answer out of the digest: it is clipped from
+// the start, so the answer leads and only the most recent steers follow.
+func TestTurnDigestCapsGuidanceAndKeepsTheAnswerFirst(t *testing.T) {
+	e := newEnv(t)
+	_ = withServer(t, e, "tok")
+	if err := e.srv.store.CreateSession(store.Session{
+		ID: "chatty", Task: "chatty task", Agent: "claude", Mode: "hands-off",
+		Prompt: "do it", Branch: "agent/claude/chatty-task", Status: "done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if err := e.srv.store.AddEvent("chatty", "steer", fmt.Sprint("note ", i, " ")+strings.Repeat("x", 900)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.srv.store.AddEvent("chatty", "out", "The final answer."); err != nil {
+		t.Fatal(err)
+	}
+	digest := e.srv.turnDigestText("chatty")
+	if !strings.HasPrefix(digest, "The final answer.") {
+		t.Errorf("digest must start with the answer:\n%s", digest[:min(300, len(digest))])
+	}
+	if n := strings.Count(digest, "Mid-turn owner guidance"); n != 1 {
+		t.Errorf("guidance headings = %d; want 1", n)
+	}
+	// Six steers kept, each clipped, plus a line saying how many were left out.
+	if !strings.Contains(digest, "14 earlier ones are left out") {
+		t.Errorf("digest does not say how many steers were left out:\n%s", digest)
+	}
+	if len(digest) > 4000 {
+		t.Errorf("digest is %d characters; want the guidance capped well below the clip budget", len(digest))
+	}
+	if !strings.Contains(digest, "note 19") {
+		t.Errorf("digest should keep the most recent steer:\n%s", digest)
+	}
+}

@@ -33,12 +33,16 @@ func (m *Manager) registerLive(sessionID, agentName, mode string) chan agent.Ste
 func (m *Manager) finishLive(sessionID string, ch chan agent.Steer) {
 	m.mu.Lock()
 	delete(m.live, sessionID)
-	m.mu.Unlock()
+	var leftover []agent.Steer
 	for {
 		select {
 		case s := <-ch:
-			_ = m.st.AddEvent(sessionID, "steerstate", s.ID+"\n"+agent.MsgFailed)
+			leftover = append(leftover, s)
 		default:
+			m.mu.Unlock()
+			for _, s := range leftover {
+				_ = m.st.AddEvent(sessionID, "steerstate", s.ID+"\n"+agent.MsgFailed)
+			}
 			return
 		}
 	}
@@ -54,19 +58,13 @@ func (m *Manager) Steer(sessionID, text string, now bool) (string, error) {
 // SteerWith is Steer with images attached: they are copied into the sandbox before
 // the agent reads the message, and the message tells it where they are.
 func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool) (string, error) {
+	// Whether the agent can take a message at all is answered first, so that is
+	// what the owner hears about rather than anything to do with attachments.
 	m.mu.Lock()
-	ch, ok := m.live[sessionID]
+	_, live := m.live[sessionID]
 	m.mu.Unlock()
-	if !ok {
-		x, found, _ := m.st.Session(sessionID)
-		switch {
-		case !found:
-			return "", errors.New("no such session")
-		case store.Finished(x.Status):
-			return "", errors.New("the agent has finished: send this as a reply")
-		default:
-			return "", errors.New("this agent cannot take messages while it works: it will read your reply when it finishes")
-		}
+	if !live {
+		return "", m.cannotSteer(sessionID)
 	}
 	id := newID()
 	mode := "next"
@@ -77,9 +75,22 @@ func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool
 	if err != nil {
 		return "", err
 	}
+	steer := agent.Steer{ID: id, Text: text + attachNote(saved), Now: now, Files: attachFiles(saved)}
+
+	// The send holds m.mu so the channel cannot be dropped and drained by
+	// finishLive in between, which would lose the message without a word.
+	m.mu.Lock()
+	ch, ok := m.live[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		removeSaved(saved)
+		return "", m.cannotSteer(sessionID)
+	}
 	select {
-	case ch <- agent.Steer{ID: id, Text: text + attachNote(saved), Now: now, Files: attachFiles(saved)}:
+	case ch <- steer:
+		m.mu.Unlock()
 	default:
+		m.mu.Unlock()
 		removeSaved(saved)
 		return "", errors.New("too many messages are waiting for the agent")
 	}
@@ -91,18 +102,33 @@ func (m *Manager) SteerWith(sessionID, text string, files []Attachment, now bool
 	return id, nil
 }
 
+// cannotSteer says why a session is not taking messages right now.
+func (m *Manager) cannotSteer(sessionID string) error {
+	x, found, _ := m.st.Session(sessionID)
+	switch {
+	case !found:
+		return errors.New("no such session")
+	case store.Finished(x.Status):
+		return errors.New("the agent has finished: send this as a reply")
+	default:
+		return errors.New("this agent cannot take messages while it works: it will read your reply when it finishes")
+	}
+}
+
 // Promote makes the agent take a message that is still waiting, right away: it
 // is interrupted and given everything that waits, at once.
 func (m *Manager) Promote(sessionID, messageID string) error {
 	m.mu.Lock()
 	ch, ok := m.live[sessionID]
-	m.mu.Unlock()
 	if !ok {
+		m.mu.Unlock()
 		return errors.New("the agent is not running")
 	}
 	select {
 	case ch <- agent.Steer{ID: messageID, Promote: true, Now: true}:
+		m.mu.Unlock()
 	default:
+		m.mu.Unlock()
 		return errors.New("too many messages are waiting for the agent")
 	}
 	_ = m.st.AddEvent(sessionID, "steerstate", messageID+"\npromoting")

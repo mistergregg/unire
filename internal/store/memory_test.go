@@ -95,3 +95,60 @@ func TestRepoKey(t *testing.T) {
 		t.Errorf("RepoKey = %q", k)
 	}
 }
+
+func TestEventsByKindPushEventsAndLastOwnerEventsAfterHeavyLogging(t *testing.T) {
+	s, _ := open(t)
+	if err := s.CreateSession(Session{ID: "s1", Task: "t", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO session_events (session_id, ts, kind, text) VALUES ('s1', 1, 'log', 'noisy progress line')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5100; i++ {
+		if _, err := stmt.Exec(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range []struct{ kind, text string }{
+		{"log", "api: pushed agent/claude/b"},
+		{"steer", "mid-turn guidance"},
+		{"ask", `{"id":"q1","question":"keep going?"}`},
+		{"answer", "yes"},
+		{"out", "final answer"},
+	} {
+		if err := s.AddEvent("s1", ev.kind, ev.text); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	byKind, err := s.EventsByKind("s1", "out", "steer", "answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byKind) != 3 {
+		t.Fatalf("EventsByKind len = %d; want 3 (%+v)", len(byKind), byKind)
+	}
+	pushes, err := s.PushEvents("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pushes) != 1 || !strings.Contains(pushes[0].Text, ": pushed ") {
+		t.Errorf("PushEvents = %+v", pushes)
+	}
+	owners, err := s.LastOwnerEvents([]string{"s1", "s2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owners["s1"].IsZero() {
+		t.Errorf("LastOwnerEvents missing s1: %+v", owners)
+	}
+}

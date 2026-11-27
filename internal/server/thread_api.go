@@ -23,7 +23,7 @@ func (s *Server) threadOf(id string) ([]store.Session, error) { return s.store.T
 // viewWithPushed is toView plus the repos the session pushed a branch to.
 func (s *Server) viewWithPushed(x store.Session) sessionView {
 	v := toView(x)
-	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
+	if events, err := s.store.PushEvents(x.ID); err == nil {
 		v.Pushed = pushedFrom(events, x.Repos)
 	}
 	if prs, err := s.store.PullRequests(x.ID); err == nil && len(prs) > 0 {
@@ -88,7 +88,8 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 // startReply starts the next turn of the conversation that x ends. It is the one path
 // for a reply the owner types and for one Unire starts itself (see autofix.go).
 // A nil model means none was given: the same agent keeps the model of the turn before,
-// and another agent starts from its own default. An empty one asks for the default.
+// and another agent starts from the model saved for it on the Agents page. An empty
+// one asks for that saved model, or the CLI's own default when none is saved.
 func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, model *string, images []sessions.Attachment) (store.Session, error) {
 	prompt = strings.TrimSpace(prompt)
 	var chosen string
@@ -115,7 +116,10 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 		agentID = x.Agent
 	}
 	if model == nil && agentID == x.Agent {
-		chosen = x.Model
+		chosen = x.Model // the same agent carries on with the model it used
+	}
+	if chosen == "" {
+		chosen = s.agentDefaultModel(agentID)
 	}
 	ad, err := agent.Get(agentID)
 	if err != nil {
@@ -126,7 +130,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	}
 	// Build on the branch the last turn pushed; a repo it left alone starts as before.
 	pushed := map[string]bool{}
-	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
+	if events, err := s.store.PushEvents(x.ID); err == nil {
 		for _, name := range pushedFrom(events, x.Repos) {
 			pushed[name] = true
 		}
@@ -164,7 +168,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	// said and done in it; it hears only what happened since (another agent's turns).
 	// The full digest is the fallback if that conversation is gone, and what another
 	// agent is told.
-	resume, preamble, fallback := replyContext(thread, agentID, s.lastAnswer)
+	resume, preamble, fallback := replyContext(thread, agentID, s.turnDigestText)
 	// A chat that follows a parent hears what the parent has done since it last looked.
 	rootSession := thread[0]
 	upSeen := rootSession.UpstreamSeen
@@ -200,7 +204,7 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string    `json:"prompt"`
 		Agent  string    `json:"agent"`  // empty: the same agent
-		Model  *string   `json:"model"`  // omitted: the same agent keeps its last model; empty: the agent's default
+		Model  *string   `json:"model"`  // omitted: the same agent keeps its last model; empty: the agent's saved default
 		Images []imageIn `json:"images"` // attached to the message
 	}
 	if !readMessage(w, r, &req) {
@@ -233,6 +237,11 @@ const (
 	olderRequest     = 800
 	olderAnswer      = 1200
 	olderBudget      = 16000
+	// Mid-turn guidance and clarifications go after the answer, so they are
+	// kept short: enough to carry what was asked for, not enough to crowd out
+	// the answer itself.
+	digestGuidanceChars = 400
+	digestGuidanceLines = 6
 )
 
 func clip(s string, n int) string {
@@ -323,19 +332,55 @@ func replyContext(thread []store.Session, agentID string, answer func(id string)
 	return "", full, ""
 }
 
-// lastAnswer is what the agent printed as its answer in a session.
-func (s *Server) lastAnswer(id string) string {
-	events, err := s.store.Events(id, 0, 5000)
+// turnDigestText returns the agent's printed answer for a turn along with any
+// mid-turn owner steers or question/answer clarifications so follow-on agents
+// preserve that context across agent switches, forks, and parent digests.
+func (s *Server) turnDigestText(id string) string {
+	events, err := s.store.EventsByKind(id, "out", "steer", "ask", "answer")
 	if err != nil {
 		return ""
 	}
-	var lines []string
+	var outLines, steerLines, qaLines []string
 	for _, e := range events {
-		if e.Kind == "out" {
-			lines = append(lines, e.Text)
+		switch e.Kind {
+		case "out":
+			outLines = append(outLines, e.Text)
+		case "steer":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				steerLines = append(steerLines, clip(t, digestGuidanceChars))
+			}
+		case "ask":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				qaLines = append(qaLines, "Asked: "+clip(t, digestGuidanceChars))
+			}
+		case "answer":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				qaLines = append(qaLines, "Answered: "+clip(t, digestGuidanceChars))
+			}
 		}
 	}
-	return strings.Join(lines, "\n")
+	// The answer comes first: callers clip this text to a budget that keeps the
+	// start, so a turn with many steers must not push the answer out of it.
+	var parts []string
+	if len(outLines) > 0 {
+		parts = append(parts, strings.Join(outLines, "\n"))
+	}
+	if lines := lastFew(steerLines, digestGuidanceLines); len(lines) > 0 {
+		parts = append(parts, "Mid-turn owner guidance:\n- "+strings.Join(lines, "\n- "))
+	}
+	if lines := lastFew(qaLines, digestGuidanceLines); len(lines) > 0 {
+		parts = append(parts, "Clarifications:\n"+strings.Join(lines, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// lastFew keeps the most recent n entries, saying how many were left out.
+func lastFew(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	kept := append([]string{fmt.Sprintf("(%d earlier ones are left out.)", len(lines)-n)}, lines[len(lines)-n:]...)
+	return kept
 }
 
 // answerQuestion gives the owner's answer to a question the agent is waiting on.

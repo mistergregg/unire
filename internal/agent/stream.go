@@ -32,6 +32,8 @@ type Event struct {
 	Msgs []MsgState
 	// Usage carries the latest usage limits reading if this event reported one.
 	Usage *AgentUsage
+	// Conversation carries the agent's own conversation id when reported on a stream event.
+	Conversation string
 }
 
 // clip makes s a single short line.

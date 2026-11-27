@@ -1,11 +1,13 @@
 package server
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -411,21 +413,15 @@ func toView(x store.Session) sessionView {
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
-	recent, err := s.store.Sessions(500)
+	all, err := s.store.Sessions(100000)
 	if err != nil {
 		serverError(w)
 		return
 	}
-	list := recent
-	if len(list) > 100 {
-		list = list[:100]
-	}
-	byID := make(map[string]store.Session, len(recent))
-	childOf := make(map[string]store.Session, len(recent))
-	ids := make([]string, 0, len(recent))
-	for _, x := range recent {
+	byID := make(map[string]store.Session, len(all))
+	childOf := make(map[string]store.Session, len(all))
+	for _, x := range all {
 		byID[x.ID] = x
-		ids = append(ids, x.ID)
 		if x.ParentID != "" {
 			// Sessions come back newest first and a reply is newer than its
 			// parent, so the last write wins and holds the oldest child: the
@@ -433,7 +429,35 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 			childOf[x.ParentID] = x
 		}
 	}
-	lastOwners, err := s.store.LastOwnerEvents(ids)
+	type conv struct {
+		root   store.Session
+		newest store.Session
+	}
+	var convs []conv
+	newestIDs := make([]string, 0)
+	for _, x := range all {
+		if x.ParentID != "" {
+			if _, ok := byID[x.ParentID]; ok {
+				continue // a reply: shown inside its conversation
+			}
+			if _, ok, _ := s.store.Session(x.ParentID); ok {
+				continue
+			}
+		}
+		newest := x
+		seen := map[string]bool{x.ID: true}
+		for {
+			ch, ok := childOf[newest.ID]
+			if !ok || seen[ch.ID] {
+				break
+			}
+			seen[ch.ID] = true
+			newest = ch
+		}
+		convs = append(convs, conv{root: x, newest: newest})
+		newestIDs = append(newestIDs, newest.ID)
+	}
+	lastOwners, err := s.store.LastOwnerEvents(newestIDs)
 	if err != nil {
 		lastOwners = nil
 	}
@@ -456,46 +480,31 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	// One row per conversation: its first turn, with the newest turn's status.
-	out := []sessionView{}
-	for _, x := range list {
-		if x.ParentID != "" {
-			has := false
-			if _, ok := byID[x.ParentID]; ok {
-				has = true
-			} else if _, ok, _ := s.store.Session(x.ParentID); ok {
-				has = true
-			}
-			if has {
-				continue // a reply: shown inside its conversation
-			}
+	out := make([]sessionView, 0, len(convs))
+	for _, c := range convs {
+		v := toView(c.root)
+		if c.newest.ID != c.root.ID {
+			v.Latest, v.LatestStatus = c.newest.ID, c.newest.Status
 		}
-		v := toView(x)
-		newest := x
-		seen := map[string]bool{x.ID: true}
-		for {
-			ch, ok := childOf[newest.ID]
-			if !ok || seen[ch.ID] {
-				break
-			}
-			seen[ch.ID] = true
-			newest = ch
-		}
-		if newest.ID != x.ID {
-			v.Latest, v.LatestStatus = newest.ID, newest.Status
-		}
-		v.Waiting = s.sessions.Waiting(newest.ID)
+		v.Waiting = s.sessions.Waiting(c.newest.ID)
 		var owner time.Time
 		if lastOwners != nil {
-			owner = lastOwners[newest.ID]
+			owner = lastOwners[c.newest.ID]
 		} else {
-			owner, _ = s.store.LastOwnerEvent(newest.ID)
+			owner, _ = s.store.LastOwnerEvent(c.newest.ID)
 		}
-		v.LastActive = lastActive(newest, owner)
-		if prs, ok := prsByRoot[x.ID]; ok {
+		v.LastActive = lastActive(c.newest, owner)
+		if prs, ok := prsByRoot[c.root.ID]; ok {
 			v.Pulls = prs
 		}
 		out = append(out, v)
 	}
+	slices.SortFunc(out, func(a, b sessionView) int {
+		if a.LastActive != b.LastActive {
+			return cmp.Compare(b.LastActive, a.LastActive)
+		}
+		return cmp.Compare(b.CreatedAt, a.CreatedAt)
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 

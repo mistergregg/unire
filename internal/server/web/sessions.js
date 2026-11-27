@@ -42,8 +42,18 @@ async function refreshSidebar() {
 const lastTouched = (s) => s.lastActive || s.startedAt || s.createdAt;
 
 
+const SIDE_BATCH = 50;
 let sideSignature = "";
 let sideFilter = "all"; // "all", "active", or "prs"
+let sideVisibleCount = SIDE_BATCH;
+let sideTotalFiltered = 0;
+let sideObserver = null;
+
+function loadNextSidebarBatch() {
+  if (sideVisibleCount >= sideTotalFiltered) return;
+  sideVisibleCount += SIDE_BATCH;
+  renderSidebar(sideList);
+}
 
 function initSideFilters() {
   const btns = { all: $("side-filter-all"), active: $("side-filter-active"), prs: $("side-filter-prs") };
@@ -52,6 +62,7 @@ function initSideFilters() {
     btn.addEventListener("click", () => {
       if (sideFilter === mode) return;
       sideFilter = mode;
+      sideVisibleCount = SIDE_BATCH;
       for (const [m, b] of Object.entries(btns)) {
         if (!b) continue;
         b.classList.toggle("active", m === mode);
@@ -106,20 +117,47 @@ function renderSidebar(list) {
   const sorted = [...shown].sort((a, b) =>
     (sideFilter === "prs" ? Number(hasOpenPR(b)) - Number(hasOpenPR(a)) : 0) ||
     lastTouched(b) - lastTouched(a) || b.createdAt - a.createdAt);
+  sideTotalFiltered = sorted.length;
+  const visible = sorted.slice(0, sideVisibleCount);
   // Draw again only when something changed, so the little lights keep pulsing
   // instead of starting over every few seconds.
-  const sig = q + "|" + sideFilter + "|" + selectedRoot + "|" + Math.floor(Date.now() / 60000) + "|" +
-    sorted.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive, (s.pulls || []).map((p) => p.number + ":" + p.state).join("-")].join(":")).join(",");
+  const sig = q + "|" + sideFilter + "|" + selectedRoot + "|" + visible.length + "|" + sorted.length + "|" + Math.floor(Date.now() / 60000) + "|" +
+    visible.map((s) => [s.id, s.task, s.status, s.latestStatus, s.waiting, s.lastActive, (s.pulls || []).map((p) => p.number + ":" + p.state).join("-")].join(":")).join(",");
   if (sig === sideSignature) return;
   sideSignature = sig;
   const emptyText = q ? "No chats match."
     : sideFilter === "prs" ? "No chats with pull requests."
     : sideFilter === "active" ? "No active or waiting chats."
     : "No chats yet. Add a git server, then press New chat.";
-  $("session-list").replaceChildren(...(sorted.length ? sorted.map(sessionRow)
-    : [el("p", { class: "muted" }, emptyText)]));
+  const listEl = $("session-list");
+  const prevScroll = listEl.scrollTop;
+  if (sideObserver) { sideObserver.disconnect(); sideObserver = null; }
+  if (!visible.length) {
+    listEl.replaceChildren(el("p", { class: "muted" }, emptyText));
+    return;
+  }
+  const nodes = visible.map(sessionRow);
+  const remaining = sorted.length - visible.length;
+  if (remaining > 0) {
+    const moreBtn = el("button", { type: "button", class: "ghost compact side-more" },
+      "Load more (" + remaining + " more)");
+    moreBtn.addEventListener("click", loadNextSidebarBatch);
+    nodes.push(moreBtn);
+    if ("IntersectionObserver" in window) {
+      sideObserver = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadNextSidebarBatch();
+      }, { rootMargin: "80px" });
+      sideObserver.observe(moreBtn);
+    }
+  }
+  listEl.replaceChildren(...nodes);
+  if (prevScroll > 0) listEl.scrollTop = prevScroll;
 }
-$("side-search").addEventListener("input", () => { sideSignature = ""; renderSidebar(sideList); });
+$("session-list").addEventListener("scroll", () => {
+  const listEl = $("session-list");
+  if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 40) loadNextSidebarBatch();
+});
+$("side-search").addEventListener("input", () => { sideVisibleCount = SIDE_BATCH; sideSignature = ""; renderSidebar(sideList); });
 
 function sessionRow(s) {
   const open = () => guarded(null, () => openSession(s.id));

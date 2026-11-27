@@ -27,6 +27,8 @@ const ICONS = {
   shield: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   key: '<circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5L20 3M16 7l3 3"/>',
   bell: '<path d="M6 16v-5a6 6 0 0112 0v5l2 2H4z"/><path d="M10 21h4"/>',
   download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
@@ -141,7 +143,7 @@ function show(name) {
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
   if (name === "sessions") setViewHash("");
-  else if (name !== "auth" && name !== "session" && name !== "repomem") setViewHash(name);
+  else if (name !== "auth" && name !== "session" && name !== "repomem" && name !== "settings") setViewHash(name);
   if (name === "sessions" || name === "auth") window.scrollTo(0, 0);
   if ((name === "new" || name === "session") && typeof refreshUsage === "function") refreshUsage();
 }
@@ -184,9 +186,11 @@ async function navigateHash() {
   if (rm) {
     try { return await openRepoMemory(decodeURIComponent(rm[1])); } catch (_) {}
   }
+  const sm = /^#settings(?:\/(general|sandboxes|account))?$/.exec(h);
+  if (sm) return await openSettings(sm[1] || "general");
   const byHash = {
     "#new": openNew, "#prs": openPullsOverview, "#agents": openAgents,
-    "#memory": openMemory, "#servers": openServers, "#settings": openSettings, "#health": openHealth,
+    "#memory": openMemory, "#servers": openServers, "#health": openHealth,
   };
   if (byHash[h]) return await byHash[h]();
   await openSessions();
@@ -384,15 +388,61 @@ if ($("theme-picker")) {
   });
 }
 
-async function openSettings() {
+const SETTINGS_TABS = ["general", "sandboxes", "account"];
+let activeSettingsTab = "general";
+
+function selectSettingsTab(tab, updateHash) {
+  const next = SETTINGS_TABS.includes(tab) ? tab : "general";
+  activeSettingsTab = next;
+  document.querySelectorAll("#view-settings .settings-tab").forEach((btn) => {
+    const active = btn.dataset.settingsTab === next;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+  for (const id of SETTINGS_TABS) {
+    const pane = $("settings-pane-" + id);
+    if (pane) pane.hidden = id !== next;
+  }
+  if (updateHash && currentView === "settings") {
+    setViewHash(next === "general" ? "settings" : "settings/" + next);
+  }
+}
+
+const settingsTabBar = document.querySelector("#view-settings .settings-tabs");
+if (settingsTabBar) {
+  settingsTabBar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".settings-tab");
+    if (!btn) return;
+    selectSettingsTab(btn.dataset.settingsTab, true);
+  });
+  settingsTabBar.addEventListener("keydown", (e) => {
+    const tabs = [...settingsTabBar.querySelectorAll(".settings-tab")];
+    const idx = tabs.indexOf(document.activeElement);
+    if (idx < 0) return;
+    let nextIdx = -1;
+    if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") nextIdx = 0;
+    else if (e.key === "End") nextIdx = tabs.length - 1;
+    if (nextIdx < 0) return;
+    e.preventDefault();
+    tabs[nextIdx].focus();
+    selectSettingsTab(tabs[nextIdx].dataset.settingsTab, true);
+  });
+}
+
+async function openSettings(tab) {
   show("settings");
+  selectSettingsTab(tab || activeSettingsTab, true);
   syncThemePicker();
-  fillSandbox(await api("GET", "/api/sandbox"));
-  fillLimits(await api("GET", "/api/limits"));
-  $("pr-auto").checked = (await api("GET", "/api/pulls/settings")).autoOpen;
-  fillNetwork(await api("GET", "/api/network"));
-  await renderWorkspaces();
-  await renderLogins();
+  await Promise.all([
+    api("GET", "/api/sandbox").then(fillSandbox),
+    api("GET", "/api/limits").then(fillLimits),
+    api("GET", "/api/pulls/settings").then((r) => { $("pr-auto").checked = r.autoOpen; }),
+    api("GET", "/api/network").then(fillNetwork),
+    renderWorkspaces(),
+    renderLogins(),
+  ]);
 }
 
 $("sb-form").addEventListener("submit", (e) => {

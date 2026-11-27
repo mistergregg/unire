@@ -47,9 +47,11 @@ document.querySelectorAll("[data-icon]").forEach((n) => { n.innerHTML = iconSvg(
 
 // ---- model picker: "Default", the agent's known models, or a name typed in ----
 // The picker follows an agent: fill(agent, model) offers that agent's models (from
-// GET /api/agents) and selects model; an empty model is the agent's own default.
+// GET /api/agents) and selects model; an empty model means the model saved for the
+// agent on the Agents page, and the CLI's own default when none is saved. Pass
+// defaultLabel to name that first option something else.
 const OTHER_MODEL = "\u0000other";
-function modelPicker(select, input) {
+function modelPicker(select, input, defaultLabel) {
   // The picker is narrow, so long names are cut off: the full one shows on hover.
   const sync = () => {
     input.hidden = select.value !== OTHER_MODEL;
@@ -59,7 +61,9 @@ function modelPicker(select, input) {
   return {
     fill(agent, model) {
       const known = (agent && agent.models) || [];
-      select.replaceChildren(el("option", { value: "" }, "Default model"),
+      const saved = (agent && agent.defaultModel) || "";
+      const first = defaultLabel ? defaultLabel(agent) : saved ? "Default model (" + saved + ")" : "Default model";
+      select.replaceChildren(el("option", { value: "" }, first),
         ...known.map((m) => el("option", { value: m }, m)),
         el("option", { value: OTHER_MODEL }, "Other…"));
       model = model || "";
@@ -68,7 +72,7 @@ function modelPicker(select, input) {
       input.value = typed ? model : "";
       sync();
     },
-    // The model to send: "" for the agent's default.
+    // The model to send: "" for the model saved for the agent.
     value() { return select.value === OTHER_MODEL ? input.value.trim() : select.value; },
     set disabled(v) { select.disabled = v; input.disabled = v; },
   };

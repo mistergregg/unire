@@ -51,22 +51,17 @@ func (s *Server) afterTurn(ctx context.Context, sessionID string) []string {
 	if !s.autoOpenPulls() {
 		return nil
 	}
-	events, err := s.store.Events(sessionID, 0, 5000)
-	if err != nil {
+	titles, err := s.store.EventsByKind(sessionID, "prtitle")
+	if err != nil || len(titles) == 0 {
 		return nil
 	}
-	suggested := false
+	pushEvs, err := s.store.PushEvents(sessionID)
+	if err != nil || len(pushEvs) == 0 {
+		return nil
+	}
 	var pushed []string
-	for _, e := range events {
-		switch {
-		case e.Kind == "prtitle":
-			suggested = true
-		case e.Kind == "log" && (strings.Contains(e.Text, ": pushed ") || strings.Contains(e.Text, ": also pushed ")):
-			pushed = append(pushed, e.Text)
-		}
-	}
-	if !suggested || len(pushed) == 0 {
-		return nil
+	for _, e := range pushEvs {
+		pushed = append(pushed, e.Text)
 	}
 	thread, err := s.threadOf(sessionID)
 	if err != nil || len(thread) == 0 {

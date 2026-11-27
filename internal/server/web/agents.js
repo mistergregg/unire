@@ -19,6 +19,37 @@ function stateBadge(a) {
   return el("span", { class: "badge" }, "sign-in unknown");
 }
 
+// How many models the agent offers, when that list was last checked, and what
+// went wrong if a check failed.
+function modelsLine(a) {
+  const parts = [];
+  const n = (a.models || []).length;
+  parts.push(n ? n + " model" + (n === 1 ? "" : "s") + " known" : "no model list yet");
+  if (a.modelsUpdatedAt) parts.push("checked " + ago(a.modelsUpdatedAt));
+  const line = el("div", { class: "models-note" }, el("span", {}, parts.join(" · ")));
+  if (a.modelsNote) line.append(el("span", { class: "badge st-failed" }, a.modelsNote));
+  return line;
+}
+
+// The model the agent uses when a session does not name one. Saving an empty
+// value puts it back to whatever the CLI itself picks.
+function defaultModelRow(a) {
+  const select = el("select", {});
+  const typed = el("input", { type: "text", placeholder: "model name", hidden: "" });
+  const picker = modelPicker(select, typed, () => "The CLI's own default");
+  picker.fill(a, a.defaultModel || "");
+  const save = el("button", { type: "button", class: "ghost" }, "Save");
+  save.addEventListener("click", () => guarded(save, async () => {
+    const r = await api("PUT", "/api/agents/" + encodeURIComponent(a.id) + "/model", { model: picker.value() });
+    a.defaultModel = r.model;
+    banner(r.model
+      ? "New " + a.label + " sessions use " + r.model + " unless they name a model."
+      : a.label + " is back to the model its CLI picks.");
+  }));
+  return el("div", { class: "model-row" },
+    el("span", { class: "label" }, "Default model"), select, typed, save);
+}
+
 function renderAgents(list) {
   $("agent-list").replaceChildren(...list.map((a) => {
     const signIn = el("button", { class: a.loggedIn ? "" : "primary" }, a.loggedIn ? "Sign in again" : "Sign in");
@@ -59,6 +90,8 @@ function renderAgents(list) {
         el("div", { class: "tile-title" }, el("span", { class: "name" }, a.label)),
         stateBadge(a)),
       el("div", { class: "tile-body" }, a.description),
+      defaultModelRow(a),
+      modelsLine(a),
       el("div", { class: "item-actions" }, signIn),
       el("details", {},
         el("summary", {}, "Troubleshoot"),
@@ -69,6 +102,23 @@ function renderAgents(list) {
 
 async function recheckAgents() {
   renderAgents(await api("POST", "/api/agents/recheck"));
+}
+
+// Ask the CLIs what models they offer now. A probe can take most of a minute and
+// runs in the background, so the page picks the lists up as they land instead of
+// making anyone wait for them.
+async function refreshModels() {
+  renderAgents(await api("POST", "/api/agents/models/refresh"));
+  banner("Asking each signed-in CLI which models it offers; this can take a moment.");
+  pollModels().catch(() => {});
+}
+
+async function pollModels() {
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 6000));
+    if (currentView !== "agents" || termSession) return;
+    renderAgents(await api("GET", "/api/agents"));
+  }
 }
 
 // ---- the sign-in terminal ----
@@ -161,3 +211,5 @@ $("term-close").addEventListener("click", () => {
   closeTerminal();
   guarded(null, recheckAgents);
 });
+
+$("agents-refresh-models").addEventListener("click", (e) => guarded(e.currentTarget, refreshModels));

@@ -38,6 +38,7 @@ type streamWriter struct {
 	immediate bool
 	onMessage func(id, state string)
 	onUsage   func(*agent.AgentUsage)
+	onConv    func(string)
 	afterLine func()
 	// exitMarker starts a line that says the process has ended; onExit is called
 	// when it is seen and the line is not shown.
@@ -88,6 +89,9 @@ func (w *streamWriter) line(l string) {
 		return
 	}
 	ev := w.s.ParseEvent(l)
+	if ev.Conversation != "" && w.onConv != nil {
+		w.onConv(ev.Conversation)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if !ev.Known {

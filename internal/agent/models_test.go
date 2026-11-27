@@ -82,3 +82,15 @@ func TestParseClaudeModelsOutputErrors(t *testing.T) {
 		t.Error("expected error when control_response is missing")
 	}
 }
+
+func TestParseCodexModelsOutputSpaceAndModelsKey(t *testing.T) {
+	out := "warning: skipping line\n" + `{"id": 2, "result": {"models": [{"id": "gpt-6-luna"}, {"model": "gpt-6-mini", "hidden": false}]}}` + "\n"
+	got, err := ParseCodexModelsOutput(out)
+	if err != nil {
+		t.Fatalf("ParseCodexModelsOutput: %v", err)
+	}
+	want := []string{"gpt-6-luna", "gpt-6-mini"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

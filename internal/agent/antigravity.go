@@ -148,14 +148,18 @@ func (antigravity) ParseEvent(line string) Event {
 		return Event{}
 	}
 	kind, _ := m["event"].(string)
+	convID, _ := m["conversation_id"].(string)
 	switch kind {
 	case "":
 		return Event{}
 	case "init":
-		return Event{Known: true}
+		return Event{Known: true, Conversation: convID}
 	case "result":
 		res, _ := m["result"].(map[string]any)
-		ev := Event{Known: true, Answer: firstString(res, "response")}
+		if convID == "" {
+			convID, _ = res["conversation_id"].(string)
+		}
+		ev := Event{Known: true, Answer: firstString(res, "response"), Conversation: convID}
 		status, _ := res["status"].(string)
 		switch e := firstString(res, "error"); {
 		case status == "INTERRUPTED" || status == "CANCELED" || strings.EqualFold(strings.TrimSpace(e), "interrupted"):

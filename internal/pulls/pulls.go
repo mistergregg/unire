@@ -88,7 +88,7 @@ func (s *Service) pushes(thread []store.Session) ([]pushed, map[pushed]store.Ses
 		last[p] = t
 	}
 	for _, t := range thread {
-		events, err := s.Store.Events(t.ID, 0, 5000)
+		events, err := s.Store.PushEvents(t.ID)
 		if err != nil {
 			continue
 		}
@@ -98,9 +98,6 @@ func (s *Service) pushes(thread []store.Session) ([]pushed, map[pushed]store.Ses
 		}
 		dirs := sessions.RepoDirNames(names)
 		for _, e := range events {
-			if e.Kind != "log" {
-				continue
-			}
 			for i, d := range dirs {
 				ref := t.Repos[i]
 				switch {
@@ -219,7 +216,7 @@ func bodyOf(st *store.Store, thread []store.Session, t store.Session, task strin
 	if wrote != "" {
 		return wrote + footer
 	}
-	events, err := st.Events(t.ID, 0, 5000)
+	events, err := st.EventsByKind(t.ID, "out")
 	if err != nil {
 		return strings.TrimSpace(footer[5:])
 	}
@@ -729,7 +726,7 @@ func (s *Service) Updates(thread []store.Session) ([]Update, error) {
 
 // written is the title and description the agent wrote in a turn (pr and pr-body), if any.
 func written(st *store.Store, id string) (title, body string) {
-	events, err := st.Events(id, 0, 5000)
+	events, err := st.EventsByKind(id, "prtitle", "prbody")
 	if err != nil {
 		return "", ""
 	}

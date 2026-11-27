@@ -115,10 +115,30 @@ func (claude) ParseEvent(line string) Event {
 	if !ok {
 		return Event{}
 	}
+	sessID, _ := m["session_id"].(string)
 	switch m["type"] {
 	case "result":
 		ans, _ := m["result"].(string)
-		return Event{Known: true, Answer: ans}
+		ev := Event{Known: true, Answer: ans, Conversation: sessID}
+		// A failed turn is reported with is_error, while subtype stays "success"
+		// and the message is in result. The answer is kept (it is what the agent
+		// has to say) and the failure is noted in the log.
+		if isErr, _ := m["is_error"].(bool); isErr {
+			detail := firstString(m, "error", "api_error_type", "api_error_status")
+			if detail == "" {
+				if reason := firstString(m, "terminal_reason"); reason != "" && reason != "completed" {
+					detail = reason
+				}
+			}
+			if detail == "" {
+				detail = firstString(m, "result", "subtype")
+			}
+			ev.Progress = "agent error"
+			if detail != "" {
+				ev.Progress += ": " + clip(detail, 300)
+			}
+		}
+		return ev
 	case "assistant":
 		msg, _ := m["message"].(map[string]any)
 		blocks, _ := msg["content"].([]any)
@@ -149,7 +169,10 @@ func (claude) ParseEvent(line string) Event {
 		}
 		return ev
 	case "system", "user":
-		return Event{Known: true} // setup and tool results: nothing to show
+		// Setup and tool results: nothing to show, but the init event is the
+		// first place the session id appears, so a resume works even if the
+		// turn never reaches its result event.
+		return Event{Known: true, Conversation: sessID}
 	case "rate_limit_event":
 		ev := Event{Known: true, Progress: claudeUsage(m)}
 		if u := ParseClaudeUsage(m); u != nil {

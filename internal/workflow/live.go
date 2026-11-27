@@ -54,7 +54,7 @@ func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec
 		if err != nil {
 			return err
 		}
-		pending, lost, err := w.runLiveProcess(ctx, argv, drv, prompt, answers, deliver, resume != "")
+		pending, lost, err := w.runLiveProcess(ctx, argv, drv, prompt, answers, deliver, resume != "", w.opt.Control)
 		if c := drv.Resume(); c != "" {
 			w.conv = c
 		}
@@ -92,7 +92,7 @@ func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec
 
 // runLiveProcess runs one process until it ends. It returns the messages the
 // agent was never given, so the caller can start it again with them.
-func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string, resuming bool) ([]agent.Steer, bool, error) {
+func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string, resuming bool, liveControl <-chan agent.Steer) ([]agent.Steer, bool, error) {
 	pr, pw := io.Pipe()
 	var closeOnce sync.Once
 	closeInput := func() { closeOnce.Do(func() { _ = pw.Close() }) }
@@ -226,7 +226,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	for loop := true; loop; {
 		select {
 		case <-begun:
-			control = w.opt.Control
+			control = liveControl
 			begun = nil
 		case <-exited:
 			loop = false

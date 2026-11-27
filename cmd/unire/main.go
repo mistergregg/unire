@@ -84,6 +84,7 @@ func run(args []string) error {
 	task := fs.String("task", "", "short task name, used in the branch name (required)")
 	prompt := fs.String("prompt", "", "task for the agent; empty starts an interactive session")
 	agentName := fs.String("agent", "claude", "agent to run: "+strings.Join(agent.Names(), ", "))
+	model := fs.String("model", "", "model name (empty uses the agent's default)")
 	mode := fs.String("mode", agent.HandsOff, "hands-off or ask-first")
 	image := fs.String("image", "unire-sandbox", "sandbox image")
 	creds := fs.String("creds", "unire-creds-claude", "docker volume holding the agent login")
@@ -95,6 +96,9 @@ func run(args []string) error {
 	if *task == "" || len(repos) == 0 {
 		fs.Usage()
 		return fmt.Errorf("--task and at least one --repo are required")
+	}
+	if err := agent.ValidateModel(strings.TrimSpace(*model)); err != nil {
+		return err
 	}
 	var parsed []session.Repo
 	seen := map[string]bool{}
@@ -113,7 +117,7 @@ func run(args []string) error {
 	idb := make([]byte, 4)
 	_, _ = rand.Read(idb)
 	spec := session.Spec{
-		ID: hex.EncodeToString(idb), Task: *task, Agent: *agentName,
+		ID: hex.EncodeToString(idb), Task: *task, Agent: *agentName, Model: strings.TrimSpace(*model),
 		Prompt: *prompt, Mode: *mode, Repos: parsed, NoPush: *noPush,
 	}
 

@@ -407,10 +407,26 @@ func toView(x store.Session) sessionView {
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
-	list, err := s.store.Sessions(100)
+	recent, err := s.store.Sessions(500)
 	if err != nil {
 		serverError(w)
 		return
+	}
+	list := recent
+	if len(list) > 100 {
+		list = list[:100]
+	}
+	byID := make(map[string]store.Session, len(recent))
+	childOf := make(map[string]store.Session, len(recent))
+	for _, x := range recent {
+		byID[x.ID] = x
+		if x.ParentID != "" {
+			childOf[x.ParentID] = x
+		}
+	}
+	lastOwners, err := s.store.LastOwnerEvents()
+	if err != nil {
+		lastOwners = nil
 	}
 	allPRs, _ := s.store.AllPullRequests()
 	prsByRoot := map[string][]SessionPR{}
@@ -434,18 +450,37 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 	out := []sessionView{}
 	for _, x := range list {
 		if x.ParentID != "" {
-			if _, has, _ := s.store.Session(x.ParentID); has {
+			has := false
+			if _, ok := byID[x.ParentID]; ok {
+				has = true
+			} else if _, ok, _ := s.store.Session(x.ParentID); ok {
+				has = true
+			}
+			if has {
 				continue // a reply: shown inside its conversation
 			}
 		}
 		v := toView(x)
 		newest := x
-		if thread, err := s.threadOf(x.ID); err == nil && len(thread) > 1 {
-			newest = thread[len(thread)-1]
+		seen := map[string]bool{x.ID: true}
+		for {
+			ch, ok := childOf[newest.ID]
+			if !ok || seen[ch.ID] {
+				break
+			}
+			seen[ch.ID] = true
+			newest = ch
+		}
+		if newest.ID != x.ID {
 			v.Latest, v.LatestStatus = newest.ID, newest.Status
 		}
 		v.Waiting = s.sessions.Waiting(newest.ID)
-		owner, _ := s.store.LastOwnerEvent(newest.ID)
+		var owner time.Time
+		if lastOwners != nil {
+			owner = lastOwners[newest.ID]
+		} else {
+			owner, _ = s.store.LastOwnerEvent(newest.ID)
+		}
 		v.LastActive = lastActive(newest, owner)
 		if prs, ok := prsByRoot[x.ID]; ok {
 			v.Pulls = prs
@@ -459,7 +494,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Task     string          `json:"task"`
 		Agent    string          `json:"agent"`
-		Model    string          `json:"model"`
+		Model    *string         `json:"model"`
 		Prompt   string          `json:"prompt"`
 		Network  string          `json:"network"` // empty means the saved default
 		Memory   *bool           `json:"memory"`  // omitted means on
@@ -476,13 +511,17 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.Task, req.Prompt, req.Model = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt), strings.TrimSpace(req.Model)
-	if req.Model != "" {
-		if err := agent.ValidateModel(req.Model); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
+	var chosenModel string
+	if req.Model != nil {
+		chosenModel = strings.TrimSpace(*req.Model)
+		if chosenModel != "" {
+			if err := agent.ValidateModel(chosenModel); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 	}
+	req.Task, req.Prompt = strings.TrimSpace(req.Task), strings.TrimSpace(req.Prompt)
 	if req.Task == "" {
 		req.Task = taskNameFrom(req.Prompt) // the name is made from what was asked
 	}
@@ -498,6 +537,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if req.Model == nil {
+		chosenModel = s.agentDefaultModel(req.Agent)
 	}
 	// Fail fast, with a way forward, when the agent is known not to be signed in.
 	// Only for agents whose sign-in check has been verified: a guess must never
@@ -525,7 +567,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		if len(req.Repos) == 0 {
 			req.Repos = repos0
 		}
-		preamble = handoffPreamble(thread[0].Task, thread, s.lastAnswer, where)
+		preamble = handoffPreamble(thread[0].Task, thread, s.turnDigestText, where)
 	}
 	// Following a parent chat: it is told what the parent has done so far.
 	var upstreamID string
@@ -586,7 +628,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Model: req.Model, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Model: chosenModel, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

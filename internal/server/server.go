@@ -78,6 +78,9 @@ type Server struct {
 	now      func() time.Time
 	usage    usageProbes
 	models   modelsProbes
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
 }
 
 type failure struct {
@@ -103,12 +106,12 @@ func New(dataDir string) (*Server, error) {
 		// Fetch a newer sandbox image now, so the first session or sign-in after
 		// an update does not wait for the download, then refresh model lists
 		// from the current CLIs.
+		s.bgWG.Add(1)
 		safe.Go("image and models refresh", func() {
-			runner.Refresh(context.Background(), s.sandbox().Image)
-			select {
-			case <-s.stopCleanup:
+			defer s.bgWG.Done()
+			runner.Refresh(s.bgCtx, s.sandbox().Image)
+			if s.bgCtx.Err() != nil {
 				return
-			default:
 			}
 			s.refreshAllModels(true)
 		})
@@ -133,10 +136,12 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 		st.Close()
 		return nil, err
 	}
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	s := &Server{dataDir: dataDir, store: st, vault: v, runnerFactory: rf, egressProxy: proxy, egressInfo: info,
 		terminalFor: dockerTerminal, signins: statusCache{m: map[string]statusEntry{}}, failures: map[string]failure{}, now: time.Now,
+		bgCtx: bgCtx, bgCancel: bgCancel,
 		usage:  usageProbes{last: map[string]time.Time{}, busy: map[string]bool{}, note: map[string]string{}},
-		models: modelsProbes{last: map[string]time.Time{}, busy: map[string]bool{}, dirty: map[string]bool{}}}
+		models: modelsProbes{last: map[string]time.Time{}, busy: map[string]bool{}, dirty: map[string]bool{}, gen: map[string]uint64{}, note: map[string]string{}}}
 	s.pulls = &pulls.Service{Store: st, Provider: s.provider}
 	s.previews = newPreviewService()
 	s.stopCleanup = make(chan struct{})
@@ -153,11 +158,17 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 
 // Close stops running sessions and releases the database.
 func (s *Server) Close() error {
-	s.stopOnce.Do(func() { close(s.stopCleanup) })
+	s.stopOnce.Do(func() {
+		if s.bgCancel != nil {
+			s.bgCancel()
+		}
+		close(s.stopCleanup)
+	})
 	s.sessions.Shutdown()
 	s.previews.shutdown()
 	s.usage.wg.Wait()
 	s.models.wg.Wait()
+	s.bgWG.Wait()
 	return s.store.Close()
 }
 
@@ -178,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents", s.auth(s.listAgents))
 	mux.HandleFunc("GET /api/usage", s.auth(s.getUsage))
 	mux.HandleFunc("POST /api/agents/recheck", s.auth(s.recheckAgents))
+	mux.HandleFunc("POST /api/agents/models/refresh", s.auth(s.refreshModelsEndpoint))
+	mux.HandleFunc("PUT /api/agents/{id}/model", s.auth(s.putAgentModel))
 	mux.HandleFunc("GET /api/agents/{id}/last-signin", s.auth(s.lastSignin))
 	mux.HandleFunc("POST /api/agents/{id}/inspect", s.auth(s.agentTool(false)))
 	mux.HandleFunc("POST /api/agents/{id}/reset", s.auth(s.agentTool(true)))
@@ -285,9 +298,15 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // answer; the session cookie is also SameSite=Strict.
 func (s *Server) csrf(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Requested-With") != "unire" {
-			writeErr(w, http.StatusForbidden, "missing X-Requested-With header")
-			return
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+				writeErr(w, http.StatusForbidden, "cross-site request rejected")
+				return
+			}
+			if r.Header.Get("X-Requested-With") != "unire" {
+				writeErr(w, http.StatusForbidden, "missing X-Requested-With header")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

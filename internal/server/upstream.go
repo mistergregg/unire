@@ -51,10 +51,10 @@ func (s *Server) upstreamUpdate(ctx context.Context, child store.Session, all bo
 	title := parent[0].Task
 	if seen == 0 {
 		fmt.Fprintf(&b, "This chat has a parent chat, %q, which it follows. What has happened there so far:\n", title)
-		b.WriteString(conversationDigest(done, s.lastAnswer, "Its latest request was:", "and the result:"))
+		b.WriteString(conversationDigest(done, s.turnDigestText, "Its latest request was:", "and the result:"))
 	} else {
 		fmt.Fprintf(&b, "The parent chat, %q, has moved on since you last heard (%d new turn(s)):\n", title, len(done)-seen)
-		b.WriteString(conversationDigest(done[seen:], s.lastAnswer, "Its latest request was:", "and the result:"))
+		b.WriteString(conversationDigest(done[seen:], s.turnDigestText, "Its latest request was:", "and the result:"))
 	}
 	if len(where) > 0 {
 		b.WriteString("Where the parent's work is now:\n" + strings.Join(where, "\n") + "\n")

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/memory"
@@ -78,8 +79,9 @@ type Options struct {
 
 // MemoryPlan is the project memory for this session.
 type MemoryPlan struct {
-	Context string             // markdown the agent starts with; empty if there is none yet
-	Repos   []memory.RepoBrief // previous briefs, Dir matching the repo directory names
+	Context       string                    // markdown the agent starts with; empty if there is none yet
+	Repos         []memory.RepoBrief        // previous briefs, Dir matching the repo directory names
+	RefreshBriefs func() []memory.RepoBrief // optional: reloads the latest briefs right before updating memory
 }
 
 // Result is what a session produced besides its git branches.
@@ -324,6 +326,13 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 						opt.OnUsage(*u)
 					}
 				},
+				onConv: func(id string) {
+					w.mu.Lock()
+					if w.conv == "" {
+						w.conv = id
+					}
+					w.mu.Unlock()
+				},
 			}
 			agentOpts.Stdout = stream
 		}
@@ -352,6 +361,13 @@ func Run(ctx context.Context, r runner.Runner, spec session.Spec, opt Options) (
 		agentErr = sb.Exec(ctx, agentOpts)
 		if stream != nil {
 			stream.Close()
+		}
+		w.mu.Lock()
+		conv := w.conv
+		w.mu.Unlock()
+		if conv != "" {
+			res.Conversation = conv
+			ref = conv
 		}
 	}
 	stopAsks()
@@ -674,24 +690,53 @@ func (w *worker) rememberSession(ctx context.Context, ad agent.Adapter, spec ses
 	return res
 }
 
+func (w *worker) execFollowUp(ctx context.Context, ad agent.Adapter, spec session.Spec, ref, prompt, fresh string) error {
+	if argv, resumed := ad.FollowUp(prompt, spec.Mode, ref); resumed {
+		var errb bytes.Buffer
+		return w.sb.Exec(ctx, runner.ExecOpts{Argv: argv, Dir: workspace, Stdout: io.Discard, Stderr: &errb})
+	}
+	w.mu.Lock()
+	conv := w.conv
+	w.mu.Unlock()
+	if conv != "" {
+		if live, ok := ad.(agent.Live); ok {
+			argv, drv, err := live.StartLive(agent.LiveOptions{Prompt: prompt, Mode: spec.Mode, Resume: conv, Fallback: fresh, Dir: workspace})
+			if err == nil {
+				_, lost, rerr := w.runLiveProcess(ctx, argv, drv, prompt, io.Discard, nil, true, nil)
+				if c := drv.Resume(); c != "" {
+					w.mu.Lock()
+					w.conv = c
+					w.mu.Unlock()
+				}
+				if !lost {
+					return rerr
+				}
+			}
+		}
+	}
+	argv, err := ad.Command(fresh, spec.Mode, "")
+	if err != nil {
+		return err
+	}
+	var errb bytes.Buffer
+	return w.sb.Exec(ctx, runner.ExecOpts{Argv: argv, Dir: workspace, Stdout: io.Discard, Stderr: &errb})
+}
+
 func (w *worker) askAgentToRemember(ctx context.Context, ad agent.Adapter, spec session.Spec, ref string) (string, map[string]string, error) {
 	if err := w.sb.Exec(ctx, runner.ExecOpts{Argv: []string{"mkdir", "-p", memory.OutDir}}); err != nil {
 		return "", nil, fmt.Errorf("cannot create %s: %v", memory.OutDir, err)
 	}
-	prompt := memory.UpdatePrompt(w.withDocs(ctx, w.opt.Mem.Repos), spec.Branch())
-	argv, resumed := ad.FollowUp(prompt, spec.Mode, ref)
-	if !resumed {
-		// This agent cannot resume its conversation, so a fresh one is told what happened.
-		fresh := prompt + "\n\nThe task you were given was:\n<task>\n" + spec.Prompt + "\n</task>\n" +
-			"You are in a new conversation: use git log and git diff in each repo (branch " + spec.Branch() + ") to see what was done."
-		var err error
-		if argv, err = ad.Command(fresh, spec.Mode, ""); err != nil {
-			return "", nil, err
+	repos := w.opt.Mem.Repos
+	if w.opt.Mem.RefreshBriefs != nil {
+		if latest := w.opt.Mem.RefreshBriefs(); len(latest) > 0 {
+			repos = latest
 		}
 	}
+	prompt := memory.UpdatePrompt(w.withDocs(ctx, repos), spec.Branch())
+	fresh := prompt + "\n\nThe task you were given was:\n<task>\n" + spec.Prompt + "\n</task>\n" +
+		"You are in a new conversation: use git log and git diff in each repo (branch " + spec.Branch() + ") to see what was done."
 	fmt.Fprintln(w.opt.Err, "memory: asking the agent to update project memory")
-	var errb bytes.Buffer
-	if err := w.sb.Exec(ctx, runner.ExecOpts{Argv: argv, Dir: workspace, Stdout: io.Discard, Stderr: &errb}); err != nil {
+	if err := w.execFollowUp(ctx, ad, spec, ref, prompt, fresh); err != nil {
 		return "", nil, fmt.Errorf("%v", err)
 	}
 	summary, err := w.readFile(ctx, memory.OutDir+"/"+memory.SummaryFile, 4*memory.SummaryCap)
@@ -1155,14 +1200,7 @@ func (w *worker) askAgentToFixPush(ctx context.Context, dir string, repo *sessio
 			"Fix the repository so the push can succeed (for example: remove or shrink what the server objects to, and amend or add a commit). Do not push: Unire pushes for you afterwards, and it already fetches and merges newer commits itself.",
 			name, repo.Name, dir, truncate(cause.Error(), 1500))
 	}
-	argv, resumed := w.ad.FollowUp(prompt, w.spec.Mode, w.ref)
-	if !resumed {
-		fresh := prompt + "\n\nThe task you were given was:\n<task>\n" + w.spec.Prompt + "\n</task>\nYou are in a new conversation: use git log and git diff to see what was done."
-		var err error
-		if argv, err = w.ad.Command(fresh, w.spec.Mode, ""); err != nil {
-			return false
-		}
-	}
+	fresh := prompt + "\n\nThe task you were given was:\n<task>\n" + w.spec.Prompt + "\n</task>\nYou are in a new conversation: use git log and git diff to see what was done."
 	timeout := w.opt.MemoryTimeout
 	if timeout == 0 {
 		timeout = 10 * time.Minute
@@ -1170,8 +1208,7 @@ func (w *worker) askAgentToFixPush(ctx context.Context, dir string, repo *sessio
 	fctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	fmt.Fprintf(w.opt.Err, "%s: the push did not work (%s); asking the agent to fix it\n", repo.Name, truncate(strings.Join(strings.Fields(cause.Error()), " "), 200))
-	var errb bytes.Buffer
-	if err := w.sb.Exec(fctx, runner.ExecOpts{Argv: argv, Dir: workspace, Stdout: io.Discard, Stderr: &errb}); err != nil {
+	if err := w.execFollowUp(fctx, w.ad, w.spec, w.ref, prompt, fresh); err != nil {
 		fmt.Fprintf(w.opt.Err, "%s: the agent could not fix it: %v\n", repo.Name, err)
 		return false
 	}
@@ -1197,7 +1234,11 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	cut := s[:n]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "…"
 }
 
 // rejectedPush reports whether git refused a push because the remote branch has

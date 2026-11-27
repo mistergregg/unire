@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ type codexLive struct {
 	queue       []Steer // messages to start as a turn once the current one ends
 	afterStop   []Steer // messages to start, together, once an interrupt has finished the turn
 	wantStop    bool    // interrupt as soon as the turn id is known
+	failed      bool    // initialize, thread, or turn failed fatally
 	lastMessage string  // the agent's latest message in this turn: its answer
 }
 
@@ -105,6 +107,10 @@ func (d *codexLive) Begin(in io.Writer, prompt string) error {
 
 func (d *codexLive) Send(s Steer) error {
 	d.mu.Lock()
+	if d.failed {
+		d.mu.Unlock()
+		return errors.New("codex session has failed")
+	}
 	var o out
 	switch {
 	case d.threadID == "":
@@ -205,7 +211,11 @@ func (d *codexLive) Line(line string) Event {
 		}
 		if failure != "" && (kind == "initialize" || kind == "thread" || kind == "turn") {
 			ev.Progress = "codex error: " + failure
-			d.active, d.sawTurn = false, true // nothing more will happen
+			d.active, d.sawTurn, d.failed = false, true, true // nothing more will happen
+			for _, s := range append(append([]Steer(nil), d.afterStop...), d.queue...) {
+				ev.Msgs = append(ev.Msgs, MsgState{ID: s.ID, State: MsgFailed})
+			}
+			d.afterStop, d.queue = nil, nil
 		}
 	case hasID && method != "": // a request from the server that Unire does not handle
 		o.add(map[string]any{"id": idf, "error": map[string]any{"code": -32601, "message": "Unire does not handle " + method}})
@@ -302,7 +312,7 @@ func (d *codexLive) describeItem(done bool, item map[string]any) (progress, text
 func (d *codexLive) Done() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.sawTurn && !d.active && len(d.queue) == 0 && len(d.afterStop) == 0
+	return d.failed || (d.sawTurn && !d.active && len(d.queue) == 0 && len(d.afterStop) == 0)
 }
 
 func (d *codexLive) Resume() string {
@@ -311,7 +321,17 @@ func (d *codexLive) Resume() string {
 	return d.threadID
 }
 
-func (d *codexLive) Pending() []Steer { return nil }
+func (d *codexLive) Pending() []Steer {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.afterStop) == 0 && len(d.queue) == 0 {
+		return nil
+	}
+	out := make([]Steer, 0, len(d.afterStop)+len(d.queue))
+	out = append(out, d.afterStop...)
+	out = append(out, d.queue...)
+	return out
+}
 
 // Promote takes a message that is waiting and interrupts the turn so it is read
 // now (together with anything else that waits).

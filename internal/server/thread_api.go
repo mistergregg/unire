@@ -23,7 +23,7 @@ func (s *Server) threadOf(id string) ([]store.Session, error) { return s.store.T
 // viewWithPushed is toView plus the repos the session pushed a branch to.
 func (s *Server) viewWithPushed(x store.Session) sessionView {
 	v := toView(x)
-	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
+	if events, err := s.store.PushEvents(x.ID); err == nil {
 		v.Pushed = pushedFrom(events, x.Repos)
 	}
 	if prs, err := s.store.PullRequests(x.ID); err == nil && len(prs) > 0 {
@@ -114,8 +114,12 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	if agentID == "" {
 		agentID = x.Agent
 	}
-	if model == nil && agentID == x.Agent {
-		chosen = x.Model
+	if model == nil {
+		if agentID == x.Agent {
+			chosen = x.Model
+		} else {
+			chosen = s.agentDefaultModel(agentID)
+		}
 	}
 	ad, err := agent.Get(agentID)
 	if err != nil {
@@ -126,7 +130,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	}
 	// Build on the branch the last turn pushed; a repo it left alone starts as before.
 	pushed := map[string]bool{}
-	if events, err := s.store.Events(x.ID, 0, 5000); err == nil {
+	if events, err := s.store.PushEvents(x.ID); err == nil {
 		for _, name := range pushedFrom(events, x.Repos) {
 			pushed[name] = true
 		}
@@ -164,7 +168,7 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 	// said and done in it; it hears only what happened since (another agent's turns).
 	// The full digest is the fallback if that conversation is gone, and what another
 	// agent is told.
-	resume, preamble, fallback := replyContext(thread, agentID, s.lastAnswer)
+	resume, preamble, fallback := replyContext(thread, agentID, s.turnDigestText)
 	// A chat that follows a parent hears what the parent has done since it last looked.
 	rootSession := thread[0]
 	upSeen := rootSession.UpstreamSeen
@@ -323,19 +327,44 @@ func replyContext(thread []store.Session, agentID string, answer func(id string)
 	return "", full, ""
 }
 
-// lastAnswer is what the agent printed as its answer in a session.
-func (s *Server) lastAnswer(id string) string {
-	events, err := s.store.Events(id, 0, 5000)
+// turnDigestText returns the agent's printed answer for a turn along with any
+// mid-turn owner steers or question/answer clarifications so follow-on agents
+// preserve that context across agent switches, forks, and parent digests.
+func (s *Server) turnDigestText(id string) string {
+	events, err := s.store.EventsByKind(id, "out", "steer", "ask", "answer")
 	if err != nil {
 		return ""
 	}
-	var lines []string
+	var outLines, steerLines, qaLines []string
 	for _, e := range events {
-		if e.Kind == "out" {
-			lines = append(lines, e.Text)
+		switch e.Kind {
+		case "out":
+			outLines = append(outLines, e.Text)
+		case "steer":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				steerLines = append(steerLines, clip(t, 400))
+			}
+		case "ask":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				qaLines = append(qaLines, "Asked: "+clip(t, 400))
+			}
+		case "answer":
+			if t := strings.TrimSpace(e.Text); t != "" {
+				qaLines = append(qaLines, "Answered: "+clip(t, 400))
+			}
 		}
 	}
-	return strings.Join(lines, "\n")
+	var parts []string
+	if len(steerLines) > 0 {
+		parts = append(parts, "Mid-turn owner guidance:\n- "+strings.Join(steerLines, "\n- "))
+	}
+	if len(qaLines) > 0 {
+		parts = append(parts, "Clarifications:\n"+strings.Join(qaLines, "\n"))
+	}
+	if len(outLines) > 0 {
+		parts = append(parts, strings.Join(outLines, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // answerQuestion gives the owner's answer to a question the agent is waiting on.

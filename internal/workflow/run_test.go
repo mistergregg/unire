@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -1456,5 +1457,55 @@ func TestAgentIsNotAskedAboutTokensOrNetwork(t *testing.T) {
 		if resumeCalls(sb) != 0 {
 			t.Fatalf("the agent cannot fix %q", msg)
 		}
+	}
+}
+
+func TestRefreshBriefsAndLiveFollowUp(t *testing.T) {
+	sb := &fakeSandbox{outFiles: agentWrites("## Asked\nx\n## Done\ny", "## Gotchas\nLatest brief.")}
+	o := memOpts(nil)
+	o.Mem.RefreshBriefs = func() []memory.RepoBrief {
+		return []memory.RepoBrief{{Dir: "api", FullName: "me/api", Brief: "Refreshed brief from concurrent run."}}
+	}
+	if _, err := run(t, sb, baseSpec(), o); err != nil {
+		t.Fatal(err)
+	}
+	var memPrompt string
+	for _, c := range sb.calls {
+		if len(c.Argv) > 0 && c.Argv[0] == "claude" && contains(c.Argv, "--resume") {
+			memPrompt = strings.Join(c.Argv, " ")
+		}
+	}
+	if !strings.Contains(memPrompt, "Refreshed brief from concurrent run.") {
+		t.Errorf("expected memory follow-up prompt to include refreshed brief, got %q", memPrompt)
+	}
+
+	// Verify execFollowUp resumes a live driver conversation for an agent without FollowUp (antigravity).
+	var resumedArgv []string
+	var stdinSeen string
+	sb2 := &fakeSandbox{
+		live: func(_ context.Context, inner []string, o runner.ExecOpts) error {
+			resumedArgv = append([]string(nil), inner...)
+			line, _ := bufio.NewReader(o.Stdin).ReadString('\n')
+			stdinSeen = line
+			io.WriteString(o.Stdout, "{\"event\":\"init\",\"conversation_id\":\"conv-live\"}\n{\"event\":\"result\",\"result\":{\"status\":\"success\",\"conversation_id\":\"conv-live\",\"response\":\"done\"}}\n")
+			_, _ = io.Copy(io.Discard, o.Stdin)
+			return nil
+		},
+	}
+	ad, err := agent.Get("antigravity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := baseSpec()
+	spec.Agent = "antigravity"
+	w := &worker{sb: sb2, spec: spec, conv: "conv-live", opt: opts(nil)}
+	if err := w.execFollowUp(context.Background(), ad, spec, "", "please fix push", "please fix push"); err != nil {
+		t.Fatalf("execFollowUp: %v", err)
+	}
+	if !strings.Contains(strings.Join(resumedArgv, " "), "--conversation conv-live") {
+		t.Errorf("expected --conversation conv-live in live follow-up argv, got %v", resumedArgv)
+	}
+	if !strings.Contains(stdinSeen, "please fix push") {
+		t.Errorf("expected follow-up prompt written to live driver stdin, got %q", stdinSeen)
 	}
 }

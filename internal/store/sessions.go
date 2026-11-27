@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mistergregg/unire/internal/session"
@@ -239,6 +240,10 @@ func (s *Store) Events(sessionID string, after int64, limit int) ([]Event, error
 	if err != nil {
 		return nil, err
 	}
+	return scanEvents(rows)
+}
+
+func scanEvents(rows *sql.Rows) ([]Event, error) {
 	defer rows.Close()
 	var out []Event
 	for rows.Next() {
@@ -251,6 +256,38 @@ func (s *Store) Events(sessionID string, after int64, limit int) ([]Event, error
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// EventsByKind returns every event of sessionID whose kind is in kinds, oldest first.
+// Unlike Events, it is not truncated by unrelated log or network lines.
+func (s *Store) EventsByKind(sessionID string, kinds ...string) ([]Event, error) {
+	if len(kinds) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(kinds))
+	args := make([]any, 0, 1+len(kinds))
+	args = append(args, sessionID)
+	for i, k := range kinds {
+		placeholders[i] = "?"
+		args = append(args, k)
+	}
+	q := `SELECT id, ts, kind, text FROM session_events WHERE session_id = ? AND kind IN (` + strings.Join(placeholders, ",") + `) ORDER BY id`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// PushEvents returns the log events recording pushed branches for sessionID, oldest first.
+func (s *Store) PushEvents(sessionID string) ([]Event, error) {
+	rows, err := s.db.Query(`SELECT id, ts, kind, text FROM session_events
+		WHERE session_id = ? AND kind = 'log' AND (text LIKE '%: pushed %' OR text LIKE '%: also pushed %')
+		ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
 }
 
 const maxThread = 100 // a guard against a loop, far more than anyone replies
@@ -443,4 +480,25 @@ func (s *Store) LastOwnerEvent(id string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return time.Unix(ts, 0), nil
+}
+
+// LastOwnerEvents returns the latest steer/answer timestamp per session in one query.
+func (s *Store) LastOwnerEvents() (map[string]time.Time, error) {
+	rows, err := s.db.Query(`SELECT session_id, MAX(ts) FROM session_events WHERE kind IN ('steer', 'answer') GROUP BY session_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		if ts > 0 {
+			out[id] = time.Unix(ts, 0)
+		}
+	}
+	return out, rows.Err()
 }

@@ -101,17 +101,58 @@ func (s *Server) agentStatus(ctx context.Context, ad agent.Adapter) statusEntry 
 }
 
 func shorten(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
 	}
 	return s
 }
 
+func (s *Server) agentDefaultModel(agentID string) string {
+	if v, ok, _ := s.store.Setting("agent_model_" + agentID); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func (s *Server) setAgentDefaultModel(agentID, model string) error {
+	return s.store.SetSetting("agent_model_"+agentID, model)
+}
+
+func (s *Server) putAgentModel(w http.ResponseWriter, r *http.Request) {
+	ad, err := agent.Get(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no such agent")
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model != "" {
+		if err := agent.ValidateModel(model); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	id := ad.Info().ID
+	if err := s.setAgentDefaultModel(id, model); err != nil {
+		serverError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent": id, "model": model})
+}
+
 type agentView struct {
 	agent.Info
-	LoggedIn   *bool             `json:"loggedIn"` // null when unknown
-	StatusNote string            `json:"statusNote,omitempty"`
-	Usage      *agent.AgentUsage `json:"usage,omitempty"`
+	LoggedIn        *bool             `json:"loggedIn"` // null when unknown
+	StatusNote      string            `json:"statusNote,omitempty"`
+	Usage           *agent.AgentUsage `json:"usage,omitempty"`
+	ModelsUpdatedAt int64             `json:"modelsUpdatedAt,omitempty"`
+	ModelsNote      string            `json:"modelsNote,omitempty"`
+	DefaultModel    string            `json:"defaultModel,omitempty"`
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
@@ -125,9 +166,17 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 			defer safe.Recover("agent status", nil)
 			ad, _ := agent.Get(in.ID)
 			st := s.agentStatus(r.Context(), ad)
-			in.Models = s.modelsFor(in)
+			models, updatedAt, modelsNote := s.modelsMetaFor(in)
+			in.Models = models
 			u := s.usageFor(in.ID)
-			v := agentView{Info: in, StatusNote: st.note, Usage: &u}
+			v := agentView{
+				Info:            in,
+				StatusNote:      st.note,
+				Usage:           &u,
+				ModelsUpdatedAt: updatedAt,
+				ModelsNote:      modelsNote,
+				DefaultModel:    s.agentDefaultModel(in.ID),
+			}
 			if st.known {
 				v.LoggedIn = &st.loggedIn
 			}

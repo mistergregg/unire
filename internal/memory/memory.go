@@ -101,6 +101,8 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),
 	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),
+	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*`),
+	regexp.MustCompile(`https?://[^:\s/@]+:[^@\s/]+@`),
 }
 
 // "password: hunter2", "api_key=abc123def" and the like: keep the label, hide the value.

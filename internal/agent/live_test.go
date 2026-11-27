@@ -563,3 +563,50 @@ func TestCodexStartLiveAndResumeWithModel(t *testing.T) {
 		t.Errorf("thread/resume model = %v; want gpt-5.6-terra", p2["model"])
 	}
 }
+
+func TestCodexLiveFatalErrorFailsPendingSteersAndMarksDone(t *testing.T) {
+	_, d := liveOf(t, "codex", LiveOptions{Mode: HandsOff, Dir: "/workspace"})
+	s := &codexScript{t: t, d: d}
+	if err := d.Begin(&s.in, "do work"); err != nil {
+		t.Fatal(err)
+	}
+	s.next() // initialize
+
+	if err := d.Send(Steer{ID: "m1", Text: "first note"}); err != nil {
+		t.Fatalf("Send while waiting on init = %v; want nil", err)
+	}
+	if len(d.Pending()) != 1 {
+		t.Fatalf("Pending = %v; want 1 queued message", d.Pending())
+	}
+
+	ev := d.Line(`{"id":1,"error":{"message":"auth expired"}}`)
+	if !d.Done() {
+		t.Fatal("expected Done() == true after fatal initialize error")
+	}
+	if !strings.Contains(ev.Progress, "auth expired") {
+		t.Errorf("Progress = %q; want auth expired", ev.Progress)
+	}
+	if !slices.Equal(ev.Msgs, []MsgState{{ID: "m1", State: MsgFailed}}) {
+		t.Errorf("Msgs = %+v; want m1 failed", ev.Msgs)
+	}
+	if len(d.Pending()) != 0 {
+		t.Errorf("Pending after draining on fatal error = %v; want empty", d.Pending())
+	}
+	if err := d.Send(Steer{ID: "m2", Text: "late note"}); err == nil {
+		t.Errorf("Send after fatal error = nil; want error")
+	}
+}
+
+func TestClaudeParseEventCapturesConversationAndError(t *testing.T) {
+	a, err := Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := a.(Streamer).ParseEvent(`{"type":"result","session_id":"c-99","is_error":true,"errors":["quota exceeded"]}`)
+	if ev.Conversation != "c-99" {
+		t.Errorf("Conversation = %q; want c-99", ev.Conversation)
+	}
+	if !strings.Contains(ev.Progress, "quota exceeded") {
+		t.Errorf("Progress = %q; want quota exceeded", ev.Progress)
+	}
+}

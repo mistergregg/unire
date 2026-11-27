@@ -64,22 +64,24 @@ const codexModelsScript = `d=$(mktemp -d) || exit 1
   printf '%s\n' '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"unire","title":"Unire","version":"1"}}}' '{"method":"initialized"}' '{"method":"model/list","id":2,"params":{}}'
   i=0; while [ ! -e "$d/done" ] && [ $i -lt 100 ]; do sleep 0.2; i=$((i+1)); done
 } | timeout 25 codex app-server 2>/dev/null | while IFS= read -r l; do
-  case "$l" in '{"id":2,'*|*',"id":2}'*) printf '%s\n' "$l"; touch "$d/done";; esac
+  case "$l" in '{"id":2,'*|*',"id":2,'*|*',"id":2}'*|*'{"id": 2,'*|*'"id": 2,'*|*'"id": 2}'*) printf '%s\n' "$l"; touch "$d/done";; esac
 done
 rm -rf "$d"`
 
 // ParseCodexModelsOutput reads what codexModelsScript printed.
 func ParseCodexModelsOutput(out string) ([]string, error) {
+	type codexModelEntry struct {
+		ID     string `json:"id"`
+		Model  string `json:"model"`
+		Hidden bool   `json:"hidden"`
+	}
 	for _, line := range strings.Split(out, "\n") {
 		var m struct {
 			ID     int            `json:"id"`
 			Error  map[string]any `json:"error"`
 			Result struct {
-				Data []struct {
-					ID     string `json:"id"`
-					Model  string `json:"model"`
-					Hidden bool   `json:"hidden"`
-				} `json:"data"`
+				Data   []codexModelEntry `json:"data"`
+				Models []codexModelEntry `json:"models"`
 			} `json:"result"`
 		}
 		if json.Unmarshal([]byte(strings.TrimSpace(line)), &m) != nil || m.ID != 2 {
@@ -89,9 +91,13 @@ func ParseCodexModelsOutput(out string) ([]string, error) {
 			msg, _ := m.Error["message"].(string)
 			return nil, errors.New("codex: " + clip(msg, 200))
 		}
+		entries := m.Result.Data
+		if len(entries) == 0 {
+			entries = m.Result.Models
+		}
 		var models []string
 		seen := map[string]bool{}
-		for _, entry := range m.Result.Data {
+		for _, entry := range entries {
 			if entry.Hidden {
 				continue
 			}

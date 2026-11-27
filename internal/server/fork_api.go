@@ -77,6 +77,6 @@ func (s *Server) getFork(w http.ResponseWriter, r *http.Request) {
 	}
 	repos, _ := s.forkState(r.Context(), thread)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": thread[0].ID, "title": thread[0].Task, "agent": thread[len(thread)-1].Agent, "repos": repos,
+		"id": thread[0].ID, "title": thread[0].Task, "agent": thread[len(thread)-1].Agent, "model": thread[len(thread)-1].Model, "repos": repos,
 	})
 }

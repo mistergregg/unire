@@ -20,6 +20,8 @@ func TestRedact(t *testing.T) {
 		"password: hunter2hunter2":                                               "hunter2",
 		`api_key="abcdef123456"`:                                                 "abcdef123456",
 		"export TOKEN=zzzzzzzzzzzz":                                              "zzzzzzzzzzzz",
+		"Authorization: Bearer secret-bearer-tok-123":                            "secret-bearer-tok-123",
+		"clone https://alice:superpass123@git.example.com/org/repo.git":          "superpass123",
 	}
 	for in, leaked := range cases {
 		out, changed := Redact(in, nil)

@@ -115,10 +115,26 @@ func (claude) ParseEvent(line string) Event {
 	if !ok {
 		return Event{}
 	}
+	sessID, _ := m["session_id"].(string)
 	switch m["type"] {
 	case "result":
 		ans, _ := m["result"].(string)
-		return Event{Known: true, Answer: ans}
+		ev := Event{Known: true, Answer: ans, Conversation: sessID}
+		if isErr, _ := m["is_error"].(bool); isErr && ans == "" {
+			if msg := firstString(m, "error"); msg != "" {
+				ev.Progress = "agent error: " + clip(msg, 300)
+			} else if errs, _ := m["errors"].([]any); len(errs) > 0 {
+				if first, ok := errs[0].(string); ok && strings.TrimSpace(first) != "" {
+					ev.Progress = "agent error: " + clip(first, 300)
+				}
+			}
+			if ev.Progress == "" {
+				if sub, _ := m["subtype"].(string); sub != "" {
+					ev.Progress = "agent error: " + sub
+				}
+			}
+		}
+		return ev
 	case "assistant":
 		msg, _ := m["message"].(map[string]any)
 		blocks, _ := msg["content"].([]any)

@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -192,5 +194,95 @@ func TestModelsNotAskedWhileAgentRuns(t *testing.T) {
 	e.waitModelsProbes()
 	if n := e.box.modelCalls("codex"); n != 1 {
 		t.Errorf("probed codex %d times after session stopped, want 1", n)
+	}
+}
+
+func TestModelsRefreshEndpointErrorNoteDefaultModelAndCrossSiteCheck(t *testing.T) {
+	e := newEnv(t)
+	base := withServer(t, e, "tok")
+	now := time.Unix(1794880000, 0)
+	e.srv.now = func() time.Time { return now }
+	e.box.modelsOut = map[string]string{
+		"claude": "not json",
+		"codex":  `{"id":2,"result":{"data":[{"id":"gpt-6-luna","hidden":false}]}}`,
+	}
+
+	_ = e.agentModels()
+	e.waitModelsProbes()
+
+	// Verify modelsNote is surfaced when a probe fails.
+	code, body := e.do("GET", "/api/agents", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/agents = %d", code)
+	}
+	var views []map[string]any
+	_ = json.Unmarshal([]byte(body), &views)
+	var claudeNote string
+	for _, v := range views {
+		if v["id"] == "claude" {
+			claudeNote, _ = v["modelsNote"].(string)
+		}
+	}
+	if claudeNote == "" {
+		t.Fatalf("expected non-empty modelsNote for failing claude probe, got %v", views)
+	}
+
+	// Fix claude probe and use POST /api/agents/models/refresh to bypass retry backoff.
+	e.box.mu.Lock()
+	e.box.modelsOut["claude"] = `{"type":"control_response","response":{"subtype":"success","request_id":"1","response":{"models":[{"value":"opus"},{"value":"sonnet"}]}}}`
+	e.box.mu.Unlock()
+
+	code, _ = e.do("POST", "/api/agents/models/refresh", nil)
+	if code != http.StatusOK {
+		t.Fatalf("POST /api/agents/models/refresh = %d", code)
+	}
+	e.waitModelsProbes()
+	if after := e.agentModels(); !slices.Equal(after["claude"], []string{"opus", "sonnet"}) {
+		t.Errorf("after refresh claude models = %v", after["claude"])
+	}
+
+	// Cross-site Sec-Fetch-Site must be rejected even with X-Requested-With set.
+	req := httptest.NewRequest("PUT", "/api/agents/claude/model", strings.NewReader(`{"model":"opus"}`))
+	req.Header.Set("X-Requested-With", "unire")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rr := httptest.NewRecorder()
+	e.srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Sec-Fetch-Site cross-site = %d, want 403", rr.Code)
+	}
+
+	// Default model validation and persistence.
+	if code, _ := e.do("PUT", "/api/agents/claude/model", map[string]any{"model": "bad[1m]"}); code != http.StatusBadRequest {
+		t.Errorf("invalid model PUT = %d, want 400", code)
+	}
+	if code, _ := e.do("PUT", "/api/agents/claude/model", map[string]any{"model": "opus"}); code != http.StatusOK {
+		t.Fatalf("PUT claude model = %d", code)
+	}
+	if code, _ := e.do("PUT", "/api/agents/codex/model", map[string]any{"model": "gpt-6-luna"}); code != http.StatusOK {
+		t.Fatalf("PUT codex model = %d", code)
+	}
+
+	// New session with omitted model inherits claude's saved default ("opus").
+	_, s1 := e.launch(base, map[string]any{"agent": "claude"})
+	if s1["model"] != "opus" {
+		t.Errorf("started session model = %v; want opus", s1["model"])
+	}
+	// Switching agents on reply with omitted model inherits codex's saved default.
+	id1 := s1["id"].(string)
+	e.waitStatus(id1, "done")
+	code, rBody := e.do("POST", "/api/sessions/"+id1+"/reply", map[string]any{"prompt": "review in codex", "agent": "codex"})
+	if code != http.StatusCreated {
+		t.Fatalf("reply = %d %s", code, rBody)
+	}
+	var s2 map[string]any
+	_ = json.Unmarshal([]byte(rBody), &s2)
+	if s2["model"] != "gpt-6-luna" {
+		t.Errorf("agent switch reply model = %v; want gpt-6-luna", s2["model"])
+	}
+
+	// Explicit empty model overrides the saved default on start.
+	_, s3 := e.launch(base, map[string]any{"agent": "claude", "model": ""})
+	if got, _ := s3["model"].(string); got != "" {
+		t.Errorf("explicit empty model = %q; want empty", got)
 	}
 }

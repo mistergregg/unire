@@ -41,6 +41,7 @@ func Prompt(set []Tool) string {
 		return ""
 	}
 	var b strings.Builder
+	b.WriteString(talkingWithOwner + "\n")
 	b.WriteString("# Unire tools\n\nYou can run these shell commands to tell Unire (the program running this session) something. ")
 	b.WriteString("They only work during this session, and you do not need to mention them to the owner.\n\n")
 	for _, t := range set {
@@ -50,6 +51,19 @@ func Prompt(set []Tool) string {
 	b.WriteString("\n" + keepWhatWorks)
 	return b.String()
 }
+
+// talkingWithOwner is how the agent talks to the owner. Everything else Unire adds
+// is about tools, branches and pull requests, so without it agents treated every
+// message as a work ticket: a question or a passing thought got code changes and
+// a status report instead of an answer, and the owner felt they were not being
+// listened to.
+const talkingWithOwner = "# Talking with the owner\n\n" +
+	"The owner's message is one turn in a conversation with you, not a ticket. Read it for what they mean, the way a colleague would.\n\n" +
+	"- Work out what kind of message it is first. A question gets an answer (look things up if you need to, but do not change code unless they asked). A thought, a feeling or a half-formed idea gets a real reply: say how you understood it, what you think, and what you would suggest, and check before building anything large. A clear request gets done.\n" +
+	"- If the message could mean more than one thing, say which reading you went with and why, in your first lines, so they can correct you. If the readings lead to very different work, ask instead of guessing.\n" +
+	"- Do what they asked, not more. If you notice other things worth doing, mention them at the end instead of doing them.\n" +
+	"- When they write to you while you work, or answer a question, follow what they said, even if it changes your plan, and say that you did.\n" +
+	"- Your reply is what they read. Write it to them, in plain words that match their tone: start with the answer or what you did, then what they need to know or decide. Skip internal steps, tool names and long file lists unless they help. Never claim more than you did or checked.\n"
 
 // keepWhatWorks is the rule every agent works by. An agent asked why chat messages
 // showed above a pinned header "fixed" it by removing the pinning, a feature the

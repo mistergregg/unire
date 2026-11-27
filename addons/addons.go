@@ -67,7 +67,7 @@ var CAD = Addon{
 	Size:    "adds about 3 GB",
 	Guide: "# Electronics and CAD/CAM add-on\n\nThe sandbox has PCB and CAD/CAM tools.\n\n" +
 		"- kicad-cli pcb drc|export gerbers|export step and kicad-cli sch erc - check and export KiCad boards. unire-kicad-check <board.kicad_pcb> runs DRC.\n" +
-		"- freecadcmd - headless FreeCAD (Python API) for STEP work and Path CAM toolpaths.\n\n" +
+		"- freecadcmd -c \"<python>\" or freecadcmd script.py - headless FreeCAD (Python API) for STEP work and Path CAM toolpaths. Do not run freecadcmd --version: it crashes; use FreeCAD.Version() in Python.\n\n" +
 		"Limits: no circuit simulation, no flight or physics simulation, no FEA. Gerbers and toolpaths need a check by the owner (fab house preview, a test cut) before they are used.\n",
 }
 

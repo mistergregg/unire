@@ -37,8 +37,11 @@ func useFakeDocker(t *testing.T) *fakeDocker {
 		return f.images[image]
 	}
 	dockerBuild = func(ctx context.Context, tags []string, base string, tarball []byte, log io.Writer) error {
-		if f.release != nil {
-			<-f.release
+		f.mu.Lock()
+		release := f.release
+		f.mu.Unlock()
+		if release != nil {
+			<-release
 		}
 		tr := tar.NewReader(bytes.NewReader(tarball))
 		var dockerfile bytes.Buffer
@@ -73,6 +76,18 @@ func (f *fakeDocker) buildCount() int {
 	return len(f.builds)
 }
 
+// build is the Dockerfile of build i ("" if there is none yet). The tests learn
+// a build finished over HTTP, which the race detector does not count as an
+// ordering, so every read of f takes the lock.
+func (f *fakeDocker) build(i int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i >= len(f.builds) {
+		return ""
+	}
+	return f.builds[i]
+}
+
 func waitBuild(t *testing.T, e *env, want string) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
@@ -103,8 +118,8 @@ func TestAddonsAreBuiltIntoOneImageAndToldToTheAgent(t *testing.T) {
 		t.Fatalf("enable = %d %s", code, body)
 	}
 	waitBuild(t, e, "ready")
-	if f.buildCount() != 1 || !strings.Contains(f.builds[0], "3d-print/install.sh") || !strings.Contains(f.builds[0], "cad/install.sh") {
-		t.Fatalf("builds: %q", f.builds)
+	if b := f.build(0); f.buildCount() != 1 || !strings.Contains(b, "3d-print/install.sh") || !strings.Contains(b, "cad/install.sh") {
+		t.Fatalf("%d builds, first:\n%s", f.buildCount(), b)
 	}
 	cfg := e.srv.sessionConfig()
 	if _, ok := cfg.Runner.(addonRunner); !ok || !strings.Contains(cfg.Guide, "unire-3d") || !strings.Contains(cfg.Guide, "kicad-cli") {
@@ -160,8 +175,8 @@ func TestAFailedAddonBuildIsReportedAndStopsTheChat(t *testing.T) {
 	if _, body := e.do("GET", "/api/addons", nil); !strings.Contains(body, "Unable to locate package") {
 		t.Errorf("the build log is shown: %s", body)
 	}
-	if strings.Contains(f.builds[0], "3d-print") {
-		t.Errorf("cad alone must not install 3d-print:\n%s", f.builds[0])
+	if b := f.build(0); strings.Contains(b, "3d-print") {
+		t.Errorf("cad alone must not install 3d-print:\n%s", b)
 	}
 }
 

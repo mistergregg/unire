@@ -3,7 +3,9 @@
 set -e
 PCB=experiments/hardware-pipeline/examples/sample.kicad_pcb
 kicad-cli --version
-freecadcmd --version
+# Debian's FreeCAD 0.20 with Python 3.11 segfaults on `freecadcmd --version`
+# (in Py_EncodeLocale while parsing that option); ask the Python API instead.
+freecadcmd -c "import FreeCAD; print('FreeCAD', '.'.join(FreeCAD.Version()[:3]))"
 unire-kicad-check $PCB
 mkdir -p /tmp/kicad_out
 kicad-cli pcb export gerbers -o /tmp/kicad_out/gerbers $PCB && ls /tmp/kicad_out/gerbers

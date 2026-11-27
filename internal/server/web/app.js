@@ -116,9 +116,14 @@ function ago(unix) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "sessions", "new", "session", "agents", "memory", "repomem", "servers", "settings", "health"];
-const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings", health: "health" };
+const VIEWS = ["auth", "sessions", "new", "session", "prs", "agents", "memory", "repomem", "servers", "settings", "health"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", prs: "prs", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings", health: "health" };
 let currentView = "";
+function setViewHash(hash) {
+  const target = hash ? "#" + hash : location.pathname + location.search;
+  if ((hash ? "#" + hash : "") === location.hash) return;
+  try { history.replaceState(null, "", target); } catch (_) {}
+}
 function show(name) {
   currentView = name;
   if (name !== "auth" && typeof startAttention === "function") startAttention();
@@ -131,6 +136,8 @@ function show(name) {
   $("new-session").classList.toggle("selected", name === "new"); // lit while the new-chat screen is open
   $("nav").hidden = $("logout").hidden = name === "auth";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", String(TAB_OF[name] === t.dataset.view)));
+  if (name === "sessions") setViewHash("");
+  else if (name !== "auth" && name !== "session" && name !== "repomem") setViewHash(name);
   if (name === "sessions" || name === "auth") window.scrollTo(0, 0);
   if ((name === "new" || name === "session") && typeof refreshUsage === "function") refreshUsage();
 }
@@ -163,17 +170,34 @@ async function init() {
   await enter();
 }
 
+async function navigateHash() {
+  const h = location.hash;
+  const cm = /^#c=(.+)$/.exec(h);
+  if (cm) {
+    try { return await openSession(decodeURIComponent(cm[1])); } catch (_) { /* deleted: fall through */ }
+  }
+  const rm = /^#repomem=(.+)$/.exec(h);
+  if (rm) {
+    try { return await openRepoMemory(decodeURIComponent(rm[1])); } catch (_) {}
+  }
+  const byHash = {
+    "#new": openNew, "#prs": openPullsOverview, "#agents": openAgents,
+    "#memory": openMemory, "#servers": openServers, "#settings": openSettings, "#health": openHealth,
+  };
+  if (byHash[h]) return await byHash[h]();
+  await openSessions();
+}
+
 let typeInfos = [];
 async function enter() {
   typeInfos = await api("GET", "/api/types");
   $("f-type").replaceChildren(...typeInfos.map((t) => el("option", { value: t.type }, t.label)));
   updateUrlHint();
-  const m = /^#c=(.+)$/.exec(location.hash);
-  if (m) {
-    try { return await openSession(decodeURIComponent(m[1])); } catch (_) { /* it was deleted: show the list */ }
-  }
-  await openSessions();
+  await navigateHash();
 }
+window.addEventListener("hashchange", () => {
+  if (currentView && currentView !== "auth") guarded(null, navigateHash);
+});
 
 // ---- auth ----
 $("auth-form").addEventListener("submit", (e) => {
@@ -190,9 +214,28 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { sessions: openSessions, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings, health: openHealth }[t.dataset.view];
+  const open = { sessions: openSessions, prs: openPullsOverview, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings, health: openHealth }[t.dataset.view];
   guarded(null, open);
 }));
+
+// Keyboard shortcut: "/" (when not in a field) or Cmd/Ctrl+K focuses chat search.
+document.addEventListener("keydown", (e) => {
+  if (currentView === "auth") return;
+  const search = $("side-search");
+  if (!search) return;
+  const isK = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
+  const tag = document.activeElement && document.activeElement.tagName;
+  const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (document.activeElement && document.activeElement.isContentEditable);
+  if (isK || (e.key === "/" && !inField && !e.metaKey && !e.ctrlKey && !e.altKey)) {
+    e.preventDefault();
+    if (typeof setLeftSidebarCollapsed === "function") setLeftSidebarCollapsed(false);
+    search.focus();
+    search.select();
+  } else if (e.key === "Escape" && document.activeElement === search) {
+    if (search.value) { search.value = ""; search.dispatchEvent(new Event("input")); }
+    search.blur();
+  }
+});
 
 // ---- git servers ----
 // The form is built from each provider's own description (label, URL hint,
@@ -318,8 +361,28 @@ $("net-form").addEventListener("submit", (e) => {
   });
 });
 
+function syncThemePicker() {
+  const picker = $("theme-picker");
+  if (!picker || typeof getUnireTheme !== "function") return;
+  const cur = getUnireTheme();
+  picker.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+    const active = btn.dataset.themeChoice === cur;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+}
+if ($("theme-picker")) {
+  $("theme-picker").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-theme-choice]");
+    if (!btn || typeof setUnireTheme !== "function") return;
+    setUnireTheme(btn.dataset.themeChoice);
+    syncThemePicker();
+  });
+}
+
 async function openSettings() {
   show("settings");
+  syncThemePicker();
   fillSandbox(await api("GET", "/api/sandbox"));
   fillLimits(await api("GET", "/api/limits"));
   $("pr-auto").checked = (await api("GET", "/api/pulls/settings")).autoOpen;

@@ -9,7 +9,7 @@
 // Built from DOM nodes and textContent only, so nothing the agent prints is
 // ever parsed as HTML. Links open only when they are http(s); anything else
 // (such as file:// links into the sandbox) is shown as plain code.
-const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
+const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*?\*)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/g;
 
 function inlineNodes(text) {
   const out = [];
@@ -19,7 +19,15 @@ function inlineNodes(text) {
     const t = m[0];
     if (m[1]) out.push(el("code", {}, t.slice(1, -1)));
     else if (m[2]) out.push(el("strong", {}, ...inlineNodes(t.slice(2, -2))));
-    else {
+    else if (m[3]) out.push(el("em", {}, ...inlineNodes(t.slice(1, -1))));
+    else if (m[5]) {
+      let url = t;
+      let trail = "";
+      const punct = /[.,;:!?]+$/.exec(url);
+      if (punct) { url = url.slice(0, -punct[0].length); trail = punct[0]; }
+      out.push(el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, url));
+      if (trail) out.push(trail);
+    } else {
       const [, label, url] = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(t);
       if (/^https?:\/\//i.test(url)) {
         out.push(el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label));
@@ -112,8 +120,21 @@ function renderMarkdown(text) {
       continue;
     }
     list = null;
-    const heading = /^#{1,4}\s+(.*)$/.exec(line);
-    if (heading) { flush(); root.append(el("h4", {}, ...inlineNodes(heading[1]))); continue; }
+    if (/^>\s?/.test(line)) {
+      flush();
+      const quoteLines = [];
+      for (; i < lines.length && /^>\s?/.test(lines[i]); i++) quoteLines.push(lines[i].replace(/^>\s?/, ""));
+      i--;
+      root.append(el("blockquote", {}, renderMarkdown(quoteLines.join("\n"))));
+      continue;
+    }
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (heading) {
+      flush();
+      const tag = heading[1].length === 1 ? "h2" : heading[1].length === 2 ? "h3" : "h4";
+      root.append(el(tag, {}, ...inlineNodes(heading[2])));
+      continue;
+    }
     if (/^-{3,}\s*$/.test(line)) { flush(); root.append(el("hr", {})); continue; }
     if (!line.trim()) { flush(); continue; }
     para.push(line);
@@ -471,13 +492,37 @@ function setComposer() {
 }
 
 // The message box grows with what you type, up to a limit.
+const REPLY_MAX = 20000;
+function updateReplyCount() {
+  const c = $("reply-count");
+  if (!c) return;
+  const len = $("reply-text").value.length;
+  c.hidden = len < 15000;
+  if (!c.hidden) {
+    c.textContent = len.toLocaleString() + " / " + REPLY_MAX.toLocaleString() + " characters";
+    c.className = "char-count small " + (len >= REPLY_MAX ? "limit" : "warn");
+  }
+}
+function saveReplyDraft() {
+  if (!selectedRoot) return;
+  try {
+    const v = $("reply-text").value;
+    if (v) localStorage.setItem("unire_draft_reply_" + selectedRoot, v);
+    else localStorage.removeItem("unire_draft_reply_" + selectedRoot);
+  } catch (_) {}
+}
+function clearReplyDraft() {
+  if (!selectedRoot) return;
+  try { localStorage.removeItem("unire_draft_reply_" + selectedRoot); } catch (_) {}
+}
 function autoGrow() {
   const box = $("reply-text");
   box.style.height = "auto";
   box.style.height = Math.min(Math.max(box.scrollHeight, 44), 320) + "px";
+  updateReplyCount();
   if (typeof nearBottom === "function" && nearBottom()) scrollToBottom();
 }
-$("reply-text").addEventListener("input", autoGrow);
+$("reply-text").addEventListener("input", () => { autoGrow(); saveReplyDraft(); });
 
 if ("scrollRestoration" in history) {
   try { history.scrollRestoration = "manual"; } catch (_) { /* not supported */ }
@@ -488,8 +533,21 @@ const getScrollHeight = () => Math.max(
   document.documentElement ? document.documentElement.scrollHeight : 0
 );
 const nearBottom = () => window.innerHeight + window.scrollY >= getScrollHeight() - 150;
+function updateJumpBottom() {
+  const btn = $("jump-bottom");
+  if (!btn) return;
+  btn.hidden = currentView !== "session" || nearBottom() || getScrollHeight() <= window.innerHeight + 200;
+}
 function scrollToBottom() {
   window.scrollTo(0, getScrollHeight());
+  updateJumpBottom();
+}
+window.addEventListener("scroll", updateJumpBottom, { passive: true });
+window.addEventListener("resize", updateJumpBottom, { passive: true });
+if ($("jump-bottom")) {
+  $("jump-bottom").addEventListener("click", () => {
+    window.scrollTo({ top: getScrollHeight(), behavior: "smooth" });
+  });
 }
 
 async function openSession(id) {
@@ -510,6 +568,10 @@ async function openSession(id) {
   thread = turns.map(makeTurn);
   selectedRoot = thread[0].s.id;
   setHash(selectedRoot);
+  try {
+    const draft = localStorage.getItem("unire_draft_reply_" + selectedRoot);
+    if (draft) { $("reply-text").value = draft; autoGrow(); }
+  } catch (_) {}
   refreshSidebar();
   thread.forEach((t) => $("chat").append(t.root));
   const tail = thread[thread.length - 1];
@@ -652,6 +714,7 @@ async function sendReply(text) {
   thread.push(t);
   $("chat").append(t.root);
   $("reply-text").value = "";
+  clearReplyDraft();
   replyAttach.clear();
   autoGrow();
   setComposer();
@@ -692,6 +755,7 @@ function steer(text, now) {
   const images = replyAttach.list();
   steerCard(tail, { text: tempId + "\n" + (now ? "now" : "next") + "\n" + text, images: images.map((a) => ({ name: a.name, src: a.data, image: a.image })) });
   $("reply-text").value = "";
+  clearReplyDraft();
   replyAttach.clear();
   autoGrow();
   scrollToBottom();
@@ -1169,7 +1233,7 @@ function renderSidePRs(data) {
     const state = p.state || "open";
     const failedChecks = (p.checks || []).filter((c) => c.state === "failure").length;
     let checksLabel = p.summary === "success" ? "checks passed" :
-                      p.summary === "failure" ? (failedChecks + " checks failing") :
+                      p.summary === "failure" ? (failedChecks + (failedChecks === 1 ? " check failing" : " checks failing")) :
                       p.summary === "pending" ? "checks running" : "no checks";
     const commentsCount = (p.comments || []).length;
     const commentsLabel = commentsCount ? (commentsCount + (commentsCount === 1 ? " comment" : " comments")) : "";

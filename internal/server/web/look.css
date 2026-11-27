@@ -517,7 +517,37 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-.side-item > div { min-width: 0; }
+/* ---- jump to bottom & character count ---- */
+.jump-bottom {
+  position: sticky; bottom: 136px; align-self: center; z-index: 6;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 16px; font-size: 12px; font-weight: 550;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  box-shadow: var(--shadow-md); margin: 4px 0 8px;
+}
+.jump-bottom:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.jump-bottom svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.char-count { text-align: right; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+.char-count.warn { color: #d97706; }
+.char-count.limit { color: var(--danger); font-weight: 600; }
+
+/* ---- segmented control ---- */
+.segmented {
+  display: inline-flex; align-items: center; padding: 2px; gap: 2px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel-subtle);
+}
+.seg-btn {
+  border: 1px solid transparent; border-radius: 4px; background: transparent;
+  color: var(--muted); font-size: 12.5px; font-weight: 500; padding: 4px 10px; min-height: 26px;
+  box-shadow: none;
+}
+.seg-btn:hover:not(:disabled) { color: var(--text); background: transparent; border-color: transparent; }
+.seg-btn.active {
+  background: var(--panel); color: var(--text); border-color: var(--line);
+  font-weight: 600; box-shadow: var(--shadow);
+}
+
+.side-nav-item .nav-badge { margin-left: auto; }
 
 /* Unified full-height sidebar with Brand, Actions, Chats, and Navigation */
 :root { --top-h: 0px; }
@@ -527,6 +557,7 @@ button.tiny:hover { color: var(--text); border-color: var(--muted); }
   padding: 12px; background: var(--panel); border-right: 1px solid var(--line);
   box-sizing: border-box; z-index: 10;
 }
+.side-item > div { min-width: 0; }
 .side-brand-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 2px 4px 6px; min-height: 30px;
@@ -1063,6 +1094,7 @@ button.primary:hover:not(:disabled) { box-shadow: none; }
 body { font-size: 14px; line-height: 1.5; }
 .pane { padding: 10px 20px 16px; }
 .side { padding: 12px 10px 8px; gap: 6px; }
+.side-item > div { min-width: 0; }
 .side-brand-row { padding: 0 4px 2px; min-height: 26px; }
 .new-chat { padding: 6px 10px; }
 .side-search { padding: 5px 10px; }

@@ -94,6 +94,7 @@ $("rm-brief").addEventListener("input", updateCount);
 async function openRepoMemory(key) {
   stopPolling();
   show("repomem");
+  if (typeof setViewHash === "function") setViewHash("repomem=" + encodeURIComponent(key));
   fillRepoMemory(await api("GET", "/api/memory/repo?key=" + encodeURIComponent(key)));
 }
 

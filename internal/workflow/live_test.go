@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,5 +290,71 @@ func TestStoppingASteerableAgentDoesNotFreeze(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("stopping the run froze: the agent's input was never closed")
+	}
+}
+
+func TestRunLiveWaitsForInFlightTimerCallbacks(t *testing.T) {
+	oldGrace, oldStop := interruptGrace, stopGrace
+	interruptGrace, stopGrace = 20*time.Millisecond, 20*time.Millisecond
+	defer func() { interruptGrace, stopGrace = oldGrace, oldStop }()
+
+	var callbackDone atomic.Bool
+	first := make(chan struct{}, 1)
+	intr := make(chan struct{}, 1)
+	term := make(chan struct{})
+	var termOnce sync.Once
+	var starts atomic.Int32
+
+	sb := &fakeSandbox{
+		onSignal: func(sig string) {
+			switch sig {
+			case "INT":
+				intr <- struct{}{}
+			case "TERM":
+				termOnce.Do(func() { close(term) })
+				time.Sleep(40 * time.Millisecond)
+				callbackDone.Store(true)
+			}
+		},
+		live: func(ctx context.Context, inner []string, o runner.ExecOpts) error {
+			mine := starts.Add(1)
+			sc := bufio.NewScanner(o.Stdin)
+			for sc.Scan() {
+				fmt.Fprintln(o.Stdout, `{"event":"init","conversation_id":"conv-1","init":{}}`)
+				if mine == 1 {
+					first <- struct{}{}
+					select {
+					case <-intr:
+						fmt.Fprintln(o.Stdout, `{"event":"result","result":{"conversation_id":"conv-1","status":"INTERRUPTED","error":"interrupted","response":""}}`)
+						select {
+						case <-term:
+							return errors.New("terminated")
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				fmt.Fprintln(o.Stdout, `{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"ok"}}`)
+			}
+			return nil
+		},
+	}
+
+	ctl := make(chan agent.Steer, 2)
+	spec := baseSpec()
+	spec.Agent = "antigravity"
+	o := opts(nil)
+	o.Control = ctl
+	go func() {
+		<-first
+		ctl <- agent.Steer{ID: "m1", Text: "next", Now: true}
+	}()
+	if _, err := Run(context.Background(), fakeRunner{sb}, spec, o); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if !callbackDone.Load() {
+		t.Fatal("Run returned before in-flight stopHard timer callback finished")
 	}
 }

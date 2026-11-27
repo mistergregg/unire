@@ -93,17 +93,38 @@ func (w *worker) runLive(ctx context.Context, live agent.Live, spec session.Spec
 // runLiveProcess runs one process until it ends. It returns the messages the
 // agent was never given, so the caller can start it again with them.
 func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.LiveDriver, prompt string, answers io.Writer, deliver []string, resuming bool, liveControl <-chan agent.Steer) ([]agent.Steer, bool, error) {
+	exitDelay, interruptDelay, stopDelay := exitGrace, interruptGrace, stopGrace
+
 	pr, pw := io.Pipe()
 	var closeOnce sync.Once
 	closeInput := func() { closeOnce.Do(func() { _ = pw.Close() }) }
 
 	exited := make(chan struct{})
+	stopCtx, cancelStop := context.WithCancel(context.Background())
+	defer cancelStop()
+
 	var timerMu sync.Mutex
+	var timerWG sync.WaitGroup
+	timersStopped := false
 	var timers []*time.Timer
 	after := func(d time.Duration, f func()) {
 		timerMu.Lock()
-		timers = append(timers, time.AfterFunc(d, f))
-		timerMu.Unlock()
+		defer timerMu.Unlock()
+		if timersStopped {
+			return
+		}
+		t := time.AfterFunc(d, func() {
+			timerMu.Lock()
+			if timersStopped {
+				timerMu.Unlock()
+				return
+			}
+			timerWG.Add(1)
+			timerMu.Unlock()
+			defer timerWG.Done()
+			f()
+		})
+		timers = append(timers, t)
 	}
 	isExited := func() bool {
 		select {
@@ -129,14 +150,14 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	stopHard := func() {
 		closeInput()
 		fmt.Fprintln(w.opt.Err, "ending the agent")
-		w.signalAgent(context.Background(), "TERM")
-		after(stopGrace, func() {
+		w.signalAgent(stopCtx, "TERM")
+		after(stopDelay, func() {
 			if isExited() {
 				return
 			}
 			fmt.Fprintln(w.opt.Err, "the agent did not end: killing it")
-			w.signalAgent(context.Background(), "KILL")
-			after(stopGrace, func() {
+			w.signalAgent(stopCtx, "KILL")
+			after(stopDelay, func() {
 				if !isExited() {
 					fmt.Fprintln(w.opt.Err, "the agent could not be stopped: carrying on without it")
 					cancelExec()
@@ -159,7 +180,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	sw.afterLine = func() {
 		if drv.Done() {
 			closeInput()
-			leaving.Do(func() { after(exitGrace, stopHard) })
+			leaving.Do(func() { after(exitDelay, stopHard) })
 		}
 		// The agent's turn was cut short for a message: it has nothing more to do,
 		// so end it now and start it again with the message.
@@ -215,7 +236,7 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 	interrupt := func() {
 		fmt.Fprintln(w.opt.Err, "interrupting the agent to take your message")
 		w.signalAgent(ctx, "INT")
-		after(interruptGrace, func() {
+		after(interruptDelay, func() {
 			if !isExited() && len(drv.Pending()) > 0 {
 				stopHard()
 			}
@@ -262,10 +283,13 @@ func (w *worker) runLiveProcess(ctx context.Context, argv []string, drv agent.Li
 		<-begun // Begin ends once the input is closed; its "delivered" notices must not be lost
 	}
 	timerMu.Lock()
+	timersStopped = true
 	for _, t := range timers {
 		t.Stop()
 	}
 	timerMu.Unlock()
+	cancelStop()
+	timerWG.Wait()
 	sw.Close()
 
 	if execErr != nil && ctx.Err() == nil && len(drv.Pending()) == 0 {

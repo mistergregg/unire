@@ -323,13 +323,14 @@ var (
 )
 
 // Branches is guidance, not a command: how the agent puts the same change on more
-// than one branch. Unire pushes the branches it makes (the agent cannot push) and
+// than one branch, or starts separate work that gets its own pull request. Unire pushes the branches it makes (the agent cannot push) and
 // offers a pull request for each into the branch it started from.
 var Branches = Tool{
 	Name: "branches",
 	Usage: "To put the same change on other branches (for example a release branch), make a branch named after the one you are on with a suffix, starting from the target: " +
 		"`git checkout -b \"$(git rev-parse --abbrev-ref HEAD)-<suffix>\" origin/<target>`, apply the change there (`git cherry-pick <commit>`), commit, and go back. " +
-		"Unire pushes every branch named like that when you finish and offers the owner a pull request into the branch it started from. Do not push anything yourself.",
+		"Unire pushes every branch named like that when you finish and offers the owner a pull request into the branch it started from. Do not push anything yourself. " +
+		"The same works for separate work in this conversation (a different task that should not share a pull request with the code on your branch): start a branch the same way from the target, with a suffix that names the task, and do only that work there.",
 }
 
 // Repo lets the agent bring another of the owner's repos into the session while it

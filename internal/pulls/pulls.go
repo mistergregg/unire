@@ -147,15 +147,25 @@ func (s *Service) Proposals(thread []store.Session) ([]Proposal, error) {
 	return out, nil
 }
 
+// mergedOrOpened is when a merged pull request stopped taking new pushes: the
+// moment it was seen merged, or (for records from before that was kept) when it
+// was opened. Pushes made while it was open, such as auto-fix commits, are in it.
+func mergedOrOpened(r store.PullRequest) time.Time {
+	if !r.MergedAt.IsZero() {
+		return r.MergedAt
+	}
+	return r.CreatedAt
+}
+
 // covered reports whether a pull request already exists for a pushed branch into
-// base. One that was merged only covers the pushes made before it was opened: a
+// base. One that was merged only covers the pushes made before it merged: a
 // later turn pushes the same branch again, and that new work needs a new pull request.
 func covered(have []store.PullRequest, p pushed, base string, turn store.Session) bool {
 	for _, r := range have {
 		if r.ServerID != p.serverID || r.Repo != p.repo || r.Branch != p.branch || r.Base != base {
 			continue
 		}
-		if r.State == gitprovider.PRMerged && turn.CreatedAt.After(r.CreatedAt) {
+		if r.State == gitprovider.PRMerged && turn.CreatedAt.After(mergedOrOpened(r)) {
 			continue
 		}
 		return true

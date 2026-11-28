@@ -19,7 +19,7 @@ import (
 // after a few tries per pull request, so a failure the agent cannot fix cannot loop.
 
 const (
-	maxAutoFix   = 3
+	maxAutoFix   = 4
 	autoFixEvery = time.Minute
 )
 

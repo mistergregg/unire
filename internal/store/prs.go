@@ -99,6 +99,14 @@ func (s *Store) RecordFixAttempt(serverID, repo string, number int, sha string) 
 	return err
 }
 
+// ResetFixAttempts gives every pull request of a conversation its automatic fix tries
+// back, for when the owner takes the work on again themselves. The last commit tried is
+// kept, so that same commit is still not tried twice.
+func (s *Store) ResetFixAttempts(rootID string) error {
+	_, err := s.db.Exec(`UPDATE pull_requests SET fix_attempts = 0 WHERE root_id = ?`, rootID)
+	return err
+}
+
 // ConversationsWithOpenPullRequests lists the first sessions of conversations that have a
 // pull request not known to be merged or closed.
 func (s *Store) ConversationsWithOpenPullRequests() ([]string, error) {

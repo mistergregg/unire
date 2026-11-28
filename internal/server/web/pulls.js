@@ -326,7 +326,7 @@ function autoFixRow() {
   return el("label", { class: "pr-auto" }, box,
     el("span", { class: "pr-auto-text" },
       el("span", { class: "pr-auto-title" }, "Fix failing checks and keep the branch up to date"),
-      el("span", { class: "muted pr-auto-sub" }, "Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 3) + " tries per pull request.")));
+      el("span", { class: "muted pr-auto-sub" }, "Unire reads why they failed and asks the agent to fix it, up to " + (pullsData.maxFix || 4) + " tries per pull request, starting over each time you reply.")));
 }
 
 // A later turn pushed to this pull request's branch, so the pull request already has the

@@ -119,7 +119,7 @@ func lastTurn(t *testing.T, e *env) store.Session {
 	return th[len(th)-1]
 }
 
-func TestFailingChecksStartAFixWithTheLogAndStopAfterThreeTries(t *testing.T) {
+func TestFailingChecksStartAFixWithTheLogAndStopAfterFourTries(t *testing.T) {
 	e, ci, _ := autoFixEnv(t)
 	ctx := context.Background()
 
@@ -130,7 +130,7 @@ func TestFailingChecksStartAFixWithTheLogAndStopAfterThreeTries(t *testing.T) {
 	if first.ID == "c1" {
 		t.Fatal("a new turn should exist")
 	}
-	for _, want := range []string{"starting this turn by itself", "try 1 of 3", "test", "--- FAIL: TestFlaky for sha1", "Failed: step Run go test"} {
+	for _, want := range []string{"starting this turn by itself", "try 1 of 4", "test", "--- FAIL: TestFlaky for sha1", "Failed: step Run go test"} {
 		if !strings.Contains(first.Prompt, want) {
 			t.Errorf("the prompt should contain %q:\n%s", want, first.Prompt)
 		}
@@ -141,25 +141,56 @@ func TestFailingChecksStartAFixWithTheLogAndStopAfterThreeTries(t *testing.T) {
 	if n := e.srv.autoFixOnce(ctx); n != 0 {
 		t.Errorf("a commit that was already tried is not tried again, started %d", n)
 	}
-	// A new commit that still fails is tried again, up to three times in all.
-	for try, sha := range []string{"sha2", "sha3"} {
+	// A new commit that still fails is tried again, up to four times in all.
+	for try, sha := range []string{"sha2", "sha3", "sha4"} {
 		ci.set(sha, false)
 		if n := e.srv.autoFixOnce(ctx); n != 1 {
 			t.Fatalf("commit %s should be tried, started %d", sha, n)
 		}
 		turn := lastTurn(t, e)
-		if !strings.Contains(turn.Prompt, fmt.Sprintf("try %d of 3", try+2)) {
+		if !strings.Contains(turn.Prompt, fmt.Sprintf("try %d of 4", try+2)) {
 			t.Errorf("the try number counts up: %s", turn.Prompt[:200])
 		}
 		e.waitStatus(turn.ID, "done")
 	}
-	ci.set("sha4", false)
+	ci.set("sha5", false)
 	if n := e.srv.autoFixOnce(ctx); n != 0 {
-		t.Errorf("after three tries it stops, started %d", n)
+		t.Errorf("after four tries it stops, started %d", n)
 	}
 	recs, _ := e.srv.store.PullRequests("c1")
-	if recs[0].FixAttempts != 3 || recs[0].FixSHA != "sha3" {
+	if recs[0].FixAttempts != 4 || recs[0].FixSHA != "sha4" {
 		t.Errorf("the tries are recorded: %+v", recs[0])
+	}
+}
+
+func TestAnOwnerReplyGivesTheTriesBack(t *testing.T) {
+	e, ci, _ := autoFixEnv(t)
+	ctx := context.Background()
+	for _, sha := range []string{"sha1", "sha2", "sha3", "sha4"} {
+		ci.set(sha, false)
+		if n := e.srv.autoFixOnce(ctx); n != 1 {
+			t.Fatalf("commit %s should be tried, started %d", sha, n)
+		}
+		e.waitStatus(lastTurn(t, e).ID, "done")
+	}
+	ci.set("sha5", false)
+	if n := e.srv.autoFixOnce(ctx); n != 0 {
+		t.Fatalf("out of tries, started %d", n)
+	}
+	// The owner takes it on again; the tries start over.
+	if code, body := e.do("POST", "/api/sessions/"+lastTurn(t, e).ID+"/reply", map[string]any{"prompt": "try another way"}); code != http.StatusCreated {
+		t.Fatalf("reply = %d %s", code, body)
+	}
+	e.waitStatus(lastTurn(t, e).ID, "done")
+	recs, _ := e.srv.store.PullRequests("c1")
+	if recs[0].FixAttempts != 0 || recs[0].FixSHA != "sha4" {
+		t.Errorf("a reply resets the count and keeps the last commit tried: %+v", recs[0])
+	}
+	if n := e.srv.autoFixOnce(ctx); n != 1 {
+		t.Fatalf("after a reply a failing commit is tried again, started %d", n)
+	}
+	if turn := lastTurn(t, e); !strings.Contains(turn.Prompt, "try 1 of 4") {
+		t.Errorf("the count starts over: %s", turn.Prompt[:200])
 	}
 }
 
@@ -184,7 +215,7 @@ func TestNoFixIsStartedWhenItShouldNotBe(t *testing.T) {
 		MaxFix  int  `json:"maxFix"`
 	}
 	json.Unmarshal([]byte(body), &got)
-	if got.AutoFix || got.MaxFix != 3 {
+	if got.AutoFix || got.MaxFix != 4 {
 		t.Errorf("the page can show the setting: %s", body)
 	}
 	e.do("POST", "/api/sessions/c1/autofix", map[string]any{"on": true})

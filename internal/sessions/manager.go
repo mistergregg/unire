@@ -54,6 +54,9 @@ type Config struct {
 	// Attachments is the folder images the owner attaches are kept in, one folder per
 	// session. Empty: messages cannot carry attachments.
 	Attachments string
+	// Guide is extra text for the agent's prompt about tools the sandbox image
+	// carries (the add-ons turned on in Settings). Empty: nothing is added.
+	Guide string
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -342,6 +345,7 @@ func (m *Manager) run(ctx context.Context, j job) {
 	}
 	wo.Ask = m.askFunc(spec.ID)
 	wo.Resume, wo.Fallback = j.resume, j.fallback
+	wo.Guide = cfg.Guide
 	wo.Files = j.files
 	wo.OnUsage = func(u agent.AgentUsage) {
 		if u.AgentID == "" {

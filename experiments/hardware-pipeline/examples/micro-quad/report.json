@@ -1,0 +1,33 @@
+{
+  "name": "Micro-Quad-25-Frame",
+  "wheelbase_mm": 120.0,
+  "prop_diameter_mm": 65.0,
+  "clearances_mm": {
+    "adjacent_prop_tip_gap": 19.85,
+    "prop_to_fc_stack_gap": 8.41
+  },
+  "parts": {
+    "frame_plate": {
+      "watertight": true,
+      "volume_cm3": 10.42,
+      "estimated_mass_cf_g": 16.14,
+      "estimated_mass_petg_g": 13.23,
+      "exports": [
+        "frame_plate.stl",
+        "frame_plate.step",
+        "frame_plate.dxf"
+      ]
+    },
+    "canopy": {
+      "watertight": true,
+      "volume_cm3": 5.5,
+      "estimated_mass_tpu_g": 6.65,
+      "exports": [
+        "canopy.stl",
+        "canopy.step"
+      ]
+    }
+  },
+  "collisions_detected": 0,
+  "checks_passed": true
+}

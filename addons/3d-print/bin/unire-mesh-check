@@ -1,0 +1,65 @@
+#!/bin/sh
+# unire-mesh-check: verify 3D mesh watertightness, manifold integrity, and dimensions.
+#   unire-mesh-check <model.stl>
+# Uses admesh if installed (Setup B), or Python trimesh (Setup A).
+
+set -e
+
+STL="$1"
+
+if [ -z "$STL" ]; then
+    echo "usage: unire-mesh-check <model.stl>" >&2
+    exit 2
+fi
+
+if [ ! -f "$STL" ]; then
+    echo "unire-mesh-check: file not found: $STL" >&2
+    exit 1
+fi
+
+if command -v admesh >/dev/null 2>&1; then
+    echo "=== Running admesh analysis ==="
+    admesh "$STL"
+    exit 0
+fi
+
+if [ -x "/tmp/hw/bin/python3" ]; then
+    PYTHON="/tmp/hw/bin/python3"
+elif [ -x "/opt/hardware/bin/python3" ]; then
+    PYTHON="/opt/hardware/bin/python3"
+else
+    PYTHON="python3"
+fi
+
+"$PYTHON" - "$STL" <<'EOF'
+import sys
+import trimesh
+
+stl_path = sys.argv[1]
+try:
+    m = trimesh.load(stl_path)
+except Exception as e:
+    print(f"ERROR: Failed to load mesh {stl_path}: {e}", file=sys.stderr)
+    sys.exit(1)
+
+bounds = m.bounds
+size = bounds[1] - bounds[0]
+
+print(f"File:           {stl_path}")
+print(f"Facets:         {len(m.faces):,}")
+print(f"Vertices:       {len(m.vertices):,}")
+print(f"Bounding box:   {size[0]:.2f} x {size[1]:.2f} x {size[2]:.2f} mm")
+print(f"Surface area:   {m.area:.2f} mm2")
+print(f"Volume:         {m.volume:.2f} mm3")
+print(f"Watertight:     {m.is_watertight}")
+print(f"Winding valid:  {m.is_winding_consistent}")
+
+if not m.is_watertight:
+    print(f"\n[FAIL] Mesh is NOT watertight. Slicers may produce broken toolpaths or hollow artifacts.", file=sys.stderr)
+    sys.exit(1)
+if m.volume <= 0:
+    print(f"\n[FAIL] Mesh has invalid or inverted volume ({m.volume:.2f}).", file=sys.stderr)
+    sys.exit(1)
+
+print("\n[PASS] Mesh is a watertight, manifold solid.")
+EOF

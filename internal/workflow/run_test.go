@@ -616,6 +616,30 @@ func TestAgentCanNameTheConversationOnlyWhenGivenTheTool(t *testing.T) {
 	}
 }
 
+func TestAddonGuideIsAddedToThePrompt(t *testing.T) {
+	prompt := func(guide string) string {
+		sb := &fakeSandbox{}
+		o := opts(nil)
+		o.Tools = tools.ForNewConversation()
+		o.Guide = guide
+		if _, err := run(t, sb, baseSpec(), o); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range sb.calls {
+			if len(c.Argv) > 0 && c.Argv[0] == "claude" {
+				return c.Argv[len(c.Argv)-1]
+			}
+		}
+		return ""
+	}
+	if p := prompt("# 3D add-on\n\nuse unire-3d"); !strings.Contains(p, "# 3D add-on") || !strings.Contains(p, "# Unire tools") {
+		t.Errorf("guide missing: %q", p)
+	}
+	if p := prompt(""); strings.Contains(p, "add-on") {
+		t.Errorf("no guide, but the prompt mentions one: %q", p)
+	}
+}
+
 func TestLiveNameToolCall(t *testing.T) {
 	askPath := tools.Dir + "/ask/99"
 	sb := &fakeSandbox{outFiles: map[string]string{askPath + ".q": "@call name\nReal-time Chat Title\n"}}

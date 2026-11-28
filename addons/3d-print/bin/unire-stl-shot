@@ -1,0 +1,27 @@
+#!/bin/sh
+# Render an STL headlessly with the pipeline's z-buffered software renderer.
+set -eu
+STL="${1:-}"
+OUT="${2:-shot.png}"
+SIZE="${3:-840x700}"
+if [ -z "$STL" ]; then
+    echo "usage: unire-stl-shot <model.stl> <out.png> [WIDTHxHEIGHT]" >&2
+    exit 2
+fi
+if [ ! -f "$STL" ]; then
+    echo "unire-stl-shot: model file not found: $STL" >&2
+    exit 1
+fi
+case "$SIZE" in
+    [0-9]*x[0-9]*) ;;
+    *) echo "unire-stl-shot: size format is WIDTHxHEIGHT (e.g. 840x700)" >&2; exit 2 ;;
+esac
+if [ -x "/tmp/hw/bin/python3" ]; then
+    PYTHON="/tmp/hw/bin/python3"
+elif [ -x "/opt/hardware/bin/python3" ]; then
+    PYTHON="/opt/hardware/bin/python3"
+else
+    PYTHON="python3"
+fi
+SCRIPT_DIR="${UNIRE_HARDWARE_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+exec "$PYTHON" "$SCRIPT_DIR/render_mesh.py" "$STL" "$OUT" "$SIZE"

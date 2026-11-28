@@ -1,0 +1,35 @@
+{
+  "name": "Micro-Quad-25-Frame",
+  "parts": [
+    {
+      "name": "frame_plate",
+      "file": "frame_plate.stl",
+      "color": [
+        0.18,
+        0.22,
+        0.28
+      ],
+      "material": "cf"
+    },
+    {
+      "name": "fc_mockup",
+      "file": "fc_mockup.stl",
+      "color": [
+        0.18,
+        0.56,
+        0.34
+      ],
+      "material": "petg"
+    },
+    {
+      "name": "canopy",
+      "file": "canopy.stl",
+      "color": [
+        0.9,
+        0.45,
+        0.14
+      ],
+      "material": "tpu"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+name: Add-on images
+
+# Builds the sandbox image with each add-on, alone and together, the same way
+# Unire builds it on the owner's server (package addons), and runs each add-on's
+# checks in it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'addons/**'
+      - 'experiments/hardware-pipeline/**'
+      - 'docker/sandbox/**'
+      - '.github/workflows/hardware-image.yml'
+  pull_request:
+    paths:
+      - 'addons/**'
+      - 'experiments/hardware-pipeline/**'
+      - 'docker/sandbox/**'
+      - '.github/workflows/hardware-image.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  addon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        addons: ["3d-print", "cad", "3d-print cad"]
+    name: build-and-verify (${{ matrix.addons }})
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build base sandbox image
+        run: docker build -t unire-sandbox:latest docker/sandbox
+
+      - name: Build the image with the add-ons
+        run: |
+          start=$(date +%s)
+          go run ./addons/cmd/addon-context ${{ matrix.addons }} | docker build --build-arg BASE=unire-sandbox:latest -t unire-addons:test -
+          echo "BUILD_TIME=$(( $(date +%s) - start ))s" >> "$GITHUB_ENV"
+          echo "SIZE=$(docker images unire-addons:test --format '{{.Size}}')" >> "$GITHUB_ENV"
+          echo "BASE_SIZE=$(docker images unire-sandbox:latest --format '{{.Size}}')" >> "$GITHUB_ENV"
+
+      - name: Check each add-on's tools
+        run: |
+          for a in ${{ matrix.addons }}; do
+            docker run --rm -v "$PWD":/workspace -w /workspace unire-addons:test sh "experiments/hardware-pipeline/ci/test-$a.sh"
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "| Add-ons | Build time | Image size | Base size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ${{ matrix.addons }} | ${BUILD_TIME:-n/a} | ${SIZE:-n/a} | ${BASE_SIZE:-n/a} |" >> "$GITHUB_STEP_SUMMARY"

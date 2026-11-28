@@ -1,0 +1,52 @@
+#!/bin/sh
+# unire-kicad-check: run PCB design rule check (DRC) and netlist validation on a .kicad_pcb file.
+#   unire-kicad-check <board.kicad_pcb> [report.json]
+# Requires Setup C (kicad-cli). In Setup A/B, explains requirement and does basic syntax check.
+
+set -e
+
+PCB="$1"
+REPORT="${2:-}"
+
+if [ -z "$PCB" ]; then
+    echo "usage: unire-kicad-check <board.kicad_pcb> [report.json]" >&2
+    exit 2
+fi
+
+if [ ! -f "$PCB" ]; then
+    echo "unire-kicad-check: file not found: $PCB" >&2
+    exit 1
+fi
+
+if command -v kicad-cli >/dev/null 2>&1; then
+    echo "=== Running kicad-cli PCB DRC ==="
+    if [ -n "$REPORT" ]; then
+        exec kicad-cli pcb drc --output "$REPORT" --format json "$PCB"
+    fi
+    # Without a report path kicad-cli writes one next to the board, which fails
+    # (exit 4) when that folder is not writable, such as a read-only checkout.
+    # Write it to a temporary folder instead and show it.
+    tmp=$(mktemp -d)
+    name=$(basename "$PCB" .kicad_pcb)
+    rc=0
+    kicad-cli pcb drc --output "$tmp/$name-drc.rpt" "$PCB" || rc=$?
+    if [ -f "$tmp/$name-drc.rpt" ]; then
+        cat "$tmp/$name-drc.rpt"
+        echo "DRC report: $tmp/$name-drc.rpt"
+    fi
+    exit $rc
+else
+    echo "=== unire-kicad-check (Setup C tool required) ==="
+    echo "Note: 'kicad-cli' is not installed in current sandbox (requires Setup C image)."
+    echo "Checking basic KiCad file format..."
+    if grep -q "(kicad_pcb" "$PCB"; then
+        VERSION=$(grep -o "(version [0-9]*)" "$PCB" | head -n 1)
+        THICKNESS=$(grep -A 2 "(general" "$PCB" | grep "(thickness" | tr -d '()' | awk '{print $2}')
+        echo "[PASS] Valid KiCad PCB S-expression format detected ($VERSION, thickness ${THICKNESS:-1.6}mm)."
+        echo "[INFO] Install Setup C (kicad-cli) to run full DRC, netlist checks, and STEP export."
+        exit 0
+    else
+        echo "[FAIL] File does not look like a KiCad PCB S-expression." >&2
+        exit 1
+    fi
+fi

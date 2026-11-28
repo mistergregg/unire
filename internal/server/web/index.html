@@ -581,6 +581,21 @@
 
         <div class="card">
           <div class="card-head">
+            <span class="icon-tile sm" data-icon="layers"></span>
+            <div class="grow"><h2>Add-ons</h2><p class="muted">Extra tool sets for the sandbox. Tick any mix: Unire builds one image with all of them on this server, and tells the agent how to use them.</p></div>
+          </div>
+          <form id="addon-form" autocomplete="off">
+            <div id="addon-list" class="setting-rows"></div>
+            <pre id="addon-log" class="addon-log" hidden></pre>
+            <div class="setting-form-actions">
+              <p id="addon-image" class="muted small"></p>
+              <button class="primary" type="submit" id="addon-submit">Save</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
             <span class="icon-tile sm" data-icon="clock"></span>
             <div class="grow"><h2>Limits</h2><p class="muted">Stop runaway runs and keep the database and disk from growing for ever.</p></div>
           </div>

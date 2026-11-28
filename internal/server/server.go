@@ -81,6 +81,8 @@ type Server struct {
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bgWG     sync.WaitGroup
+
+	addonBuilds addonBuilder // add-on images built on this host (addons_build.go)
 }
 
 type failure struct {
@@ -197,6 +199,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents/{id}/login", s.auth(s.loginTerminal))
 	mux.HandleFunc("GET /api/sandbox", s.auth(s.getSandbox))
 	mux.HandleFunc("PUT /api/sandbox", s.auth(s.putSandbox))
+	mux.HandleFunc("GET /api/addons", s.auth(s.getAddons))
+	mux.HandleFunc("PUT /api/addons", s.auth(s.putAddons))
 	mux.HandleFunc("GET /api/memory", s.auth(s.listMemory))
 	mux.HandleFunc("GET /api/memory/repo", s.auth(s.getRepoMemory))
 	mux.HandleFunc("PUT /api/memory/repo", s.auth(s.putRepoMemory))

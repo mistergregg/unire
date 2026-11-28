@@ -437,6 +437,7 @@ async function openSettings(tab) {
   syncThemePicker();
   await Promise.all([
     api("GET", "/api/sandbox").then(fillSandbox),
+    api("GET", "/api/addons").then(fillAddons),
     api("GET", "/api/limits").then(fillLimits),
     api("GET", "/api/pulls/settings").then((r) => { $("pr-auto").checked = r.autoOpen; }),
     api("GET", "/api/network").then(fillNetwork),
@@ -453,6 +454,46 @@ $("sb-form").addEventListener("submit", (e) => {
       memory: $("sb-memory").value, cpus: $("sb-cpus").value,
     }));
     banner("Sandbox settings saved. They apply to new sessions.");
+  });
+});
+
+// Add-ons: optional tool sets (see addons/). Tick any mix: Unire builds one
+// sandbox image with all of them on this host and tells the agent about them.
+let addonPoll = null;
+function fillAddons(r) {
+  $("addon-list").replaceChildren(...r.addons.map((a) => {
+    const box = el("input", { type: "checkbox", id: "addon-on-" + a.id, "data-addon": a.id, "aria-label": a.name });
+    box.checked = a.enabled;
+    return el("div", { class: "setting-row setting-row-inline" },
+      el("div", { class: "setting-row-info" },
+        el("div", { class: "grow" },
+          el("label", { class: "setting-row-title setting-row-label", for: "addon-on-" + a.id }, a.name),
+          el("p", { class: "setting-row-desc muted" }, a.summary + " (" + a.size + ")"))),
+      el("div", { class: "setting-row-control" }, box));
+  }));
+  const on = r.addons.filter((a) => a.enabled).map((a) => a.name);
+  const b = r.build;
+  let text = "No add-ons: chats run in " + r.base + ".";
+  if (on.length && !b) text = "Chats get " + on.join(" + ") + ". The image is built on this server when you save or at the next chat (the first build takes several minutes).";
+  else if (b && b.state === "building") text = "Building the image with " + on.join(" + ") + " on this server, started " + new Date(b.started).toLocaleTimeString() + ". Chats started now wait for it.";
+  else if (b && b.state === "ready") text = "Ready: chats run with " + on.join(" + ") + ".";
+  else if (b && b.state === "failed") text = "The image build failed: " + b.error + ". Save again to retry.";
+  $("addon-image").textContent = text;
+  const log = $("addon-log");
+  log.hidden = !(b && b.log && b.state !== "ready");
+  log.textContent = b && b.log ? b.log.split("\n").slice(-12).join("\n") : "";
+  clearTimeout(addonPoll);
+  if (b && b.state === "building" && activeSettingsTab === "sandboxes") {
+    addonPoll = setTimeout(() => api("GET", "/api/addons").then(fillAddons).catch(() => {}), 5000);
+  }
+}
+
+$("addon-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  guarded($("addon-submit"), async () => {
+    const enabled = [...document.querySelectorAll("[data-addon]")].filter((b) => b.checked).map((b) => b.dataset.addon);
+    fillAddons(await api("PUT", "/api/addons", { enabled }));
+    banner(enabled.length ? "Add-ons saved. The image is being prepared; it applies to the next run." : "Add-ons turned off. The next run uses the plain sandbox image.");
   });
 });
 

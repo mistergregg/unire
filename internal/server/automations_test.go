@@ -35,6 +35,15 @@ func TestNextRunSkipsMissedTimesAndRollsDailyOver(t *testing.T) {
 	if got := nextRun(daily, now); got.Day() != 28 || got.Hour() != 23 || got.Minute() != 30 {
 		t.Errorf("23:30 is still ahead today: %v", got)
 	}
+	// The owner's zone, not the server's: 09:00 in New York is 14:00 UTC in November.
+	utc := time.Date(2026, 11, 28, 13, 0, 0, 0, time.UTC)
+	ny := store.Automation{DailyAt: "09:00", TimeZone: "America/New_York"}
+	if got := nextRun(ny, utc); !got.Equal(time.Date(2026, 11, 28, 14, 0, 0, 0, time.UTC)) {
+		t.Errorf("09:00 New York time: %v", got.UTC())
+	}
+	if got := nextRun(store.Automation{DailyAt: "09:00", TimeZone: "Nowhere/Else"}, now); got.Hour() != 9 {
+		t.Errorf("an unknown zone falls back to the server's: %v", got)
+	}
 	if got := nextRun(store.Automation{DailyAt: "25:00"}, now); !got.IsZero() {
 		t.Errorf("a bad time is never scheduled: %v", got)
 	}
@@ -53,6 +62,7 @@ func TestAutomationFromChecksWhatThePageSent(t *testing.T) {
 		"too often":     {Prompt: "p", Agent: "claude", EveryMinutes: 2},
 		"usage over":    {Prompt: "p", Agent: "claude", DailyAt: "09:00", MaxUsage: 120},
 		"negative cap":  {Prompt: "p", Agent: "claude", DailyAt: "09:00", MaxPerDay: -1},
+		"bad zone":      {Prompt: "p", Agent: "claude", DailyAt: "09:00", TimeZone: "Mars/Olympus"},
 	} {
 		if _, err := automationFrom(in); err == nil {
 			t.Errorf("%s: should be refused", name)
@@ -122,6 +132,11 @@ func TestAutomationRunsIntoItsOwnChatAndKeepsItsScheduleOverARestart(t *testing.
 	}
 	if events, _ := e.srv.store.Events(first.ID, 0, 1000); !hasEventText(events, "scheduled run") {
 		t.Error("the activity log says it was a scheduled run")
+	}
+
+	// The sidebar marks the chat as an automation's.
+	if code, body := e.do("GET", "/api/sessions", nil); code != http.StatusOK || !strings.Contains(body, `"automation":"Nightly"`) {
+		t.Errorf("the chat list names the automation: %d %s", code, body)
 	}
 
 	// A restart keeps the automation; the next run is a turn in the same chat.

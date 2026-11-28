@@ -184,6 +184,9 @@ var migrations = []string{
 		note          TEXT NOT NULL DEFAULT ''  -- why it was skipped, or how it was started
 	);
 	CREATE INDEX automation_runs_by_automation ON automation_runs (automation_id, at);`,
+	// 17: the time zone an automation's daily time is in (an IANA name such as "America/New_York", taken from
+	// the owner's browser); empty means the server's own
+	`ALTER TABLE automations ADD COLUMN time_zone TEXT NOT NULL DEFAULT '';`,
 }
 
 // DBFileName is the database file inside the data directory.

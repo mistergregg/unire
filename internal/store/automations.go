@@ -19,7 +19,8 @@ type Automation struct {
 	Model        string // empty: the agent's saved default
 	Repos        []RepoRef
 	EveryMinutes int    // runs every this many minutes; 0 means once a day at DailyAt
-	DailyAt      string // "HH:MM" in the server's time zone, when EveryMinutes is 0
+	DailyAt      string // "HH:MM" in TimeZone, when EveryMinutes is 0
+	TimeZone     string // IANA name of the owner's time zone (from their browser); empty: the server's
 	MaxPerDay    int    // at most this many runs a day (server's day); 0: no cap
 	MaxUsage     int    // skipped while the agent's usage is at this percent or more; 0: no cap
 	MayMerge     bool   // the agent may merge pull requests whose checks all passed
@@ -36,14 +37,14 @@ type AutomationRun struct {
 	Note      string
 }
 
-const automationCols = `id, name, prompt, agent, model, repos, every_minutes, daily_at, max_per_day, max_usage, may_merge, enabled, root_id, next_run, created_at`
+const automationCols = `id, name, prompt, agent, model, repos, every_minutes, daily_at, max_per_day, max_usage, may_merge, enabled, root_id, next_run, created_at, time_zone`
 
 func scanAutomation(sc interface{ Scan(...any) error }) (Automation, error) {
 	var a Automation
 	var repos string
 	var merge, enabled int
 	var next, created int64
-	err := sc.Scan(&a.ID, &a.Name, &a.Prompt, &a.Agent, &a.Model, &repos, &a.EveryMinutes, &a.DailyAt, &a.MaxPerDay, &a.MaxUsage, &merge, &enabled, &a.RootID, &next, &created)
+	err := sc.Scan(&a.ID, &a.Name, &a.Prompt, &a.Agent, &a.Model, &repos, &a.EveryMinutes, &a.DailyAt, &a.MaxPerDay, &a.MaxUsage, &merge, &enabled, &a.RootID, &next, &created, &a.TimeZone)
 	if err != nil {
 		return a, err
 	}
@@ -88,15 +89,15 @@ func (s *Store) SaveAutomation(a Automation) (Automation, error) {
 		_, _ = rand.Read(b)
 		a.ID = hex.EncodeToString(b)
 		a.CreatedAt = s.now()
-		_, err = s.db.Exec(`INSERT INTO automations (`+automationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		_, err = s.db.Exec(`INSERT INTO automations (`+automationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.ID, a.Name, a.Prompt, a.Agent, a.Model, string(repos), a.EveryMinutes, a.DailyAt, a.MaxPerDay, a.MaxUsage,
-			boolInt(a.MayMerge), boolInt(a.Enabled), a.RootID, unixOrZero(a.NextRun), a.CreatedAt.Unix())
+			boolInt(a.MayMerge), boolInt(a.Enabled), a.RootID, unixOrZero(a.NextRun), a.CreatedAt.Unix(), a.TimeZone)
 		return a, err
 	}
 	res, err := s.db.Exec(`UPDATE automations SET name = ?, prompt = ?, agent = ?, model = ?, repos = ?, every_minutes = ?, daily_at = ?,
-		max_per_day = ?, max_usage = ?, may_merge = ?, enabled = ?, next_run = ? WHERE id = ?`,
+		max_per_day = ?, max_usage = ?, may_merge = ?, enabled = ?, next_run = ?, time_zone = ? WHERE id = ?`,
 		a.Name, a.Prompt, a.Agent, a.Model, string(repos), a.EveryMinutes, a.DailyAt, a.MaxPerDay, a.MaxUsage,
-		boolInt(a.MayMerge), boolInt(a.Enabled), unixOrZero(a.NextRun), a.ID)
+		boolInt(a.MayMerge), boolInt(a.Enabled), unixOrZero(a.NextRun), a.TimeZone, a.ID)
 	if err != nil {
 		return a, err
 	}

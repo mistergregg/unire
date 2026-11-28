@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	_ "time/tzdata" // time zone names work even in an image without zoneinfo files
+
 	"github.com/mistergregg/unire/internal/agent"
 	"github.com/mistergregg/unire/internal/safe"
 	"github.com/mistergregg/unire/internal/sessions"
@@ -80,8 +82,19 @@ func (s *Server) automationsOnce(ctx context.Context) int {
 	return n
 }
 
+// zoneOf is the time zone of a's daily time: the owner's (from their browser when the
+// automation was saved), or the server's when none was saved or it is unknown here.
+func zoneOf(a store.Automation) *time.Location {
+	if a.TimeZone != "" {
+		if loc, err := time.LoadLocation(a.TimeZone); err == nil {
+			return loc
+		}
+	}
+	return time.Local
+}
+
 // nextRun is the first time after now that a runs on its schedule. Times missed while
-// Unire was down are skipped. Daily times are in the server's time zone.
+// Unire was down are skipped. Daily times are in the automation's time zone.
 func nextRun(a store.Automation, now time.Time) time.Time {
 	if a.EveryMinutes > 0 {
 		step := time.Duration(a.EveryMinutes) * time.Minute
@@ -99,10 +112,11 @@ func nextRun(a store.Automation, now time.Time) time.Time {
 	if !ok {
 		return time.Time{}
 	}
-	local := now.In(time.Local)
-	next := time.Date(local.Year(), local.Month(), local.Day(), h, m, 0, 0, time.Local)
+	loc := zoneOf(a)
+	local := now.In(loc)
+	next := time.Date(local.Year(), local.Month(), local.Day(), h, m, 0, 0, loc)
 	if !next.After(now) {
-		next = time.Date(local.Year(), local.Month(), local.Day()+1, h, m, 0, 0, time.Local)
+		next = time.Date(local.Year(), local.Month(), local.Day()+1, h, m, 0, 0, loc)
 	}
 	return next
 }
@@ -131,6 +145,9 @@ func scheduleText(a store.Automation) string {
 	case a.EveryMinutes > 0:
 		return fmt.Sprintf("every %d minutes", a.EveryMinutes)
 	}
+	if a.TimeZone != "" {
+		return "every day at " + a.DailyAt + " (" + a.TimeZone + ")"
+	}
 	return "every day at " + a.DailyAt
 }
 
@@ -141,10 +158,10 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf(many, n)
 }
 
-// startOfDay is the start of now's day in the server's time zone: daily caps count from it.
-func startOfDay(now time.Time) time.Time {
-	l := now.In(time.Local)
-	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local)
+// startOfDay is the start of now's day in loc: daily caps count from it.
+func startOfDay(now time.Time, loc *time.Location) time.Time {
+	l := now.In(loc)
+	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, loc)
 }
 
 // usageOver reports whether the agent's usage is at or above limit percent in any of
@@ -201,7 +218,7 @@ func (s *Server) startAutomation(ctx context.Context, a store.Automation, manual
 		return "", "skipped: the last run is still going"
 	}
 	if a.MaxPerDay > 0 && !manual {
-		if n, err := s.store.AutomationRunsSince(a.ID, startOfDay(now)); err == nil && n >= a.MaxPerDay {
+		if n, err := s.store.AutomationRunsSince(a.ID, startOfDay(now, zoneOf(a))); err == nil && n >= a.MaxPerDay {
 			return "", fmt.Sprintf("skipped: already ran %d of %d times today", n, a.MaxPerDay)
 		}
 	}
@@ -278,6 +295,7 @@ type automationView struct {
 	Repos        []store.RepoRef     `json:"repos"`
 	EveryMinutes int                 `json:"everyMinutes"`
 	DailyAt      string              `json:"dailyAt"`
+	TimeZone     string              `json:"timeZone"`
 	MaxPerDay    int                 `json:"maxPerDay"`
 	MaxUsage     int                 `json:"maxUsage"`
 	MayMerge     bool                `json:"mayMerge"`
@@ -292,7 +310,7 @@ type automationView struct {
 
 func (s *Server) automationView(a store.Automation) automationView {
 	v := automationView{ID: a.ID, Name: a.Name, Prompt: a.Prompt, Agent: a.Agent, Model: a.Model, Repos: a.Repos,
-		EveryMinutes: a.EveryMinutes, DailyAt: a.DailyAt, MaxPerDay: a.MaxPerDay, MaxUsage: a.MaxUsage, MayMerge: a.MayMerge,
+		EveryMinutes: a.EveryMinutes, DailyAt: a.DailyAt, TimeZone: a.TimeZone, MaxPerDay: a.MaxPerDay, MaxUsage: a.MaxUsage, MayMerge: a.MayMerge,
 		Enabled: a.Enabled, Schedule: scheduleText(a), Runs: []automationRunView{}}
 	if a.Enabled && !a.NextRun.IsZero() {
 		v.NextRun = a.NextRun.Unix()
@@ -303,7 +321,7 @@ func (s *Server) automationView(a store.Automation) automationView {
 			v.Running = !store.Finished(thread[len(thread)-1].Status)
 		}
 	}
-	v.RunsToday, _ = s.store.AutomationRunsSince(a.ID, startOfDay(s.timeNow()))
+	v.RunsToday, _ = s.store.AutomationRunsSince(a.ID, startOfDay(s.timeNow(), zoneOf(a)))
 	runs, _ := s.store.AutomationRuns(a.ID, automationRunsShown)
 	for _, r := range runs {
 		rv := automationRunView{At: r.At.Unix(), SessionID: r.SessionID, Note: r.Note}
@@ -344,6 +362,7 @@ type automationIn struct {
 	Repos        []store.RepoRef `json:"repos"`
 	EveryMinutes int             `json:"everyMinutes"`
 	DailyAt      string          `json:"dailyAt"`
+	TimeZone     string          `json:"timeZone"` // the owner's (their browser's IANA name); empty: the server's
 	MaxPerDay    int             `json:"maxPerDay"`
 	MaxUsage     int             `json:"maxUsage"`
 	MayMerge     bool            `json:"mayMerge"`
@@ -354,7 +373,7 @@ type automationIn struct {
 func automationFrom(in automationIn) (store.Automation, error) {
 	a := store.Automation{Name: strings.TrimSpace(in.Name), Prompt: strings.TrimSpace(in.Prompt), Agent: strings.TrimSpace(in.Agent),
 		Model: strings.TrimSpace(in.Model), Repos: in.Repos, EveryMinutes: in.EveryMinutes, DailyAt: strings.TrimSpace(in.DailyAt),
-		MaxPerDay: in.MaxPerDay, MaxUsage: in.MaxUsage, MayMerge: in.MayMerge, Enabled: in.Enabled == nil || *in.Enabled}
+		TimeZone: strings.TrimSpace(in.TimeZone), MaxPerDay: in.MaxPerDay, MaxUsage: in.MaxUsage, MayMerge: in.MayMerge, Enabled: in.Enabled == nil || *in.Enabled}
 	if a.Name == "" {
 		a.Name = taskNameFrom(a.Prompt)
 	}
@@ -372,6 +391,11 @@ func automationFrom(in automationIn) (store.Automation, error) {
 	}
 	if _, err := agent.Get(a.Agent); err != nil {
 		return a, err
+	}
+	if a.TimeZone != "" {
+		if _, err := time.LoadLocation(a.TimeZone); err != nil || len(a.TimeZone) > 64 {
+			return a, fmt.Errorf("unknown time zone %q", a.TimeZone)
+		}
 	}
 	if a.Model != "" {
 		if err := agent.ValidateModel(a.Model); err != nil {
@@ -451,7 +475,7 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 	a.ID, a.RootID = old.ID, old.RootID
 	if a.Enabled {
 		// A new schedule starts from now; an unchanged one keeps its next time.
-		if old.Enabled && old.EveryMinutes == a.EveryMinutes && old.DailyAt == a.DailyAt && !old.NextRun.IsZero() {
+		if old.Enabled && old.EveryMinutes == a.EveryMinutes && old.DailyAt == a.DailyAt && old.TimeZone == a.TimeZone && !old.NextRun.IsZero() {
 			a.NextRun = old.NextRun
 		} else {
 			a.NextRun = nextRun(a, s.timeNow())

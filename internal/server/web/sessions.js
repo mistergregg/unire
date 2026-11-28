@@ -204,13 +204,20 @@ function sessionRow(s) {
   const row = el("div", { class: "side-item " + light + (s.id === selectedRoot ? " selected" : ""), role: "button", tabindex: "0" },
     el("span", { class: "dot" }),
     el("div", { class: "side-item-content" },
-      el("div", { class: "item-head" }, el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(lastTouched(s)))),
+      el("div", { class: "item-head" }, s.automation ? automationMark(s.automation) : "", el("span", { class: "name", title: s.task }, s.task), el("span", { class: "when" }, ago(lastTouched(s)))),
       el("div", { class: "muted small-line" }, s.agent + " · " + s.repos.map((r) => r.fullName.split("/").pop()).join(", ")),
       pullsRow,
       s.waiting ? el("span", { class: "badge st-attention" }, "needs you") : ""));
   row.addEventListener("click", open);
   row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
   return row;
+}
+
+// A small clock before the name of an automation's chat.
+function automationMark(name) {
+  const m = el("span", { class: "auto-mark", title: "Automation: " + name, "aria-label": "Automation" });
+  m.innerHTML = iconSvg("clock");
+  return m;
 }
 
 // The address shows which chat is open, so a refresh or a link comes back to it.

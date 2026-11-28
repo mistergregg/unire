@@ -8,7 +8,9 @@ let autoAgents = [];
 let autoServers = [];
 let autoSelected = []; // repos chosen in the form
 let autoResults = [];
-let autoEditing = ""; // id of the automation in the form, "" for a new one
+let autoEditing = "";
+// The owner's time zone: a daily time is kept with it, so "09:00" is 9 in the morning where they are.
+const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) { return ""; } })(); // id of the automation in the form, "" for a new one
 const autoModel = modelPicker($("a-model"), $("a-model-name"));
 
 async function openAutomations() {
@@ -18,8 +20,9 @@ async function openAutomations() {
     api("GET", "/api/automations"), api("GET", "/api/agents"), api("GET", "/api/servers")]);
   autoAgents = agents;
   autoServers = servers;
-  $("auto-clock").textContent = "Times are the server's: " + data.timeZone + (data.zone && data.zone !== data.timeZone ? " (" + data.zone + ")" : "") +
-    ", where it is " + data.serverClock + " now. Set the TZ environment variable on Unire's container to change it.";
+  $("auto-clock").textContent = BROWSER_TZ
+    ? "Daily times are in your time zone (" + BROWSER_TZ + "), whatever the server's clock is set to."
+    : "Your browser did not say its time zone, so daily times are the server's (" + data.timeZone + ", where it is " + data.serverClock + " now).";
   renderAutomations(data.automations);
   if (!autoEditing && !$("a-prompt").value.trim()) resetAutomationForm();
 }
@@ -239,7 +242,7 @@ $("auto-form").addEventListener("submit", (e) => {
       dailyAt: every ? "" : $("a-daily").value,
       maxPerDay: parseInt($("a-maxday").value, 10) || 0,
       maxUsage: parseInt($("a-maxusage").value, 10) || 0,
-      mayMerge: $("a-merge").checked, enabled: $("a-enabled").checked,
+      mayMerge: $("a-merge").checked, enabled: $("a-enabled").checked, timeZone: BROWSER_TZ,
     };
     if (every && body.everyMinutes < 5) throw new Error("Run it every 5 minutes or more.");
     if (autoEditing) await api("PUT", "/api/automations/" + encodeURIComponent(autoEditing), body);

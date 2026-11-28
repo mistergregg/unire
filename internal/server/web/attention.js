@@ -6,7 +6,8 @@
 // every few seconds while Unire is open. Browsers only allow notifications on
 // https (or localhost); the count and the title work everywhere.
 
-const attention = { started: false, notified: new Set(), knownPRs: new Set(), prsInitialized: false };
+const attention = { started: false, notified: new Set(), knownPRs: new Set(), prsInitialized: false,
+  autoTurns: null, autoStarts: null, ticks: 0 };
 
 function playPRChime() {
   try {
@@ -76,6 +77,54 @@ async function checkAttention() {
   }
   attention.knownPRs = currentPRs;
   attention.prsInitialized = true;
+
+  checkAutomationTurns(list);
+  if (attention.ticks++ % 6 === 0) checkAutomationStarts(); // every 30 seconds
+}
+
+// An automation's run that fails is worth hearing about: nobody was watching it.
+// Only changes seen while Unire is open count, so old failures are not announced.
+function checkAutomationTurns(list) {
+  const seen = new Map();
+  for (const s of list) {
+    if (!s.automation) continue;
+    const turn = s.latest || s.id;
+    const status = s.latestStatus || s.status;
+    seen.set(turn, status);
+    const failed = status === "failed" || status === "interrupted";
+    if (failed && attention.autoTurns && attention.autoTurns.get(turn) !== status) {
+      tellAutomationProblem(s.automation, "the run " + status + ".", () => openSession(s.id), turn);
+    }
+  }
+  attention.autoTurns = seen;
+}
+
+// A run that could not start at all (the agent signed out, Docker down) has no chat
+// turn, so the automations' own history is checked for it.
+async function checkAutomationStarts() {
+  let data;
+  try { data = await api("GET", "/api/automations"); } catch (_) { return; }
+  const seen = new Map();
+  for (const a of data.automations || []) {
+    const r = a.runs && a.runs[0];
+    if (!r) continue;
+    seen.set(a.id, r.at);
+    const isNew = attention.autoStarts && attention.autoStarts.get(a.id) !== r.at;
+    if (isNew && !r.sessionId && r.note.startsWith("could not start")) {
+      tellAutomationProblem(a.name, r.note, () => openAutomations(), a.id + "/" + r.at);
+    }
+  }
+  attention.autoStarts = seen;
+}
+
+function tellAutomationProblem(name, what, open, tag) {
+  const text = "Automation " + name + ": " + what;
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    const n = new Notification("Unire: automation problem", { body: text, tag: "auto/" + tag });
+    n.onclick = () => { window.focus(); guarded(null, open); n.close(); };
+  } else if (!document.hidden) {
+    banner(text, true);
+  }
 }
 
 function tellOwner(s, tail) {
@@ -113,7 +162,7 @@ function tellOwnerNewPR(s, p) {
 // ---- Settings: turn notifications on ----
 function notificationsText() {
   if (!("Notification" in window)) return "This browser cannot show notifications here (they need https). The tab count and title still work.";
-  if (Notification.permission === "granted") return "On. You get a notification when an agent is waiting for you and Unire is in the background.";
+  if (Notification.permission === "granted") return "On. You get a notification when an agent is waiting for you, or an automation's run fails, and Unire is in the background.";
   if (Notification.permission === "denied") return "Blocked in the browser's settings for this site.";
   return "Off. Turn them on to hear about questions while you are in another tab.";
 }

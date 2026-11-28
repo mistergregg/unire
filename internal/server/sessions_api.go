@@ -398,6 +398,7 @@ type sessionView struct {
 	LastActive   int64           `json:"lastActive,omitempty"`   // list only: when the owner last acted on the conversation, or its agent last finished
 	Pushed       []string        `json:"pushed,omitempty"`       // repos this session pushed a branch to (session detail only)
 	Pulls        []SessionPR     `json:"pulls,omitempty"`        // pull requests opened by this conversation
+	Automation   string          `json:"automation,omitempty"`   // list only: the name of the automation whose chat this is
 	Repos        []store.RepoRef `json:"repos"`
 	CreatedAt    int64           `json:"createdAt"`
 	StartedAt    int64           `json:"startedAt"`
@@ -487,6 +488,14 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 			Base:     pr.Base,
 		})
 	}
+	automationOf := map[string]string{} // chat root -> automation name
+	if autos, err := s.store.Automations(); err == nil {
+		for _, a := range autos {
+			if a.RootID != "" {
+				automationOf[a.RootID] = a.Name
+			}
+		}
+	}
 	// One row per conversation: its first turn, with the newest turn's status.
 	out := make([]sessionView, 0, len(convs))
 	for _, c := range convs {
@@ -495,6 +504,7 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 			v.Latest, v.LatestStatus = c.newest.ID, c.newest.Status
 		}
 		v.Waiting = s.sessions.Waiting(c.newest.ID)
+		v.Automation = automationOf[c.root.ID]
 		var owner time.Time
 		if lastOwners != nil {
 			owner = lastOwners[c.newest.ID]

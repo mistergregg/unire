@@ -360,3 +360,6 @@ table.stats th { color: var(--muted); font-weight: 600; font-size: 12px; text-tr
 .auto-run-list li.link:hover { background: var(--panel-subtle); }
 .auto-run-list li.skipped { color: var(--muted); }
 .auto-model { display: grid; gap: 6px; }
+.auto-mark { flex: none; align-self: center; display: inline-flex; width: 13px; height: 13px; color: var(--accent); }
+.auto-mark svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.side-item .item-head .auto-mark + .name { flex: 1 1 auto; margin-left: -2px; }

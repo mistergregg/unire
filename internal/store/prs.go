@@ -17,6 +17,7 @@ type PullRequest struct {
 	CreatedAt   time.Time
 	FixAttempts int       // times a fix was started by itself for failing checks
 	FixSHA      string    // the commit that was last tried (a new commit may be tried again)
+	MergedAt    time.Time // when it was first seen merged (zero if unknown, such as for older records)
 	DescribedAt time.Time // when its title and description were last set (the time it was opened, until updated)
 }
 
@@ -33,7 +34,7 @@ func (s *Store) AddPullRequest(p PullRequest) error {
 
 // PullRequests lists a conversation's pull requests, oldest first.
 func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
-	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at, merged_at FROM pull_requests WHERE root_id = ? ORDER BY created_at, number`, rootID)
 	if err != nil {
 		return nil, err
 	}
@@ -41,14 +42,17 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 	var out []PullRequest
 	for rows.Next() {
 		var p PullRequest
-		var at, described int64
-		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described); err != nil {
+		var at, described, merged int64
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described, &merged); err != nil {
 			return nil, err
 		}
 		if p.State == "" {
 			p.State = "open"
 		}
 		p.CreatedAt = time.Unix(at, 0)
+		if merged > 0 {
+			p.MergedAt = time.Unix(merged, 0)
+		}
 		p.DescribedAt = p.CreatedAt
 		if described > 0 {
 			p.DescribedAt = time.Unix(described, 0)
@@ -60,7 +64,7 @@ func (s *Store) PullRequests(rootID string) ([]PullRequest, error) {
 
 // AllPullRequests lists all pull requests across all conversations, oldest first.
 func (s *Store) AllPullRequests() ([]PullRequest, error) {
-	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at FROM pull_requests ORDER BY created_at, number`)
+	rows, err := s.db.Query(`SELECT root_id, server_id, repo, number, branch, base, title, url, created_at, state, fix_attempts, fix_sha, described_at, merged_at FROM pull_requests ORDER BY created_at, number`)
 	if err != nil {
 		return nil, err
 	}
@@ -68,14 +72,17 @@ func (s *Store) AllPullRequests() ([]PullRequest, error) {
 	var out []PullRequest
 	for rows.Next() {
 		var p PullRequest
-		var at, described int64
-		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described); err != nil {
+		var at, described, merged int64
+		if err := rows.Scan(&p.RootID, &p.ServerID, &p.Repo, &p.Number, &p.Branch, &p.Base, &p.Title, &p.URL, &at, &p.State, &p.FixAttempts, &p.FixSHA, &described, &merged); err != nil {
 			return nil, err
 		}
 		if p.State == "" {
 			p.State = "open"
 		}
 		p.CreatedAt = time.Unix(at, 0)
+		if merged > 0 {
+			p.MergedAt = time.Unix(merged, 0)
+		}
 		p.DescribedAt = p.CreatedAt
 		if described > 0 {
 			p.DescribedAt = time.Unix(described, 0)
@@ -90,6 +97,9 @@ func (s *Store) AllPullRequests() ([]PullRequest, error) {
 // the git servers.
 func (s *Store) SetPullRequestState(serverID, repo string, number int, state string) error {
 	_, err := s.db.Exec(`UPDATE pull_requests SET state = ? WHERE server_id = ? AND repo = ? AND number = ?`, state, serverID, repo, number)
+	if err == nil && state == "merged" {
+		_, err = s.db.Exec(`UPDATE pull_requests SET merged_at = ? WHERE server_id = ? AND repo = ? AND number = ? AND merged_at = 0`, s.now().Unix(), serverID, repo, number)
+	}
 	return err
 }
 

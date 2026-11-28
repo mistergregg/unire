@@ -136,6 +136,7 @@ var migrations = []string{
 	// 11: when a pull request's title and description were last set (0: when it was opened), so a later turn that
 	// pushes to its branch can offer to update them
 	`ALTER TABLE pull_requests ADD COLUMN described_at INTEGER NOT NULL DEFAULT 0;`,
+	`ALTER TABLE pull_requests ADD COLUMN merged_at INTEGER NOT NULL DEFAULT 0;`,
 	// 12: the agent's own conversation id for each turn (its session or thread), so a reply by the same agent
 	// carries that conversation on and remembers everything said and done in it
 	`ALTER TABLE sessions ADD COLUMN agent_conv TEXT NOT NULL DEFAULT '';`,

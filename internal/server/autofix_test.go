@@ -194,6 +194,40 @@ func TestAnOwnerReplyGivesTheTriesBack(t *testing.T) {
 	}
 }
 
+func TestTheRetryButtonStartsOverOnTheSameCommit(t *testing.T) {
+	e, ci, _ := autoFixEnv(t)
+	ctx := context.Background()
+	for _, sha := range []string{"sha1", "sha2", "sha3", "sha4"} {
+		ci.set(sha, false)
+		if n := e.srv.autoFixOnce(ctx); n != 1 {
+			t.Fatalf("commit %s should be tried, started %d", sha, n)
+		}
+		e.waitStatus(lastTurn(t, e).ID, "done")
+	}
+	if n := e.srv.autoFixOnce(ctx); n != 0 {
+		t.Fatalf("out of tries, started %d", n)
+	}
+	// sha4 is still the failing commit: the button tries it again right away.
+	code, body := e.do("POST", "/api/sessions/"+lastTurn(t, e).ID+"/autofix/retry", map[string]any{})
+	if code != 200 || !strings.Contains(body, `"started":true`) {
+		t.Fatalf("retry = %d %s", code, body)
+	}
+	turn := lastTurn(t, e)
+	if !strings.Contains(turn.Prompt, "try 1 of 4") || !strings.Contains(turn.Prompt, "--- FAIL: TestFlaky for sha4") {
+		t.Errorf("the fix starts over on the current commit: %s", turn.Prompt[:300])
+	}
+	e.waitStatus(turn.ID, "done")
+	recs, _ := e.srv.store.PullRequests("c1")
+	if recs[0].FixAttempts != 1 || recs[0].FixSHA != "sha4" {
+		t.Errorf("the new try is recorded: %+v", recs[0])
+	}
+	// Turned off, the button resets the count but starts nothing.
+	e.do("POST", "/api/sessions/c1/autofix", map[string]any{"on": false})
+	if code, body := e.do("POST", "/api/sessions/c1/autofix/retry", map[string]any{}); code != 200 || !strings.Contains(body, `"started":false`) {
+		t.Errorf("with auto-fix off nothing starts: %d %s", code, body)
+	}
+}
+
 func TestNoFixIsStartedWhenItShouldNotBe(t *testing.T) {
 	e, ci, _ := autoFixEnv(t)
 	ctx := context.Background()

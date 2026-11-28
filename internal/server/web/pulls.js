@@ -108,6 +108,8 @@ function pullCard(p) {
   if (p.state === "open") {
     if (p.summary === "failure") actions.append(handButton("Ask the agent to fix the checks", async () => (await api("GET", "/api/sessions/" + encodeURIComponent(thread[thread.length - 1].s.id) + "/pulls/failure?serverId=" + encodeURIComponent(p.serverId) + "&repo=" + encodeURIComponent(p.repo) + "&number=" + p.number)).message, free));
     if (p.comments.length) actions.append(handButton("Ask the agent to address the comments", commentsMessage(p), free));
+    // Auto-fix used all its tries: start over, the current commit included.
+    if (pullsData.autoFix !== false && p.fixTries >= (pullsData.maxFix || 4)) actions.append(retryButton(free));
   }
   // Closing or reopening is done on the git server, not by the agent. Nothing is merged.
   actions.append(anotherButton(p, details));
@@ -116,6 +118,17 @@ function pullCard(p) {
   if (actions.children.length) details.append(actions);
   const up = (pullsData.updates || []).find((u) => u.serverId === p.serverId && u.repo === p.repo && u.number === p.number);
   return el("div", { class: "pr-card" }, head, details, up ? updateForm(p, up) : "");
+}
+
+function retryButton(free) {
+  const b = el("button", { type: "button", class: "small", title: free ? "Give auto-fix its tries back and start a fix now if checks are failing" : "Available when the agent is not working" }, "Reset auto-fix and try again");
+  b.disabled = !free;
+  b.addEventListener("click", () => guarded(b, async () => {
+    const tail = thread[thread.length - 1];
+    await api("POST", "/api/sessions/" + encodeURIComponent(tail.s.id) + "/autofix/retry", {});
+    await refreshPulls();
+  }));
+  return b;
 }
 
 function handButton(label, message, free) {

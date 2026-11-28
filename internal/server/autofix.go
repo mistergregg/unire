@@ -143,6 +143,28 @@ func (s *Server) setAutoFix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"autoFix": req.On, "maxFix": maxAutoFix})
 }
 
+// retryAutoFix is the "reset and try again" button: the conversation's pull requests get
+// their automatic fix tries back, the current commit included, and a fix starts now if
+// one is failing and the agent is free (otherwise the next look starts it).
+func (s *Server) retryAutoFix(w http.ResponseWriter, r *http.Request) {
+	x, ok := s.lookupSession(w, r)
+	if !ok {
+		return
+	}
+	thread, err := s.threadOf(x.ID)
+	if err != nil || len(thread) == 0 {
+		serverError(w)
+		return
+	}
+	root := thread[0].ID
+	if err := s.store.RetryFixes(root); err != nil {
+		serverError(w)
+		return
+	}
+	started := s.autoFixConversation(r.Context(), root)
+	writeJSON(w, http.StatusOK, map[string]any{"started": started})
+}
+
 // getPullFailure gives the message for the owner's "fix the checks" button: why the
 // checks of one pull request failed, with the log, ready to send as a reply.
 func (s *Server) getPullFailure(w http.ResponseWriter, r *http.Request) {

@@ -20,11 +20,21 @@ fi
 
 if command -v kicad-cli >/dev/null 2>&1; then
     echo "=== Running kicad-cli PCB DRC ==="
-    OUT_ARG=""
     if [ -n "$REPORT" ]; then
-        OUT_ARG="--output $REPORT --format json"
+        exec kicad-cli pcb drc --output "$REPORT" --format json "$PCB"
     fi
-    exec kicad-cli pcb drc $OUT_ARG "$PCB"
+    # Without a report path kicad-cli writes one next to the board, which fails
+    # (exit 4) when that folder is not writable, such as a read-only checkout.
+    # Write it to a temporary folder instead and show it.
+    tmp=$(mktemp -d)
+    name=$(basename "$PCB" .kicad_pcb)
+    rc=0
+    kicad-cli pcb drc --output "$tmp/$name-drc.rpt" "$PCB" || rc=$?
+    if [ -f "$tmp/$name-drc.rpt" ]; then
+        cat "$tmp/$name-drc.rpt"
+        echo "DRC report: $tmp/$name-drc.rpt"
+    fi
+    exit $rc
 else
     echo "=== unire-kicad-check (Setup C tool required) ==="
     echo "Note: 'kicad-cli' is not installed in current sandbox (requires Setup C image)."

@@ -7,6 +7,7 @@
 #   unire pr "<title>"        suggest a pull request title (read when the session ends)
 #   unire share <file>        show a file (text or image) to the owner in the chat
 #   unire pr-body <<EOF ... EOF   the pull request description, from standard input
+#   unire automation <<EOF {json} EOF   propose a scheduled task (the owner saves it)
 #   unire pr-status, pr-comments, pr-reply "<text>", pr-list, pr-merge "<repo#n>", memory "<words>", repo "<name>", parent   answered by Unire while the agent runs
 dir=/workspace/.unire-tools
 tool=$1
@@ -74,6 +75,15 @@ case "$tool" in
     { printf '%s\n%s\n' "$name" "$kind"; if [ "$kind" = image ]; then base64 < "$f" | tr -d '\n'; else cat "$f"; fi; } > "$dir/share/$id.tmp" \
       && mv "$dir/share/$id.tmp" "$dir/share/$id.s" \
       && echo "ok: $name will be shown to the owner in the chat when your turn ends."
+    ;;
+  automation)
+    # A proposal as JSON, from the argument or standard input. Unire answers while the agent runs.
+    if [ -n "$*" ]; then body="$*"; else body=$(head -c 22000); fi
+    [ -n "$body" ] || { echo "usage: unire automation <<'EOF' {json} EOF" >&2; exit 2; }
+    id="$(date +%s%N)$$"
+    mkdir -p "$dir/ask" || exit 1
+    printf '@call %s\n%s\n' "$tool" "$body" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
+    wait_for "$id"
     ;;
   pr-body)
     # The description has several lines, so it is read from standard input.

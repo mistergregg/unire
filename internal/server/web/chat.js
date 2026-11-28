@@ -394,6 +394,7 @@ function addEvents(t, events) {
     if (e.kind === "ask") { askCard(t, e); continue; }
     if (e.kind === "answer") { answerCard(t, e); continue; }
     if (e.kind === "share") { shareCard(t, e); continue; }
+    if (e.kind === "automation") { proposalCard(t, e); continue; }
     if (e.kind === "attach") { attachedCard(t, e); continue; }
     if (e.kind === "steer") { steerCard(t, e); continue; }
     if (e.kind === "steerstate") { steerState(t, e); continue; }
@@ -819,6 +820,42 @@ $("s-delete").addEventListener("click", () => {
     await openSessions();
   });
 });
+
+// ---- an automation the agent proposed ----
+// An "automation" event is the proposal as JSON (the fields of POST /api/automations,
+// merging off). Nothing exists until the owner presses Save; Edit opens the
+// Automations page with it filled in.
+function proposalCard(t, e) {
+  let p;
+  try { p = JSON.parse(e.text); } catch (_) { return; }
+  const when = p.everyMinutes
+    ? (p.everyMinutes % 60 === 0 ? "every " + (p.everyMinutes === 60 ? "hour" : p.everyMinutes / 60 + " hours") : "every " + p.everyMinutes + " minutes")
+    : "every day at " + p.dailyAt + " (your time)";
+  const limits = [p.maxPerDay ? "at most " + p.maxPerDay + " runs a day" : "no daily limit",
+    p.maxUsage ? "skips at " + p.maxUsage + "% usage" : "no usage limit", "does not merge pull requests"];
+  const status = el("span", { class: "muted small" });
+  const save = el("button", { type: "button", class: "primary tiny" }, "Save automation");
+  const editBtn = el("button", { type: "button", class: "tiny" }, "Edit first");
+  const saved = () => { save.disabled = true; save.textContent = "Saved"; status.textContent = "It runs on its schedule; see Automations."; };
+  save.addEventListener("click", () => guarded(save, async () => {
+    await api("POST", "/api/automations", { ...p, mayMerge: false, enabled: true, timeZone: typeof BROWSER_TZ === "string" ? BROWSER_TZ : "" });
+    saved();
+    if (typeof refreshSidebar === "function") refreshSidebar();
+  }));
+  editBtn.addEventListener("click", () => guarded(editBtn, () => editProposal(p)));
+  // Already saved (the page was reloaded): the same name and task exist.
+  api("GET", "/api/automations").then((d) => {
+    if ((d.automations || []).some((a) => a.name === p.name && a.prompt === p.prompt)) saved();
+  }).catch(() => {});
+  const card = el("div", { class: "proposal-card" },
+    el("div", { class: "proposal-head" }, iconTile("clock", true),
+      el("div", {}, el("div", { class: "name" }, "Automation proposed: " + p.name),
+        el("div", { class: "muted small" }, when + " · " + (p.repos.length ? p.repos.map((r) => r.fullName).join(", ") : "no repos")))),
+    el("div", { class: "proposal-prompt" }, p.prompt),
+    el("div", { class: "muted small" }, limits.join(" · ")),
+    el("div", { class: "item-actions" }, save, editBtn, status));
+  t.shareBox.append(card);
+}
 
 // ---- files the agent shared with you ----
 // A "share" event is "<name>\n<text|image>\n<content>" (an image is base64). It

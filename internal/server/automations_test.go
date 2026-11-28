@@ -271,11 +271,11 @@ func TestPRMergeOnlyMergesPullRequestsWhoseChecksAllPassed(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if got := e.srv.automationToolsFor(a.ID, ""); len(got) != 2 || got[1].Name != tools.PRMerge.Name {
-		t.Fatalf("an automation that may merge gets both tools: %+v", got)
+	if got := e.srv.automationToolsFor(a.ID, ""); len(got) != 3 || got[2].Name != tools.PRMerge.Name {
+		t.Fatalf("an automation that may merge gets both pull request tools: %+v", got)
 	}
-	if got := e.srv.automationToolsFor("", "some-other-chat"); got != nil {
-		t.Fatalf("an ordinary chat gets neither: %+v", got)
+	if got := e.srv.automationToolsFor("", "some-other-chat"); len(got) != 1 || got[0].Name != tools.AutomationNew.Name {
+		t.Fatalf("an ordinary chat can only propose automations: %+v", got)
 	}
 
 	list := e.srv.automationCall(ctx, a.ID, "", tools.PRList.Name, "")
@@ -310,5 +310,57 @@ func TestPRMergeOnlyMergesPullRequestsWhoseChecksAllPassed(t *testing.T) {
 	}
 	if got := e.srv.automationCall(ctx, a.ID, "", tools.PRMerge.Name, "o/r#7"); !strings.Contains(got, "turned off") {
 		t.Errorf("merging off: %s", got)
+	}
+}
+
+func TestAChatCanProposeAnAutomationThatTheOwnerSaves(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	srv := httptest.NewServer(&fakeDependabot{})
+	t.Cleanup(srv.Close)
+	if code, body := e.do("POST", "/api/servers", map[string]any{"name": "G", "type": "github", "baseUrl": srv.URL, "token": "t"}); code != http.StatusCreated {
+		t.Fatalf("add server = %d %s", code, body)
+	}
+	servers, _ := e.srv.store.GitServers()
+	ref := store.RepoRef{ServerID: servers[0].ID, FullName: "o/deps", CloneURL: srv.URL + "/o/deps.git", Base: "agent/some-branch"}
+	if err := e.srv.store.CreateSession(store.Session{ID: "c9", Task: "chat", Agent: "claude", Mode: "hands-off", Prompt: "p", Branch: "agent/b", Repos: []store.RepoRef{ref}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	call := func(args string) string { return e.srv.automationCall(ctx, "", "c9", tools.AutomationNew.Name, args) }
+
+	for args, want := range map[string]string{
+		`not json`: "one JSON object",
+		`{"name":"x","prompt":"p","daily_at":"09:00","merge":true}`:            "unknown field",
+		`{"name":"x","prompt":"p","every_minutes":1}`:                          "every 5 minutes",
+		`{"name":"x","prompt":"p","daily_at":"09:00","repos":["o/elsewhere"]}`: "no repo named o/elsewhere",
+	} {
+		if got := call(args); !strings.Contains(got, want) {
+			t.Errorf("%s: should say %q, said %s", args, want, got)
+		}
+	}
+	if n, _ := e.srv.store.Automations(); len(n) != 0 {
+		t.Fatal("a proposal never creates an automation")
+	}
+
+	got := call(`{"name":"Merge deps","prompt":"merge the green dependabot PRs","repos":["O/Deps"],"daily_at":"8:30","max_per_day":1}`)
+	if !strings.HasPrefix(got, "ok: proposed") || !strings.Contains(got, "press Save") {
+		t.Fatalf("a good proposal is accepted: %s", got)
+	}
+	events, _ := e.srv.store.EventsByKind("c9", "automation")
+	if len(events) != 1 {
+		t.Fatalf("the proposal is put in the chat: %d events", len(events))
+	}
+	var p automationIn
+	if err := json.Unmarshal([]byte(events[0].Text), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Agent != "claude" || p.DailyAt != "08:30" || p.MaxUsage != 80 || p.MayMerge || len(p.Repos) != 1 || p.Repos[0].FullName != "o/deps" || p.Repos[0].Base != "" {
+		t.Errorf("the chat's agent, a tidy time, the default usage limit, no merging, the repo without the chat's branch: %+v", p)
+	}
+	// What the card sends when the owner presses Save.
+	p.TimeZone = "Europe/Paris"
+	if code, body := e.do("POST", "/api/automations", p); code != http.StatusCreated || !strings.Contains(body, `"mayMerge":false`) {
+		t.Fatalf("save = %d %s", code, body)
 	}
 }

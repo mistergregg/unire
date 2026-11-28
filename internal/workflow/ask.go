@@ -20,7 +20,7 @@ import (
 
 const (
 	askDir      = tools.Dir + "/ask"
-	askMaxBytes = 2000
+	askMaxBytes = 24000 // a question is short; an automation proposal carries its whole prompt (up to 20,000)
 	noAnswer    = "The owner did not answer. Continue with your best judgment and say what you assumed."
 )
 

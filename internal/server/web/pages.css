@@ -363,3 +363,7 @@ table.stats th { color: var(--muted); font-weight: 600; font-size: 12px; text-tr
 .auto-mark { flex: none; align-self: center; display: inline-flex; width: 13px; height: 13px; color: var(--accent); }
 .auto-mark svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .side-item .item-head .auto-mark + .name { flex: 1 1 auto; margin-left: -2px; }
+.proposal-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 8px 0; background: var(--panel); display: grid; gap: 8px; }
+.proposal-head { display: flex; gap: 10px; align-items: center; }
+.proposal-head .name { font-weight: 600; }
+.proposal-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: auto; font-size: 13.5px; }

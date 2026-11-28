@@ -249,7 +249,7 @@ var (
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
 func CallTools() []Tool {
-	return []Tool{Name, PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent, PRList, PRMerge}
+	return []Tool{Name, PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent, PRList, PRMerge, AutomationNew}
 }
 
 // PRTools are the call tools for a conversation with an open pull request.
@@ -350,6 +350,17 @@ var (
 			`Merge only what the task asks you to, after looking at the change, and say in your reply what you merged and what you left and why.`,
 	}
 )
+
+// AutomationNew lets the agent propose a scheduled task when the owner asks for
+// something to happen regularly. Nothing is created until the owner presses Save on
+// the card it shows in the chat, because an automation keeps using the agent by itself.
+var AutomationNew = Tool{
+	Name: "automation",
+	Usage: `unire automation <<'EOF' {"name": "...", "prompt": "...", "repos": ["owner/repo"], "daily_at": "09:00"} EOF - propose an automation (a task that runs by itself on a schedule, in a chat of its own) when the owner asks for something to be done regularly. ` +
+		`Fields: name; prompt (what to do on each run, written as instructions to an agent that starts with no memory of this chat); repos (full names); either daily_at ("HH:MM", the owner's own time) or every_minutes (5 or more); ` +
+		`optional max_per_day (0: no limit) and max_usage (skip runs while the agent's usage is at this percent; default 80). ` +
+		`Unire checks it and prints any problem; the owner then sees a card with Save and Edit, and nothing runs until they save it. Merging pull requests is always left off for the owner to turn on. Only propose one when asked.`,
+}
 
 // Repo lets the agent bring another of the owner's repos into the session while it
 // runs (for example the backend of the app it is working on).

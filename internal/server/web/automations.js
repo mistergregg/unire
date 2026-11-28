@@ -159,17 +159,31 @@ function editAutomation(a) {
   $("auto-form-title").textContent = "Edit " + a.name;
   $("a-submit").textContent = "Save changes";
   $("a-cancel").hidden = false;
+  fillAutomationForm(a);
+}
+
+// Opens the page with an agent's proposal in the form, as a new automation to check and save.
+async function editProposal(p) {
+  autoEditing = "";
+  await openAutomations();
+  resetAutomationForm();
+  $("auto-form-title").textContent = "New automation (proposed in a chat)";
+  $("a-cancel").hidden = false;
+  fillAutomationForm({ ...p, mayMerge: false, enabled: true });
+}
+
+function fillAutomationForm(a) {
   $("a-name").value = a.name;
   $("a-prompt").value = a.prompt;
   fillAutoAgents(a.agent, a.model);
   $("a-kind").value = a.everyMinutes ? "every" : "daily";
   if (a.everyMinutes) $("a-every").value = a.everyMinutes;
   if (a.dailyAt) $("a-daily").value = a.dailyAt;
-  $("a-maxday").value = a.maxPerDay;
-  $("a-maxusage").value = a.maxUsage;
-  $("a-merge").checked = a.mayMerge;
-  $("a-enabled").checked = a.enabled;
-  autoSelected = a.repos.map((r) => ({ ...r }));
+  $("a-maxday").value = a.maxPerDay || 0;
+  $("a-maxusage").value = a.maxUsage || 0;
+  $("a-merge").checked = !!a.mayMerge;
+  $("a-enabled").checked = a.enabled !== false;
+  autoSelected = (a.repos || []).map((r) => ({ ...r }));
   syncKind();
   renderAutoSelected();
   $("auto-form").scrollIntoView({ behavior: "smooth", block: "start" });

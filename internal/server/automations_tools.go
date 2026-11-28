@@ -45,18 +45,24 @@ func (t automationTools) Call(ctx context.Context, automationID, rootID, tool, a
 	return t.s.automationCall(ctx, automationID, rootID, tool, args)
 }
 
+// automationToolsFor: every chat can propose an automation; an automation's own chat
+// also gets the pull request tools.
 func (s *Server) automationToolsFor(automationID, rootID string) []tools.Tool {
+	out := []tools.Tool{tools.AutomationNew}
 	a, ok := s.automationFor(automationID, rootID)
 	if !ok {
-		return nil
+		return out
 	}
 	if a.MayMerge {
-		return []tools.Tool{tools.PRList, tools.PRMerge}
+		return append(out, tools.PRList, tools.PRMerge)
 	}
-	return []tools.Tool{tools.PRList}
+	return append(out, tools.PRList)
 }
 
 func (s *Server) automationCall(ctx context.Context, automationID, rootID, tool, args string) string {
+	if tool == tools.AutomationNew.Name {
+		return s.proposeAutomation(ctx, rootID, args)
+	}
 	a, ok := s.automationFor(automationID, rootID)
 	if !ok {
 		return "This tool is only available in an automation's chat."

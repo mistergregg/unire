@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -224,6 +225,12 @@ func (s *Server) replyToSession(w http.ResponseWriter, r *http.Request) {
 			serverError(w)
 		}
 		return
+	}
+	// The owner is working on it again: automatic fixes get their full tries back.
+	if thread, err := s.threadOf(x.ID); err == nil && len(thread) > 0 {
+		if err := s.store.ResetFixAttempts(thread[0].ID); err != nil {
+			log.Printf("resetting automatic fix tries for %s: %v", thread[0].ID, err)
+		}
 	}
 	writeJSON(w, http.StatusCreated, toView(started))
 }

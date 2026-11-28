@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistergregg/unire/internal/repopick"
 	"github.com/mistergregg/unire/internal/store"
 )
 
@@ -74,9 +75,15 @@ func TestAChatStartedWithoutReposPicksTheOnesYouNamed(t *testing.T) {
 		t.Errorf("the activity says why it picked it: %s", logs)
 	}
 
-	code, _, raw = startChat(e, "make it faster please", nil)
-	if code != http.StatusBadRequest || !strings.Contains(raw, "could not tell which repos") {
-		t.Errorf("nothing named = %d %s", code, raw)
+	// Nothing named: the chat starts without a repo (the agent can bring one in).
+	code, s, raw = startChat(e, "make it faster please", nil)
+	if code != http.StatusCreated || repoNames(s) != "" {
+		t.Fatalf("nothing named = %d %s", code, raw)
+	}
+	e.waitStatus(s["id"].(string), "done")
+	_, logs = e.do("GET", "/api/sessions/"+s["id"].(string)+"/logs", nil)
+	if !strings.Contains(logs, "no repo picked") {
+		t.Errorf("the activity says no repo was picked: %s", logs)
 	}
 	// What the owner chose is used as it is, nothing added.
 	code, s, raw = startChat(e, "look at the echotalk mobile app", []map[string]any{repoRef(srvURL(e), "Gbreed/gbr-client")})
@@ -226,5 +233,39 @@ func TestGitHubCatalogBaseListReused(t *testing.T) {
 	filtered := e.srv.listCached(ctx, servers[0], "echotalk")
 	if len(filtered) != 2 || calls != 1 {
 		t.Fatalf("cached call: %d repos, %d calls (wanted 1 call)", len(filtered), calls)
+	}
+}
+
+func TestAChatWithoutReposCanGetOneLater(t *testing.T) {
+	e, _ := pickEnv(t)
+	code, s, raw := startChat(e, "design a 40 mm cube with a hole", nil)
+	if code != http.StatusCreated || repoNames(s) != "" {
+		t.Fatalf("start = %d %s", code, raw)
+	}
+	e.waitStatus(s["id"].(string), "done")
+	// A reply that names nothing keeps it without a repo.
+	code, raw = e.do("POST", "/api/sessions/"+s["id"].(string)+"/reply", map[string]any{"prompt": "make the hole bigger"})
+	var r map[string]any
+	json.Unmarshal([]byte(raw), &r)
+	if code != http.StatusCreated || repoNames(r) != "" {
+		t.Fatalf("reply = %d %s", code, raw)
+	}
+	e.waitStatus(r["id"].(string), "done")
+	// Naming a repo brings it in.
+	code, raw = e.do("POST", "/api/sessions/"+r["id"].(string)+"/reply", map[string]any{"prompt": "now put it in echotalk-backend and open a PR"})
+	json.Unmarshal([]byte(raw), &r)
+	if code != http.StatusCreated || repoNames(r) != "Gbreed/echotalk-backend" {
+		t.Fatalf("naming a repo = %d %s", code, raw)
+	}
+	e.waitStatus(r["id"].(string), "done")
+}
+
+func TestNoRepoNoteNamesTheClosest(t *testing.T) {
+	got := noRepoNote([]repopick.Candidate{{Repo: repopick.Repo{FullName: "a/one"}}, {Repo: repopick.Repo{FullName: "b/two"}}})
+	if !strings.Contains(got, "repo tool") || !strings.Contains(got, "a/one, b/two") {
+		t.Errorf("note = %q", got)
+	}
+	if got := noRepoNote(nil); strings.Contains(got, "Closest") {
+		t.Errorf("no candidates = %q", got)
 	}
 }

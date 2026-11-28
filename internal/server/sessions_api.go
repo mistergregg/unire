@@ -267,8 +267,8 @@ func serverHost(g store.GitServer) string {
 // is sent wherever git is told to clone from, so it must never be possible to
 // point it at another host.
 func (s *Server) resolveRepos(refs []store.RepoRef) ([]sessions.Repo, error) {
-	if len(refs) == 0 || len(refs) > 10 {
-		return nil, fmt.Errorf("choose between 1 and 10 repos")
+	if len(refs) > 10 {
+		return nil, fmt.Errorf("choose at most 10 repos")
 	}
 	out := make([]sessions.Repo, 0, len(refs))
 	for _, ref := range refs {
@@ -333,6 +333,10 @@ func (s *Server) saveWorkspace(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len(req.Name) > 60 {
 		writeErr(w, http.StatusBadRequest, "name is required (60 characters max)")
+		return
+	}
+	if len(req.Repos) == 0 {
+		writeErr(w, http.StatusBadRequest, "choose at least one repo")
 		return
 	}
 	// Same checks as launching, so a saved workspace can always be launched.
@@ -403,6 +407,9 @@ func toView(x store.Session) sessionView {
 	v := sessionView{ID: x.ID, Task: x.Task, Agent: x.Agent, Model: x.Model, Mode: x.Mode, Prompt: x.Prompt, Branch: x.Branch, Status: x.Status, Error: x.Error,
 		Network: x.Network, Memory: x.Memory, Parent: x.ParentID, Repos: x.Repos, CreatedAt: x.CreatedAt.Unix(),
 		CanSteer: x.Mode == agent.HandsOff && agent.CanSteer(x.Agent)}
+	if v.Repos == nil {
+		v.Repos = []store.RepoRef{} // a chat without repos; the page expects a list
+	}
 	if !x.StartedAt.IsZero() {
 		v.StartedAt = x.StartedAt.Unix()
 	}
@@ -609,25 +616,18 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var picked []repopick.Candidate
+	var notes []string
 	if len(req.Repos) == 0 {
 		// The owner chose no repos: use the ones the message is clearly about, and
 		// those usually used with them.
 		ranked := s.rankRepos(r.Context(), req.Prompt, nil)
 		picked = repopick.Auto(ranked)
 		if len(picked) == 0 {
-			msg := "I could not tell which repos this needs from your message. Name one (like its repo name) or add it with the box under the message."
-			if len(ranked) > 0 {
-				var near []string
-				for i, c := range ranked {
-					if i >= 3 {
-						break
-					}
-					near = append(near, c.FullName)
-				}
-				msg += " Closest: " + strings.Join(near, ", ") + "."
-			}
-			writeErr(w, http.StatusBadRequest, msg)
-			return
+			// Nothing in the message points to a repo: start without one. The
+			// agent hears the closest ones, so it can bring one in (the owner is
+			// asked first) if the task turns out to need it.
+			notes = append(notes, "no repo picked: the message does not name one")
+			preamble = noRepoNote(ranked) + preamble
 		}
 		for _, c := range picked {
 			req.Repos = append(req.Repos, refOf(c))
@@ -648,7 +648,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only unattended sessions exist so far; interactive ones need a terminal.
 	useMemory := req.Memory == nil || *req.Memory
-	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Model: chosenModel, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: pickNotes(picked), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
+	x, err := s.sessions.Start(sessions.Request{Task: req.Task, Agent: req.Agent, Model: chosenModel, Prompt: req.Prompt, Mode: agent.HandsOff, Network: mode, Memory: useMemory, Repos: repos, Notes: append(pickNotes(picked), notes...), Preamble: preamble, ForkedFrom: forkedFrom, UpstreamID: upstreamID, Attachments: images})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -657,6 +657,25 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.SetUpstreamSeen(x.ID, upstreamSeen)
 	}
 	writeJSON(w, http.StatusCreated, toView(x))
+}
+
+// noRepoNote tells the agent of a chat started without repos which of the owner's
+// repos come closest to the message, so it can tell whether one is meant.
+func noRepoNote(ranked []repopick.Candidate) string {
+	var b strings.Builder
+	b.WriteString("No repo was chosen for this chat and the owner's message does not clearly name one, so it started without a repo. ")
+	b.WriteString("Many tasks need none; do them in /workspace. If this one needs code from one of the owner's repos, or they ask for a pull request, bring the repo in with the repo tool (Unire asks the owner first unless they named it). If you cannot tell which repo they mean, ask them.")
+	var near []string
+	for i, c := range ranked {
+		if i >= 5 {
+			break
+		}
+		near = append(near, c.FullName)
+	}
+	if len(near) > 0 {
+		b.WriteString(" Closest matches among their repos: " + strings.Join(near, ", ") + ".")
+	}
+	return b.String() + "\n\n"
 }
 
 func (s *Server) lookupSession(w http.ResponseWriter, r *http.Request) (store.Session, bool) {

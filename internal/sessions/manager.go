@@ -147,9 +147,8 @@ func RepoDirNames(fullNames []string) []string {
 
 // Start queues a session and returns it. The session runs in the background.
 func (m *Manager) Start(req Request) (store.Session, error) {
-	if len(req.Repos) == 0 {
-		return store.Session{}, errors.New("choose at least one repo")
-	}
+	// No repos is fine: not every task needs one (a 3D model, a question), and
+	// the agent can bring one in with the repo tool when it does.
 	if req.Network == "" {
 		req.Network = egress.ModeInternet
 	}

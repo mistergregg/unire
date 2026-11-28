@@ -1551,3 +1551,10 @@ func TestTruncateKeepsTextAroundInvalidBytes(t *testing.T) {
 		t.Errorf("truncate(short) = %q; want it unchanged", got)
 	}
 }
+
+func TestWorkspaceNoteWithoutRepos(t *testing.T) {
+	got := workspaceNote(session.Spec{ID: "x"})
+	if !strings.Contains(got, "no repo yet") || !strings.Contains(got, "repo tool") {
+		t.Errorf("note = %q", got)
+	}
+}

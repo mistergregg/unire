@@ -487,7 +487,7 @@ func (w *worker) git(ctx context.Context, dir string, repo *session.Repo, args .
 // reading files at the wrong path, before they found the code.
 func workspaceNote(spec session.Spec) string {
 	if len(spec.Repos) == 0 {
-		return ""
+		return "# Where the code is\n\nThis chat has no repo yet. You start in " + workspace + "; work there. If the work needs one of the owner's repos (for example they ask for a pull request), bring it in with the repo tool if you have it, then commit inside its folder.\n"
 	}
 	var b strings.Builder
 	b.WriteString("# Where the code is\n\n")

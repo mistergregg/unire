@@ -309,8 +309,14 @@ func TestLaunchValidation(t *testing.T) {
 		"no prompt":     {"prompt": "  "},
 		"task too long": {"task": strings.Repeat("x", 81)},
 		"unknown agent": {"agent": "nope"},
-		"no repos":      {"repos": []any{}},
-		"unknown srv":   {"repos": []any{map[string]any{"serverId": "zzz", "fullName": "a/b", "cloneUrl": base + "/a/b.git"}}},
+		"too many repos": {"repos": func() []any {
+			var l []any
+			for i := 0; i < 11; i++ {
+				l = append(l, repoRef(base, fmt.Sprintf("greg/r%d", i)))
+			}
+			return l
+		}()},
+		"unknown srv": {"repos": []any{map[string]any{"serverId": "zzz", "fullName": "a/b", "cloneUrl": base + "/a/b.git"}}},
 	}
 	for name, extra := range cases {
 		if code, _ := e.launch(base, extra); code != http.StatusBadRequest {

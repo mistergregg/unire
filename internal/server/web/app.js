@@ -122,8 +122,8 @@ function ago(unix) {
 }
 
 // ---- views ----
-const VIEWS = ["auth", "sessions", "new", "session", "prs", "agents", "memory", "repomem", "servers", "settings", "health"];
-const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", prs: "prs", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings", health: "health" };
+const VIEWS = ["auth", "sessions", "new", "session", "prs", "automations", "agents", "memory", "repomem", "servers", "settings", "health"];
+const TAB_OF = { sessions: "sessions", new: "sessions", session: "sessions", prs: "prs", automations: "automations", agents: "agents", memory: "memory", repomem: "memory", servers: "servers", settings: "settings", health: "health" };
 let currentView = "";
 function setViewHash(hash) {
   const target = hash ? "#" + hash : location.pathname + location.search;
@@ -189,7 +189,7 @@ async function navigateHash() {
   const sm = /^#settings(?:\/(general|sandboxes|account))?$/.exec(h);
   if (sm) return await openSettings(sm[1] || "general");
   const byHash = {
-    "#new": openNew, "#prs": openPullsOverview, "#agents": openAgents,
+    "#new": openNew, "#prs": openPullsOverview, "#automations": openAutomations, "#agents": openAgents,
     "#memory": openMemory, "#servers": openServers, "#health": openHealth,
   };
   if (byHash[h]) return await byHash[h]();
@@ -222,7 +222,7 @@ $("logout").addEventListener("click", () => guarded($("logout"), async () => {
 }));
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   banner("");
-  const open = { sessions: openSessions, prs: openPullsOverview, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings, health: openHealth }[t.dataset.view];
+  const open = { sessions: openSessions, prs: openPullsOverview, automations: openAutomations, agents: openAgents, memory: openMemory, servers: openServers, settings: openSettings, health: openHealth }[t.dataset.view];
   guarded(null, open);
 }));
 

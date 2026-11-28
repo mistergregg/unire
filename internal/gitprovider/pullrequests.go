@@ -31,6 +31,7 @@ type PullRequest struct {
 	Branch  string `json:"branch"`
 	Base    string `json:"base"`
 	Draft   bool   `json:"draft"`
+	Author  string `json:"author,omitempty"` // who opened it (a login), when the server says
 	HeadSHA string `json:"-"`
 	// pipeline is GitLab's id for the pipeline whose jobs are the checks.
 	pipeline int
@@ -106,7 +107,10 @@ type ghPR struct {
 	State   string `json:"state"`
 	Merged  bool   `json:"merged"`
 	Draft   bool   `json:"draft"`
-	Head    struct {
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"head"`
@@ -122,7 +126,7 @@ func (p ghPR) pr() PullRequest {
 	} else if p.State == "closed" {
 		state = PRClosed
 	}
-	return PullRequest{Number: p.Number, Title: p.Title, URL: p.HTMLURL, State: state, Branch: p.Head.Ref, Base: p.Base.Ref, Draft: p.Draft, HeadSHA: p.Head.SHA}
+	return PullRequest{Number: p.Number, Title: p.Title, URL: p.HTMLURL, State: state, Branch: p.Head.Ref, Base: p.Base.Ref, Draft: p.Draft, Author: p.User.Login, HeadSHA: p.Head.SHA}
 }
 
 func (g github) CreatePR(ctx context.Context, repo, head, base, title, body string) (PullRequest, error) {
@@ -366,6 +370,9 @@ type glMR struct {
 	SHA          string `json:"sha"`
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
+	Author       struct {
+		Username string `json:"username"`
+	} `json:"author"`
 	HeadPipeline *struct {
 		ID int `json:"id"`
 	} `json:"head_pipeline"`
@@ -379,7 +386,7 @@ func (m glMR) pr() PullRequest {
 	case "closed", "locked":
 		state = PRClosed
 	}
-	p := PullRequest{Number: m.IID, Title: m.Title, URL: m.WebURL, State: state, Branch: m.SourceBranch, Base: m.TargetBranch, Draft: m.Draft, HeadSHA: m.SHA}
+	p := PullRequest{Number: m.IID, Title: m.Title, URL: m.WebURL, State: state, Branch: m.SourceBranch, Base: m.TargetBranch, Draft: m.Draft, Author: m.Author.Username, HeadSHA: m.SHA}
 	if m.HeadPipeline != nil {
 		p.pipeline = m.HeadPipeline.ID
 	}

@@ -149,6 +149,7 @@ func NewWithEgress(dataDir string, rf RunnerFactory, proxy *egress.Proxy, info e
 	s.stopCleanup = make(chan struct{})
 	s.probe = dockerProbe{}
 	safe.Go("automatic fix", func() { s.runAutoFix(s.stopCleanup) })
+	safe.Go("automations", func() { s.runAutomations(s.stopCleanup) })
 	safe.Go("cleanup", func() { s.runCleanup(s.stopCleanup) })
 	s.sessions, err = sessions.New(st, s.sessionConfig)
 	if err != nil {
@@ -222,6 +223,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/pulls/settings", s.auth(s.putPullSettings))
 	mux.HandleFunc("GET /api/limits", s.auth(s.getLimits))
 	mux.HandleFunc("PUT /api/limits", s.auth(s.putLimits))
+	mux.HandleFunc("GET /api/automations", s.auth(s.listAutomations))
+	mux.HandleFunc("POST /api/automations", s.auth(s.createAutomation))
+	mux.HandleFunc("PUT /api/automations/{id}", s.auth(s.updateAutomation))
+	mux.HandleFunc("DELETE /api/automations/{id}", s.auth(s.deleteAutomation))
+	mux.HandleFunc("POST /api/automations/{id}/enabled", s.auth(s.setAutomationEnabled))
+	mux.HandleFunc("POST /api/automations/{id}/run", s.auth(s.runAutomationNow))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /api/sessions", s.auth(s.startSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))

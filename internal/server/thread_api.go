@@ -92,6 +92,20 @@ func replyFail(code int, msg string) error { return replyError{code, msg} }
 // and another agent starts from the model saved for it on the Agents page. An empty
 // one asks for that saved model, or the CLI's own default when none is saved.
 func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentID string, model *string, images []sessions.Attachment) (store.Session, error) {
+	return s.startReplyWith(ctx, x, prompt, agentID, model, images, replyExtra{})
+}
+
+// replyExtra is what a turn Unire starts itself can add to a reply: text the agent is
+// told before the message (not shown as what the owner wrote), lines for the activity
+// log, and the scheduled task it runs for.
+type replyExtra struct {
+	Preamble   string
+	Notes      []string
+	Automation string
+}
+
+// startReplyWith is startReply with extra.
+func (s *Server) startReplyWith(ctx context.Context, x store.Session, prompt, agentID string, model *string, images []sessions.Attachment, extra replyExtra) (store.Session, error) {
 	prompt = strings.TrimSpace(prompt)
 	var chosen string
 	if model != nil {
@@ -182,11 +196,18 @@ func (s *Server) startReply(ctx context.Context, x store.Session, prompt, agentI
 			upSeen = n
 		}
 	}
+	if extra.Preamble != "" {
+		// First: the preamble ends with "The owner now writes:", right before the message.
+		preamble = extra.Preamble + preamble
+		if fallback != "" {
+			fallback = extra.Preamble + fallback
+		}
+	}
 	started, err := s.sessions.Start(sessions.Request{
 		Task: x.Task, Agent: agentID, Model: chosen, Prompt: prompt, Preamble: preamble, Branch: replyBranch(x),
-		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: pickNotes(picked),
+		Mode: agent.HandsOff, Network: mode, Memory: x.Memory, Repos: repos, Parent: x.ID, Notes: append(extra.Notes, pickNotes(picked)...),
 		Resume: resume, FallbackPreamble: fallback,
-		Attachments: images,
+		Attachments: images, Automation: extra.Automation,
 	})
 	if err != nil {
 		return store.Session{}, replyFail(http.StatusBadRequest, err.Error())

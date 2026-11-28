@@ -249,7 +249,7 @@ var (
 
 // CallTools are the tools whose answer comes from Unire while the agent runs.
 func CallTools() []Tool {
-	return []Tool{Name, PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent}
+	return []Tool{Name, PRStatus, PRLogs, PRComments, PRReply, PRClose, PRReopen, Memory, Repo, Parent, PRList, PRMerge}
 }
 
 // PRTools are the call tools for a conversation with an open pull request.
@@ -332,6 +332,24 @@ var Branches = Tool{
 		"Unire pushes every branch named like that when you finish and offers the owner a pull request into the branch it started from. Do not push anything yourself. " +
 		"The same works for separate work in this conversation (a different task that should not share a pull request with the code on your branch): start a branch the same way from the target, with a suffix that names the task, and do only that work there.",
 }
+
+// PRList and PRMerge are for automations (tasks that run by themselves on a schedule):
+// the agent can see the open pull requests on the chat's repos, such as dependency
+// updates, and, when the owner allows it for the automation, merge one. Unire merges
+// only a pull request whose checks all passed, on the commit they ran on.
+var (
+	PRList = Tool{
+		Name: "pr-list",
+		Usage: `unire pr-list ["owner/repo"] - list the open pull requests on this chat's repos (or one of them): number, title, author, branch and the state of its checks. ` +
+			`Add the number to see one in detail: unire pr-list "owner/repo#12". To read its changes, fetch it with git (git fetch origin pull/12/head on GitHub).`,
+	}
+	PRMerge = Tool{
+		Name: "pr-merge",
+		Usage: `unire pr-merge "owner/repo#12" - merge an open pull request on one of this chat's repos. ` +
+			`Unire merges it only if it is not a draft, it has checks and every one of them passed, and nothing was pushed to it since; otherwise it says why not. ` +
+			`Merge only what the task asks you to, after looking at the change, and say in your reply what you merged and what you left and why.`,
+	}
+)
 
 // Repo lets the agent bring another of the owner's repos into the session while it
 // runs (for example the backend of the app it is working on).

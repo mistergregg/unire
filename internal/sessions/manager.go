@@ -57,6 +57,18 @@ type Config struct {
 	// Guide is extra text for the agent's prompt about tools the sandbox image
 	// carries (the add-ons turned on in Settings). Empty: nothing is added.
 	Guide string
+	// Automations gives the chat of a scheduled task its extra tools (listing and
+	// merging pull requests). Nil: no chat gets them.
+	Automations Automations
+}
+
+// Automations answers the tools of an automation's chat.
+type Automations interface {
+	// ToolsFor returns the extra tools for a turn of the automation named (or, when
+	// automationID is empty, the one whose chat starts with rootID); none for other chats.
+	ToolsFor(automationID, rootID string) []tools.Tool
+	// Call answers one of those tools.
+	Call(ctx context.Context, automationID, rootID, tool, args string) string
 }
 
 // Egress is the sandbox network protection: the proxy, whether it is working,
@@ -88,6 +100,7 @@ type Request struct {
 	ForkedFrom                       string       // the conversation this one was started from (information only)
 	UpstreamID                       string       // the parent conversation it keeps getting updates from
 	Attachments                      []Attachment // images sent with the prompt
+	Automation                       string       // the scheduled task this turn runs for, or empty
 }
 
 // Manager runs sessions.
@@ -223,7 +236,7 @@ func (m *Manager) Start(req Request) (store.Session, error) {
 	if req.Resume != "" && req.FallbackPreamble != "" {
 		fallback = req.FallbackPreamble + req.Prompt + note
 	}
-	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent), resume: req.Resume, fallback: fallback, files: attachFiles(saved)})
+	go m.run(ctx, job{spec: spec, network: req.Network, memory: req.Memory, refs: refs, tokens: tokens, secrets: secrets, parent: req.Parent, root: m.rootOf(spec.ID, req.Parent), resume: req.Resume, fallback: fallback, files: attachFiles(saved), automation: req.Automation})
 	got, _, _ := m.st.Session(spec.ID)
 	return got, nil
 }
@@ -266,6 +279,8 @@ type job struct {
 	resume   string       // the agent's own conversation to carry on
 	fallback string       // the prompt for a fresh agent if that conversation is gone
 	files    []agent.File // attachments to copy into the sandbox before the agent starts
+	// automation is the scheduled task this turn runs for (empty: found from root, if any)
+	automation string
 }
 
 func (m *Manager) run(ctx context.Context, j job) {
@@ -384,7 +399,20 @@ func (m *Manager) run(ctx context.Context, j job) {
 			wo.Tools = append(wo.Tools, tools.Parent)
 		}
 	}
+	var autoTools map[string]bool
+	if cfg.Automations != nil {
+		for _, t := range cfg.Automations.ToolsFor(j.automation, j.root) {
+			if autoTools == nil {
+				autoTools = map[string]bool{}
+			}
+			autoTools[t.Name] = true
+			wo.Tools = append(wo.Tools, t)
+		}
+	}
 	wo.Call = func(ctx context.Context, tool, args string) string {
+		if autoTools[tool] {
+			return cfg.Automations.Call(ctx, j.automation, j.root, tool, args)
+		}
 		if tool == tools.Name.Name {
 			clean := tools.CleanName(args)
 			if clean != "" {

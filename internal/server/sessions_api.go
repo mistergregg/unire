@@ -96,6 +96,7 @@ func (s *Server) sessionConfig() sessions.Config {
 		Attachments: s.attachmentsDir(),
 		AutoPR:      s.autoOpenPulls(),
 		AfterTurn:   s.afterTurn,
+		Automations: automationTools{s},
 	}
 }
 

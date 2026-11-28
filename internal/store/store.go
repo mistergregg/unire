@@ -157,6 +157,33 @@ var migrations = []string{
 		models     TEXT NOT NULL DEFAULT '[]',
 		updated_at INTEGER NOT NULL
 	);`,
+	// 16: automations: a task that runs by itself on a schedule, in a chat of its own (root_id, empty until
+	// the first run), and a line for every time it ran or was skipped
+	`CREATE TABLE automations (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		prompt         TEXT NOT NULL,
+		agent          TEXT NOT NULL,
+		model          TEXT NOT NULL DEFAULT '',
+		repos          TEXT NOT NULL DEFAULT '[]', -- JSON list of repo references
+		every_minutes  INTEGER NOT NULL DEFAULT 0, -- 0: once a day at daily_at
+		daily_at       TEXT NOT NULL DEFAULT '',   -- "HH:MM" in the server's time zone
+		max_per_day    INTEGER NOT NULL DEFAULT 0, -- 0: no cap
+		max_usage      INTEGER NOT NULL DEFAULT 0, -- skip when the agent's usage is at this percent or more; 0: no cap
+		may_merge      INTEGER NOT NULL DEFAULT 0,
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		root_id        TEXT NOT NULL DEFAULT '',
+		next_run       INTEGER NOT NULL DEFAULT 0,
+		created_at     INTEGER NOT NULL
+	);
+	CREATE TABLE automation_runs (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+		at            INTEGER NOT NULL,
+		session_id    TEXT NOT NULL DEFAULT '', -- the turn it started; empty when skipped
+		note          TEXT NOT NULL DEFAULT ''  -- why it was skipped, or how it was started
+	);
+	CREATE INDEX automation_runs_by_automation ON automation_runs (automation_id, at);`,
 }
 
 // DBFileName is the database file inside the data directory.

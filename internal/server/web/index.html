@@ -78,6 +78,10 @@
         <span>Pull requests</span>
         <span id="nav-prs-count" class="tab-badge nav-badge" hidden>0</span>
       </button>
+      <button class="tab side-nav-item" data-view="automations" title="Automations">
+        <svg class="tab-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span>Automations</span>
+      </button>
       <button class="tab side-nav-item" data-view="agents" title="Agents">
         <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 15h.01M16 15h.01"/></svg>
         <span>Agents</span>
@@ -327,6 +331,84 @@
       <input id="prs-search" type="search" class="prs-search" placeholder="Filter by repo, title, branch or chat" aria-label="Filter pull requests" autocomplete="off">
     </div>
     <div id="prs-list" class="stack"></div>
+  </section>
+
+  <!-- Automations -->
+  <section id="view-automations" hidden>
+    <header class="page-head">
+      <button class="ghost back page-back" type="button">&larr; Menu</button>
+      <span class="icon-tile" data-icon="clock"></span>
+      <div class="grow">
+        <h1>Automations</h1>
+        <p class="muted">Tasks that run by themselves on a schedule, such as checking and merging dependency updates every morning. Each has its own chat, and every run is a turn in it.</p>
+      </div>
+      <button id="auto-refresh" class="ghost" type="button">Refresh</button>
+    </header>
+    <p id="auto-clock" class="muted small"></p>
+    <div id="auto-list" class="stack"></div>
+
+    <div class="section-title" id="auto-form-title">New automation</div>
+    <div class="card">
+      <form id="auto-form" autocomplete="off">
+        <label>Name
+          <input id="a-name" maxlength="80" placeholder="Merge Dependabot updates">
+        </label>
+        <label>What should the agent do each time?
+          <textarea id="a-prompt" required rows="4" maxlength="20000" placeholder="Look at the open Dependabot pull requests. Merge the ones whose checks passed and that only bump a patch or minor version; leave the rest and say why."></textarea>
+        </label>
+        <label>Repos</label>
+        <div id="a-selected" class="chips"></div>
+        <div class="row">
+          <select id="a-server" aria-label="Git server"></select>
+          <input id="a-query" type="search" placeholder="Add a repo: search your git servers" aria-label="Add a repo">
+        </div>
+        <div id="a-results" class="results" hidden></div>
+        <div class="grid">
+          <label>Agent
+            <select id="a-agent"></select>
+          </label>
+          <label>Model
+            <div class="auto-model">
+              <select id="a-model"></select>
+              <input id="a-model-name" hidden maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9.:\/\-]*" spellcheck="false" autocapitalize="off" placeholder="Model name" aria-label="Model name">
+            </div>
+          </label>
+        </div>
+        <div class="grid">
+          <label>Runs
+            <select id="a-kind">
+              <option value="daily">Every day at</option>
+              <option value="every">Every few minutes or hours</option>
+            </select>
+          </label>
+          <label id="a-daily-wrap">Time of day (server time)
+            <input id="a-daily" type="time" value="09:00">
+          </label>
+          <label id="a-every-wrap" hidden>Minutes between runs (5 or more)
+            <input id="a-every" type="number" min="5" max="10080" step="1" value="60">
+          </label>
+        </div>
+        <div class="grid">
+          <label>At most this many runs a day <span class="muted small">(0: no limit)</span>
+            <input id="a-maxday" type="number" min="0" max="1000" value="0">
+          </label>
+          <label>Skip when the agent's usage is at <span class="muted small">(%, 0: never)</span>
+            <input id="a-maxusage" type="number" min="0" max="100" value="80">
+          </label>
+        </div>
+        <label class="check">
+          <input id="a-merge" type="checkbox"> Let it merge pull requests
+        </label>
+        <p class="muted small">Only pull requests on its repos that are not drafts and whose checks all passed, on the commit they ran on. Without this, it can look at pull requests and report, but not merge.</p>
+        <label class="check">
+          <input id="a-enabled" type="checkbox" checked> On
+        </label>
+        <div class="row-tight">
+          <button class="primary" type="submit" id="a-submit">Save automation</button>
+          <button type="button" class="ghost" id="a-cancel" hidden>Cancel editing</button>
+        </div>
+      </form>
+    </div>
   </section>
 
   <!-- Health -->
@@ -733,5 +815,6 @@
 <script src="/agents.js" defer></script>
 <script src="/health.js" defer></script>
 <script src="/usage.js" defer></script>
+<script src="/automations.js" defer></script>
 </body>
 </html>

@@ -348,3 +348,15 @@ table.stats th { color: var(--muted); font-weight: 600; font-size: 12px; text-tr
 .pr-update { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .pr-update summary { cursor: pointer; font-size: 12.5px; color: var(--accent); }
 .pr-update input, .pr-update textarea { width: 100%; margin: 6px 0 0; }
+
+/* Automations */
+.auto-item .tile-body { display: grid; gap: 6px; }
+.auto-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: hidden; color: var(--text); }
+.auto-runs { margin-top: 8px; }
+.auto-runs summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.auto-run-list { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; }
+.auto-run-list li { padding: 4px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.auto-run-list li.link { cursor: pointer; }
+.auto-run-list li.link:hover { background: var(--panel-subtle); }
+.auto-run-list li.skipped { color: var(--muted); }
+.auto-model { display: grid; gap: 6px; }

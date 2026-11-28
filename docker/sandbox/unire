@@ -7,7 +7,7 @@
 #   unire pr "<title>"        suggest a pull request title (read when the session ends)
 #   unire share <file>        show a file (text or image) to the owner in the chat
 #   unire pr-body <<EOF ... EOF   the pull request description, from standard input
-#   unire pr-status, pr-comments, pr-reply "<text>", memory "<words>", repo "<name>", parent   answered by Unire while the agent runs
+#   unire pr-status, pr-comments, pr-reply "<text>", pr-list, pr-merge "<repo#n>", memory "<words>", repo "<name>", parent   answered by Unire while the agent runs
 dir=/workspace/.unire-tools
 tool=$1
 [ -n "$tool" ] || { echo "usage: unire <tool> <text>" >&2; exit 2; }
@@ -43,7 +43,7 @@ case "$tool" in
     printf '@call %s\n%s\n' "$tool" "$*" > "$dir/ask/$id.q.tmp" && mv "$dir/ask/$id.q.tmp" "$dir/ask/$id.q" || exit 1
     echo "ok: Unire has your 'name' request and will update the title."
     ;;
-  pr-status|pr-logs|pr-comments|pr-reply|pr-close|pr-reopen|memory|repo|parent)
+  pr-status|pr-logs|pr-comments|pr-reply|pr-close|pr-reopen|pr-list|pr-merge|memory|repo|parent)
     # Unire answers these while the agent runs (see "@call" in internal/workflow/ask.go).
     id="$(date +%s%N)$$"
     mkdir -p "$dir/ask" || exit 1
